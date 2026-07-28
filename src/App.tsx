@@ -7,6 +7,7 @@ import { LoginPage } from './pages/LoginPage'
 
 const FishHeadWagePage = lazy(() => import('./pages/FishHeadWagePage').then(module => ({ default: module.FishHeadWagePage })))
 const WorkersPage = lazy(() => import('./pages/WorkersPage').then(module => ({ default: module.WorkersPage })))
+const TodaySummaryPage = lazy(() => import('./pages/TodaySummaryPage').then(module => ({ default: module.TodaySummaryPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>Loading CCM Fishery…</strong></main>
@@ -22,6 +23,7 @@ function AuthenticatedApp() {
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
         <Route path="/" element={<FishHeadWagePage />} />
+        <Route path="/today" element={<TodaySummaryPage />} />
         <Route path="/workers" element={<WorkersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -169,6 +169,8 @@ export function FishHeadWagePage({
       <h1>Fish Head Wage</h1>
     </header>
 
+    <Link className="summary-link" to="/today">Today / Daily Summary</Link>
+
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}
 
     <section>
