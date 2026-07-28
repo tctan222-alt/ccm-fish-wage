@@ -5,7 +5,6 @@ import { FIXED_RATE_CENTS,malaysiaDateKey,money,parseRateCents,validWeight,wageC
 import { loadActiveWorkers } from '../services/workers'
 import { saveWageEntry } from '../services/wages'
 import type { WageEntry,Worker } from '../types'
-import { firebaseConfigured } from '../firebase'
 
 export interface PageProps { workerLoader?:()=>Promise<Worker[]>; saver?:(entry:WageEntry)=>Promise<void>; now?:()=>number }
 export function FishHeadWagePage({workerLoader=loadActiveWorkers,saver=saveWageEntry,now=Date.now}:PageProps){
@@ -24,7 +23,6 @@ export function FishHeadWagePage({workerLoader=loadActiveWorkers,saver=saveWageE
    try{await saver(entry);last.current={workerId:worker.id,weight:Number(weight),rate:selectedRate,at:timestamp};setMessage(`Saved: ${worker.name}, ${weight}kg × RM${money(selectedRate)} = RM${money(wage)}`);setWeight('');navigator.vibrate?.(40)}catch{setError('Entry was not saved. Check your connection and try again.')}finally{lock.current=false;setSaving(false)}
  }
  return <main><header><p className="eyebrow">CCM Fishery</p><h1>Fish Head Wage</h1></header>
-  {!firebaseConfigured && workerLoader===loadActiveWorkers && <p className="setup" role="alert">Firebase is not configured. Add the VITE_FIREBASE_API_KEY, VITE_FIREBASE_AUTH_DOMAIN, and VITE_FIREBASE_PROJECT_ID environment variables to load workers and save entries.</p>}
   <section><h2>1. Worker</h2>{workers===null?<p>Loading workers…</p>:workers.length===0?<p className="notice">No active workers. <Link to="/workers">Manage workers</Link> to add or activate one.</p>:<div className="workers">{workers.map(w=><button className={worker?.id===w.id?'selected':''} aria-pressed={worker?.id===w.id} onClick={()=>setWorker(w)} key={w.id}>{w.name}</button>)}</div>}</section>
   <section><h2>2. Rate</h2><div className="rates">{FIXED_RATE_CENTS.map(r=><button className={rate===r?'selected':''} aria-pressed={rate===r} onClick={()=>setRate(r)} key={r}>RM{money(r)}</button>)}<button className={rate===null?'selected':''} aria-pressed={rate===null} onClick={()=>setRate(null)}>Custom</button></div>{rate===null&&<label className="custom">Custom rate (RM)<input inputMode="decimal" value={custom} onChange={e=>setCustom(e.target.value)} aria-invalid={custom!==''&&!parseRateCents(custom)}/><small>RM0.01–RM9.99, maximum 2 decimal places</small></label>}</section>
   <section><h2>3. Basket weight</h2><output className="weight" role="group" aria-label="Current basket weight">{weight||'0'} <small>kg</small></output><NumericKeypad value={weight} onChange={setWeight}/></section>

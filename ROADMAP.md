@@ -23,12 +23,12 @@ Tasks:
 - [x] Configure Vite
 - [x] Configure ESLint
 - [ ] Configure Prettier
-- [ ] Configure Firebase project
-- [ ] Configure Firebase Authentication
-- [ ] Configure Firestore
-- [ ] Configure environment variables
+- [x] Configure Firebase project (`ccm-fishery-os-4490d`)
+- [x] Configure Firebase Email/Password Authentication (no public registration)
+- [x] Prepare Firestore rules (owner approval/deployment pending)
+- [x] Configure public Web environment variables (never commit passwords or service-account credentials)
 - [ ] Configure PWA manifest
-- [ ] Configure deployment
+- [x] Prepare Firebase Hosting deployment (owner action pending)
 - [ ] Confirm iPhone access
 
 Exit criteria:
@@ -97,7 +97,7 @@ Acceptance:
 - [ ] Audit log
 
 ## Sprint 1.6 — Firebase and Offline
-- [ ] Firebase Authentication
+- [x] Firebase Authentication
 - [ ] Firestore persistence
 - [ ] Local offline queue
 - [ ] Auto sync

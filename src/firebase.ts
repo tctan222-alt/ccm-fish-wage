@@ -1,23 +1,27 @@
-import { initializeApp } from 'firebase/app'
+import { getApp, getApps, initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
-const configuredValues = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+
+const productionConfig = {
+  apiKey: 'AIzaSyD-FWdApghgsJwyJZc0V5vRCbjHAU1TMok',
+  authDomain: 'ccm-fishery-os-4490d.firebaseapp.com',
+  projectId: 'ccm-fishery-os-4490d',
+  storageBucket: 'ccm-fishery-os-4490d.firebasestorage.app',
+  messagingSenderId: '484619840074',
+  appId: '1:484619840074:web:d82c35bdc46244509754b3',
 }
 
-export const firebaseConfigured = Object.values(configuredValues).every(Boolean)
+const config = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || productionConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || productionConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || productionConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || productionConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || productionConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || productionConfig.appId,
+}
 
-// Firebase services still need an app during local builds and tests. These inert
-// placeholders are never presented as production credentials.
-const config = firebaseConfigured
-  ? configuredValues
-  : {
-      apiKey: 'not-configured',
-      authDomain: 'not-configured.invalid',
-      projectId: 'not-configured',
-    }
-export const firebaseApp=initializeApp(config)
-export const db=getFirestore(firebaseApp)
-export const auth=getAuth(firebaseApp)
+export const firebaseConfigured = Object.values(config).every(Boolean)
+export const app = getApps().length === 0 ? initializeApp(config) : getApp()
+export const firebaseApp = app
+export const auth = getAuth(app)
+export const db = getFirestore(app)
