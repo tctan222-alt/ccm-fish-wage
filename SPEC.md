@@ -34,7 +34,7 @@ Excluded from V1:
 - Vessel captain wages
 - Vessel crew wages
 - Vessel expenses
-- Fish-head and fish-fry sales
+- Fish-head and fish-meal sales
 - Ice purchase allocation
 - OCR
 - Google Sheets sync

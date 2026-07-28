@@ -33,7 +33,7 @@ Current activities:
 - Fish-fry weight recording
 - Fish-head cutting labor
 - Future fish-head sales
-- Future fish-fry sales
+- Future fish-meal sales
 
 The Fish Head Department may later be treated as a separate profit center.
 
@@ -112,12 +112,12 @@ Main use:
 
 Only ice actually used by a vessel belongs to vessel cost.
 
-## 10. Fish Head and Fish Fry
-Fish Head and Fish Fry are separate categories.
+## 10. Fish Head and Fish Meal
+Fish Head and Fish Meal are separate categories.
 
 Example:
 - Fish Head: 699kg
-- Fish Fry: 2,395kg
+- Fish Meal: 2,395kg
 
 Never combine them into one product category.
 
@@ -189,7 +189,7 @@ Never merge:
 - Fish-head cutting wage ≠ Vessel crew wage
 - Fish Head Department cost ≠ Vessel expense
 - Purchased ice ≠ Ice production
-- Fish Head ≠ Fish Fry
+- Fish Head ≠ Fish Meal
 - CCM ≠ Jinda
 - CCM ≠ Monkey Fitness
 
