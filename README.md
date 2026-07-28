@@ -1,9 +1,29 @@
-CCM Fishery ERP
+# CCM Fishery ERP
 
-React
-Firebase
-PWA
+Internal ERP system for Chin Chua Meng Fishery (CCM).
 
-For Chin Chua Meng Fishery
+## Tech Stack
 
-iPhone First
+- React
+- TypeScript
+- Firebase
+- Firestore
+- PWA
+- Vercel
+
+## Platform
+
+- iPhone First
+- Desktop for Administration
+
+## Current Modules
+
+- Fish Head Wage (In Progress)
+
+## Planned Modules
+
+- Fish Head Production
+- Fish Fry
+- Dashboard
+- Vessel
+- Reports
