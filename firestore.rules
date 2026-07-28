@@ -1,0 +1,52 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function validWageEntry(data) {
+      return data.keys().hasAll([
+          'dateKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
+          'wageRm', 'createdBy', 'createdAt', 'updatedAt', 'deleted'
+        ])
+        && data.dateKey is string
+        && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.workerId is string
+        && data.workerId.size() > 0
+        && data.workerName is string
+        && data.workerName.size() > 0
+        && data.weightKg is int
+        && data.weightKg >= 1
+        && data.weightKg <= 300
+        && data.rateRm is string
+        && data.rateRm.matches('^[0-9]\.[0-9]{2}$')
+        && data.rateRm != '0.00'
+        && data.wageRm is string
+        && data.wageRm.matches('^[0-9]+\.[0-9]{2}$')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.deleted is bool;
+    }
+
+    match /workers/{workerId} {
+      allow read: if signedIn() && resource.data.active == true;
+    }
+
+    match /fishHeadWageEntries/{entryId} {
+      allow create: if signedIn()
+        && validWageEntry(request.resource.data)
+        && request.resource.data.deleted == false
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if signedIn()
+        && validWageEntry(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+  }
+}

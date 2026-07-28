@@ -18,10 +18,10 @@ Tasks:
 - [ ] Create SPEC.md
 - [ ] Create CCM_CONTEXT.md
 - [ ] Create ROADMAP.md
-- [ ] Create CHANGELOG.md
-- [ ] Create React + TypeScript project
-- [ ] Configure Vite
-- [ ] Configure ESLint
+- [x] Create CHANGELOG.md
+- [x] Create React + TypeScript project
+- [x] Configure Vite
+- [x] Configure ESLint
 - [ ] Configure Prettier
 - [ ] Configure Firebase project
 - [ ] Configure Firebase Authentication
@@ -41,18 +41,18 @@ Exit criteria:
 # Phase 1 — Fish Head Cutting Wage MVP
 
 ## Sprint 1.1 — Basic Entry
-- [ ] Worker buttons
-- [ ] RM0.12 button
-- [ ] RM0.15 button
-- [ ] RM0.18 button
-- [ ] Custom rate button
-- [ ] Large keypad
-- [ ] Confirm entry
-- [ ] Automatic wage calculation
-- [ ] Reset weight after confirm
-- [ ] Keep worker selected
-- [ ] Keep rate selected
-- [ ] Success feedback
+- [x] Worker buttons
+- [x] RM0.12 button
+- [x] RM0.15 button
+- [x] RM0.18 button
+- [x] Custom rate button
+- [x] Large keypad
+- [x] Confirm entry
+- [x] Automatic wage calculation
+- [x] Reset weight after confirm
+- [x] Keep worker selected
+- [x] Keep rate selected
+- [x] Success feedback
 
 Acceptance:
 - One basket entry under 3 seconds
@@ -68,9 +68,9 @@ Acceptance:
 - [ ] Maximum 20 active workers
 
 ## Sprint 1.3 — Custom Rate
-- [ ] Enter custom rate
-- [ ] Validate rate
-- [ ] Save rate per entry
+- [x] Enter custom rate
+- [x] Validate rate
+- [x] Save rate per entry
 - [ ] Show recent custom rates
 - [ ] Reuse recent rate
 - [ ] Dynamic rate breakdown
@@ -93,7 +93,7 @@ Acceptance:
 - [ ] Edit entry
 - [ ] Soft delete entry
 - [ ] Undo latest entry
-- [ ] Duplicate warning
+- [x] Duplicate warning
 - [ ] Audit log
 
 ## Sprint 1.6 — Firebase and Offline
@@ -139,12 +139,12 @@ Exit criteria:
 
 # Phase 2 — Fish Head Production
 - [ ] Fish Head weight entry
-- [ ] Fish Fry weight entry
+- [ ] Fish Meal weight entry
 - [ ] Date
 - [ ] Vessel source
 - [ ] Bill number
 - [ ] Daily totals
-- [ ] Keep Fish Head and Fish Fry separate
+- [ ] Keep Fish Head and Fish Meal separate
 - [ ] Edit
 - [ ] Delete
 - [ ] Audit log
@@ -187,7 +187,7 @@ Exit criteria:
 - [ ] Handwritten fish-record photo upload
 - [ ] OCR extraction
 - [ ] Human confirmation
-- [ ] Fish Head/Fish Fry totals
+- [ ] Fish Head/Fish Meal totals
 - [ ] Vessel and date recognition
 - [ ] Duplicate detection
 - [ ] Google Sheets sync
