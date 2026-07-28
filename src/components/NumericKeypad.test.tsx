@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { fireEvent,render,screen } from '@testing-library/react'
+import { expect,it } from 'vitest'
 import { NumericKeypad } from './NumericKeypad'
 
 function Harness(){
