@@ -78,7 +78,7 @@ describe('monthly summary',()=>{
     expect(await screen.findByRole('heading',{name:'Monthly Summary'})).toBeInTheDocument()
     expect(await screen.findByText('July 2026')).toBeInTheDocument()
 
-    const grandTotal=screen.getByText('Total wage').closest('section')
+    const grandTotal=screen.getByRole('region',{name:'Monthly totals'})
     expect(grandTotal).toHaveTextContent('Workers2')
     expect(grandTotal).toHaveTextContent('Work days2')
     expect(grandTotal).toHaveTextContent('Baskets3')
@@ -86,30 +86,32 @@ describe('monthly summary',()=>{
     expect(grandTotal).toHaveTextContent('Total wageRM33.93')
     expect(grandTotal).toHaveTextContent('Voided1')
 
-    const workerSection=screen.getByRole('heading',{name:'Worker Totals'}).closest('section')!
-    expect(workerSection).toHaveTextContent('Ah Mei')
-    expect(workerSection).toHaveTextContent('2 days')
-    expect(workerSection).toHaveTextContent('145kg')
-    expect(workerSection).toHaveTextContent('RM19.53')
-    expect(workerSection).toHaveTextContent('Ali')
-    expect(workerSection).toHaveTextContent('80kg')
-    expect(workerSection).toHaveTextContent('RM14.40')
+    const ahMeiCard=screen.getByRole('heading',{name:'Ah Mei'}).closest('section')!
+    expect(ahMeiCard).toHaveTextContent('Baskets2')
+    expect(ahMeiCard).toHaveTextContent('Total kg145kg')
+    expect(ahMeiCard).toHaveTextContent('Total wageRM19.53')
+    expect(ahMeiCard).toHaveTextContent('RM0.12RM8.88')
+    expect(ahMeiCard).toHaveTextContent('RM0.15RM10.65')
+    expect(ahMeiCard).toHaveTextContent('RM0.18RM0.00')
+    expect(ahMeiCard).toHaveTextContent('Custom rateRM0.00')
 
-    const daySection=screen.getByRole('heading',{name:'Daily Totals'}).closest('section')!
-    expect(daySection).toHaveTextContent('1 Jul')
-    expect(daySection).toHaveTextContent('74kg')
-    expect(daySection).toHaveTextContent('RM8.88')
-    expect(daySection).toHaveTextContent('2 Jul')
-    expect(daySection).toHaveTextContent('151kg')
-    expect(daySection).toHaveTextContent('RM25.05')
-    expect(within(daySection).getAllByRole('link',{name:'Open day'})).toHaveLength(2)
+    fireEvent.click(within(ahMeiCard).getByText('View daily totals and basket details'))
+    expect(ahMeiCard).toHaveTextContent('Wed, 1 Jul')
+    expect(ahMeiCard).toHaveTextContent('1 basket')
+    expect(ahMeiCard).toHaveTextContent('74kg')
+    fireEvent.click(within(ahMeiCard).getByText(/Wed, 1 Jul/))
+    expect(ahMeiCard).toHaveTextContent('74kg x RM0.12')
+
+    const aliCard=screen.getByRole('heading',{name:'Ali'}).closest('section')!
+    expect(aliCard).toHaveTextContent('80kg')
+    expect(aliCard).toHaveTextContent('RM14.40')
   })
 
   it('reloads when the selected month changes',async()=>{
     const loader=setup()
 
     await waitFor(()=>expect(loader).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}$/)))
-    fireEvent.change(screen.getByLabelText('Month'),{target:{value:'2026-06'}})
+    fireEvent.change(screen.getByLabelText('Wage month'),{target:{value:'2026-06'}})
 
     await waitFor(()=>expect(loader).toHaveBeenLastCalledWith('2026-06'))
   })

@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useState } from 'react'
 import { Link } from 'react-router-dom'
-import { malaysiaMonthKey,money,rmStringToCents } from '../lib/wage'
+import { FIXED_RATE_CENTS,malaysiaMonthKey,money,rmStringToCents } from '../lib/wage'
 import {
   loadMonthlyWageData,
   type MonthlyWageData,
@@ -21,6 +21,13 @@ interface WorkerMonthlySummary {
   totalWageCents:number
 }
 
+interface WorkerDaySummary {
+  dateKey:string
+  entries:StoredWageEntry[]
+  totalWeight:number
+  totalWageCents:number
+}
+
 function formatMonth(monthKey:string){
   return new Intl.DateTimeFormat('en-MY',{
     timeZone:'Asia/Kuala_Lumpur',
@@ -32,9 +39,14 @@ function formatMonth(monthKey:string){
 function formatShortDate(dateKey:string){
   return new Intl.DateTimeFormat('en-MY',{
     timeZone:'Asia/Kuala_Lumpur',
+    weekday:'short',
     month:'short',
     day:'numeric',
   }).format(new Date(`${dateKey}T12:00:00+08:00`))
+}
+
+function rateLabel(rateCents:number|null){
+  return rateCents===null?'Custom rate':`RM${money(rateCents)}`
 }
 
 export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
@@ -92,33 +104,46 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
     return [...grouped.values()].sort((a,b)=>b.totalWageCents-a.totalWageCents||a.workerName.localeCompare(b.workerName))
   },[entries])
 
-  const dayGroups=useMemo(()=>{
-    const grouped=new Map<string,{dateKey:string;baskets:number;weight:number;wageCents:number}>()
-
-    for(const entry of entries){
-      const current=grouped.get(entry.dateKey)??{
-        dateKey:entry.dateKey,
-        baskets:0,
-        weight:0,
-        wageCents:0,
-      }
-      current.baskets+=1
-      current.weight+=entry.weightKg
-      current.wageCents+=rmStringToCents(entry.wageRm)
-      grouped.set(entry.dateKey,current)
-    }
-
-    return [...grouped.values()].sort((a,b)=>a.dateKey.localeCompare(b.dateKey))
-  },[entries])
+  const monthlyDayCount=useMemo(()=>new Set(entries.map(entry=>entry.dateKey)).size,[entries])
 
   const totals=useMemo(()=>({
     workers:workerGroups.length,
-    days:dayGroups.length,
+    days:monthlyDayCount,
     baskets:entries.length,
     weight:entries.reduce((sum,entry)=>sum+entry.weightKg,0),
     wageCents:entries.reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0),
     voids:voids.length,
-  }),[dayGroups.length,entries,voids.length,workerGroups.length])
+  }),[entries,monthlyDayCount,voids.length,workerGroups.length])
+
+  function workerDayGroups(group:WorkerMonthlySummary):WorkerDaySummary[]{
+    const grouped=new Map<string,WorkerDaySummary>()
+
+    for(const entry of group.entries){
+      const current=grouped.get(entry.dateKey)??{
+        dateKey:entry.dateKey,
+        entries:[],
+        totalWeight:0,
+        totalWageCents:0,
+      }
+      current.entries.push(entry)
+      current.totalWeight+=entry.weightKg
+      current.totalWageCents+=rmStringToCents(entry.wageRm)
+      grouped.set(entry.dateKey,current)
+    }
+
+    return [...grouped.values()].sort((a,b)=>a.dateKey.localeCompare(b.dateKey))
+  }
+
+  function rateTotal(group:WorkerMonthlySummary,rateCents:number|null){
+    return group.entries
+      .filter(entry=>{
+        const entryRateCents=rmStringToCents(entry.rateRm)
+        return rateCents===null
+          ?!FIXED_RATE_CENTS.includes(entryRateCents as (typeof FIXED_RATE_CENTS)[number])
+          :entryRateCents===rateCents
+      })
+      .reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0)
+  }
 
   return <main>
     <header>
@@ -129,7 +154,7 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
 
     <section className="date-filter">
       <label>
-        Month
+        Wage month
         <input
           type="month"
           value={monthKey}
@@ -148,7 +173,7 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
 
     {error&&<p className="error" role="alert">{error}</p>}
 
-    <section className="monthly-grand-total">
+    <section className="monthly-grand-total" aria-label="Monthly totals">
       <div><span>Workers</span><strong>{totals.workers}</strong></div>
       <div><span>Work days</span><strong>{totals.days}</strong></div>
       <div><span>Baskets</span><strong>{totals.baskets}</strong></div>
@@ -159,36 +184,51 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
 
     {loading?<p className="notice">Loading monthly records...</p>:
       entries.length===0?<p className="notice">No active wage records for this month.</p>:
-      <>
-        <section>
-          <h2>Worker Totals</h2>
-          <div className="monthly-worker-list">
-            {workerGroups.map(group=><article className="monthly-worker-row" key={group.workerId||group.workerName}>
-              <div>
-                <strong>{group.workerName}</strong>
-                <small>{group.days.size} day{group.days.size===1?'':'s'} · {group.entries.length} basket{group.entries.length===1?'':'s'}</small>
-              </div>
-              <div><span>Total kg</span><strong>{group.totalWeight}kg</strong></div>
-              <div><span>Wage</span><strong>RM{money(group.totalWageCents)}</strong></div>
-            </article>)}
+      <div className="monthly-worker-list">
+        {workerGroups.map(group=><section className="monthly-worker-card" key={group.workerId||group.workerName}>
+          <div className="daily-worker-heading">
+            <div>
+              <p className="eyebrow">Worker</p>
+              <h2>{group.workerName}</h2>
+            </div>
+            <strong>RM{money(group.totalWageCents)}</strong>
           </div>
-        </section>
 
-        <section>
-          <h2>Daily Totals</h2>
-          <div className="monthly-day-list">
-            {dayGroups.map(day=><article className="monthly-day-row" key={day.dateKey}>
-              <div>
-                <strong>{formatShortDate(day.dateKey)}</strong>
-                <small>{day.baskets} basket{day.baskets===1?'':'s'}</small>
-              </div>
-              <div><span>Total kg</span><strong>{day.weight}kg</strong></div>
-              <div><span>Wage</span><strong>RM{money(day.wageCents)}</strong></div>
-              <Link to={`/today?date=${day.dateKey}`}>Open day</Link>
-            </article>)}
+          <div className="monthly-worker-total">
+            <div><span>Baskets</span><strong>{group.entries.length}</strong></div>
+            <div><span>Total kg</span><strong>{group.totalWeight}kg</strong></div>
+            <div><span>Total wage</span><strong>RM{money(group.totalWageCents)}</strong></div>
           </div>
-        </section>
-      </>
+
+          <div className="rate-breakdown">
+            {[...FIXED_RATE_CENTS,null].map(rate=><div key={rateLabel(rate)}>
+              <span>{rateLabel(rate)}</span>
+              <strong>RM{money(rateTotal(group,rate))}</strong>
+            </div>)}
+          </div>
+
+          <details className="monthly-days">
+            <summary>View daily totals and basket details</summary>
+            {workerDayGroups(group).map(day=><details key={day.dateKey}>
+              <summary>
+                <span>{formatShortDate(day.dateKey)}</span>
+                <strong>{day.entries.length} basket{day.entries.length===1?'':'s'} · {day.totalWeight}kg · RM{money(day.totalWageCents)}</strong>
+              </summary>
+              <ol className="saved-entry-list">
+                {day.entries.map((entry,index)=><li key={entry.id}>
+                  <span className="entry-number">{index+1}</span>
+                  <div className="saved-entry-details">
+                    <strong>{entry.weightKg}kg x RM{entry.rateRm}</strong>
+                    <small>{entry.dateKey}</small>
+                  </div>
+                  <strong className="saved-entry-wage">RM{entry.wageRm}</strong>
+                </li>)}
+              </ol>
+              <Link className="open-day-link" to={`/today?date=${day.dateKey}`}>Open day</Link>
+            </details>)}
+          </details>
+        </section>)}
+      </div>
     }
 
     <section className="void-history">
