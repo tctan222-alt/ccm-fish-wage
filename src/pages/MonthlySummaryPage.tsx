@@ -1,4 +1,4 @@
-import { useEffect,useMemo,useState } from 'react'
+import { useCallback,useEffect,useMemo,useRef,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { FIXED_RATE_CENTS,malaysiaMonthKey,money,rmStringToCents } from '../lib/wage'
 import {
@@ -10,7 +10,10 @@ import {
 
 interface Props {
   loader?:(monthKey:string)=>Promise<MonthlyWageData>
+  requestTimeoutMs?:number
 }
+
+const MONTHLY_REQUEST_TIMEOUT_MS=15000
 
 interface WorkerMonthlySummary {
   workerId:string
@@ -49,37 +52,81 @@ function rateLabel(rateCents:number|null){
   return rateCents===null?'Custom rate':`RM${money(rateCents)}`
 }
 
-export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
+export function MonthlySummaryPage({loader=loadMonthlyWageData,requestTimeoutMs=MONTHLY_REQUEST_TIMEOUT_MS}:Props){
   const [monthKey,setMonthKey]=useState(()=>malaysiaMonthKey())
   const [entries,setEntries]=useState<StoredWageEntry[]>([])
   const [voids,setVoids]=useState<WageVoidRecord[]>([])
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('')
-  const [refreshKey,setRefreshKey]=useState(0)
+  const requestIdRef=useRef(0)
+  const inFlightRef=useRef(false)
+  const mountedRef=useRef(false)
+  const timeoutRef=useRef<number|null>(null)
+
+  const clearActiveTimeout=useCallback(()=>{
+    if(timeoutRef.current===null)return
+    window.clearTimeout(timeoutRef.current)
+    timeoutRef.current=null
+  },[])
+
+  const finishRequest=useCallback((requestId:number)=>{
+    if(requestIdRef.current!==requestId)return
+    clearActiveTimeout()
+    inFlightRef.current=false
+    if(mountedRef.current)setLoading(false)
+  },[clearActiveTimeout])
 
   useEffect(()=>{
-    let active=true
+    mountedRef.current=true
+    return ()=>{
+      mountedRef.current=false
+      requestIdRef.current+=1
+      inFlightRef.current=false
+      clearActiveTimeout()
+    }
+  },[clearActiveTimeout])
+
+  const loadMonth=useCallback((targetMonthKey:string)=>{
+    if(inFlightRef.current)return
+    const requestId=requestIdRef.current+1
+    requestIdRef.current=requestId
+    inFlightRef.current=true
     setLoading(true)
     setError('')
+    clearActiveTimeout()
 
-    loader(monthKey)
+    timeoutRef.current=window.setTimeout(()=>{
+      if(requestIdRef.current!==requestId)return
+      requestIdRef.current=requestId+1
+      clearActiveTimeout()
+      inFlightRef.current=false
+      if(!mountedRef.current)return
+      setEntries([])
+      setVoids([])
+      setError('Monthly records timed out. Check your connection and try again.')
+      setLoading(false)
+    },requestTimeoutMs)
+
+    loader(targetMonthKey)
       .then(result=>{
-        if(!active)return
+        if(requestIdRef.current!==requestId||!mountedRef.current)return
         setEntries([...result.entries].sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||a.workerName.localeCompare(b.workerName)))
         setVoids([...result.voids].sort((a,b)=>b.dateKey.localeCompare(a.dateKey)||a.workerName.localeCompare(b.workerName)))
       })
       .catch(()=>{
-        if(!active)return
+        if(requestIdRef.current!==requestId||!mountedRef.current)return
         setEntries([])
         setVoids([])
         setError('Monthly records could not be loaded. Check your connection and try again.')
       })
       .finally(()=>{
-        if(active)setLoading(false)
+        finishRequest(requestId)
       })
+  },[clearActiveTimeout,finishRequest,loader,requestTimeoutMs])
 
-    return ()=>{active=false}
-  },[loader,monthKey,refreshKey])
+  useEffect(()=>{
+    loadMonth(monthKey)
+  },[loadMonth,monthKey])
 
   const workerGroups=useMemo(()=>{
     const grouped=new Map<string,WorkerMonthlySummary>()
@@ -158,13 +205,14 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData}:Props){
         <input
           type="month"
           value={monthKey}
+          disabled={loading}
           onChange={event=>{
             setMonthKey(event.target.value)
             setError('')
           }}
         />
       </label>
-      <button type="button" onClick={()=>setRefreshKey(value=>value+1)} disabled={loading}>
+      <button type="button" onClick={()=>loadMonth(monthKey)} disabled={loading}>
         {loading?'Loading...':'Refresh month'}
       </button>
     </section>

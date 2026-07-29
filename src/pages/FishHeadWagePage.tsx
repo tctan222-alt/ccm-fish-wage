@@ -136,7 +136,16 @@ export function FishHeadWagePage({
     setMessage('')
     setDuplicate(false)
 
-    const payload:WageEntry[]=entries.map(({localId,rateCents,wageCents,addedAt,...entry})=>entry)
+    const payload:WageEntry[]=entries.map(entry=>({
+      dateKey:entry.dateKey,
+      workerId:entry.workerId,
+      workerName:entry.workerName,
+      weightKg:entry.weightKg,
+      rateRm:entry.rateRm,
+      wageRm:entry.wageRm,
+      createdBy:entry.createdBy,
+      deleted:entry.deleted,
+    }))
     const summary={
       workerName:worker.name,
       basketCount:entries.length,
