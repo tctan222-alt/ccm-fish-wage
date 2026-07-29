@@ -1,7 +1,13 @@
-import { useEffect,useMemo,useState } from 'react'
+import { useEffect,useMemo,useRef,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { malaysiaDateKey,money } from '../lib/wage'
-import { loadWageEntriesByDate,type StoredWageEntry } from '../services/wages'
+import {
+  loadDailyWageData,
+  voidWageEntry,
+  type DailyWageData,
+  type StoredWageEntry,
+  type WageVoidRecord,
+} from '../services/wages'
 
 interface WorkerSummary {
   workerId:string
@@ -12,8 +18,17 @@ interface WorkerSummary {
 }
 
 interface Props {
-  loader?:(dateKey:string)=>Promise<StoredWageEntry[]>
+  loader?:(dateKey:string)=>Promise<DailyWageData>
+  voider?:(entry:StoredWageEntry,reason:string)=>Promise<void>
 }
+
+const VOID_REASONS=[
+  'Wrong kg',
+  'Wrong rate',
+  'Wrong worker',
+  'Duplicate entry',
+  'Other',
+] as const
 
 function cents(value:string){
   return Math.round(Number(value)*100)
@@ -43,12 +58,23 @@ function formatDate(dateKey:string){
   }).format(new Date(`${dateKey}T12:00:00+08:00`))
 }
 
-export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
+export function TodaySummaryPage({
+  loader=loadDailyWageData,
+  voider=voidWageEntry,
+}:Props){
   const [dateKey,setDateKey]=useState(()=>malaysiaDateKey())
   const [entries,setEntries]=useState<StoredWageEntry[]>([])
+  const [voids,setVoids]=useState<WageVoidRecord[]>([])
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('')
+  const [message,setMessage]=useState('')
   const [refreshKey,setRefreshKey]=useState(0)
+
+  const [pendingVoid,setPendingVoid]=useState<StoredWageEntry|null>(null)
+  const [reason,setReason]=useState<(typeof VOID_REASONS)[number]>('Wrong kg')
+  const [otherReason,setOtherReason]=useState('')
+  const [voiding,setVoiding]=useState(false)
+  const voidLock=useRef(false)
 
   useEffect(()=>{
     let active=true
@@ -58,11 +84,21 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
     loader(dateKey)
       .then(result=>{
         if(!active)return
-        setEntries([...result].sort((a,b)=>timestampMillis(a.createdAt)-timestampMillis(b.createdAt)))
+        setEntries(
+          [...result.entries].sort(
+            (a,b)=>timestampMillis(a.createdAt)-timestampMillis(b.createdAt),
+          ),
+        )
+        setVoids(
+          [...result.voids].sort(
+            (a,b)=>timestampMillis(b.voidedAt)-timestampMillis(a.voidedAt),
+          ),
+        )
       })
       .catch(()=>{
         if(!active)return
         setEntries([])
+        setVoids([])
         setError('Records could not be loaded. Check your connection and try again.')
       })
       .finally(()=>{
@@ -100,6 +136,49 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
     wageCents:entries.reduce((sum,entry)=>sum+cents(entry.wageRm),0),
   }),[entries,groups.length])
 
+  const resolvedReason=reason==='Other'?otherReason.trim():reason
+  const canConfirmVoid=resolvedReason.length>0&&resolvedReason.length<=100&&!voiding
+
+  function openVoid(entry:StoredWageEntry){
+    setPendingVoid(entry)
+    setReason('Wrong kg')
+    setOtherReason('')
+    setError('')
+    setMessage('')
+  }
+
+  function closeVoid(){
+    if(voiding)return
+    setPendingVoid(null)
+    setOtherReason('')
+  }
+
+  async function confirmVoid(){
+    if(voidLock.current||!pendingVoid||!canConfirmVoid)return
+
+    voidLock.current=true
+    setVoiding(true)
+    setError('')
+    setMessage('')
+
+    const voidedEntry=pendingVoid
+    try{
+      await voider(voidedEntry,resolvedReason)
+      setPendingVoid(null)
+      setMessage(
+        `Voided: ${voidedEntry.workerName}, ${voidedEntry.weightKg}kg × `+
+        `RM${voidedEntry.rateRm} = RM${voidedEntry.wageRm}`,
+      )
+      setRefreshKey(value=>value+1)
+      navigator.vibrate?.([60,40,60])
+    }catch{
+      setError('Record was not voided. Nothing was changed. Check your connection and try again.')
+    }finally{
+      voidLock.current=false
+      setVoiding(false)
+    }
+  }
+
   return <main>
     <header>
       <p className="eyebrow">CCM Fishery</p>
@@ -110,7 +189,15 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
     <section className="date-filter">
       <label>
         Record date
-        <input type="date" value={dateKey} onChange={event=>setDateKey(event.target.value)}/>
+        <input
+          type="date"
+          value={dateKey}
+          onChange={event=>{
+            setDateKey(event.target.value)
+            setPendingVoid(null)
+            setMessage('')
+          }}
+        />
       </label>
       <button type="button" onClick={()=>setRefreshKey(value=>value+1)} disabled={loading}>
         {loading?'Loading…':'Refresh records'}
@@ -119,6 +206,7 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
 
     <p className="summary-date">{formatDate(dateKey)}</p>
 
+    {message&&<p className="success" role="status" aria-live="polite">✓ {message}</p>}
     {error&&<p className="error" role="alert">{error}</p>}
 
     <section className="daily-grand-total">
@@ -129,7 +217,7 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
     </section>
 
     {loading?<p className="notice">Loading daily records…</p>:
-      entries.length===0?<p className="notice">No saved wage records for this date.</p>:
+      entries.length===0?<p className="notice">No active wage records for this date.</p>:
       <div className="daily-worker-groups">
         {groups.map(group=><section className="daily-worker-card" key={group.workerId||group.workerName}>
           <div className="daily-worker-heading">
@@ -151,16 +239,110 @@ export function TodaySummaryPage({loader=loadWageEntriesByDate}:Props){
             <ol className="saved-entry-list">
               {group.entries.map((entry,index)=><li key={entry.id}>
                 <span className="entry-number">{index+1}</span>
-                <div>
+                <div className="saved-entry-details">
                   <strong>{entry.weightKg}kg × RM{entry.rateRm}</strong>
                   <small>{formatTime(entry.createdAt)}</small>
                 </div>
-                <strong>RM{entry.wageRm}</strong>
+                <strong className="saved-entry-wage">RM{entry.wageRm}</strong>
+                <button
+                  className="void-entry-button"
+                  type="button"
+                  onClick={()=>openVoid(entry)}
+                >
+                  Void
+                </button>
               </li>)}
             </ol>
           </details>
         </section>)}
       </div>
     }
+
+    <section className="void-history">
+      <details>
+        <summary>Voided records ({voids.length})</summary>
+        {voids.length===0?<p className="notice">No voided records for this date.</p>:
+          <ol className="void-history-list">
+            {voids.map((item,index)=><li key={item.id}>
+              <div className="void-history-heading">
+                <span className="entry-number">{index+1}</span>
+                <strong>{item.workerName}</strong>
+                <strong>RM{item.wageRm}</strong>
+              </div>
+              <p>{item.weightKg}kg × RM{item.rateRm}</p>
+              <p><strong>Reason:</strong> {item.voidReason}</p>
+              <small>Voided at {formatTime(item.voidedAt)}</small>
+            </li>)}
+          </ol>
+        }
+      </details>
+    </section>
+
+    {pendingVoid&&<div className="void-overlay" role="presentation" onClick={closeVoid}>
+      <section
+        className="void-panel"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="void-title"
+        onClick={event=>event.stopPropagation()}
+      >
+        <p className="eyebrow">Audit action</p>
+        <h2 id="void-title">Void this record?</h2>
+
+        <div className="void-entry-preview">
+          <strong>{pendingVoid.workerName}</strong>
+          <span>{pendingVoid.weightKg}kg × RM{pendingVoid.rateRm}</span>
+          <strong>RM{pendingVoid.wageRm}</strong>
+        </div>
+
+        <p className="void-warning">
+          The original record will remain in Firestore and will be marked void.
+          Daily totals will exclude it.
+        </p>
+
+        <fieldset className="void-reasons">
+          <legend>Reason</legend>
+          {VOID_REASONS.map(item=><label key={item}>
+            <input
+              type="radio"
+              name="void-reason"
+              checked={reason===item}
+              onChange={()=>setReason(item)}
+            />
+            <span>{item}</span>
+          </label>)}
+        </fieldset>
+
+        {reason==='Other'&&<label className="other-reason">
+          Other reason
+          <input
+            autoFocus
+            maxLength={100}
+            value={otherReason}
+            onChange={event=>setOtherReason(event.target.value)}
+            placeholder="Enter the reason"
+          />
+          <small>{otherReason.length}/100</small>
+        </label>}
+
+        <button
+          className="confirm-void"
+          type="button"
+          disabled={!canConfirmVoid}
+          onClick={()=>void confirmVoid()}
+        >
+          {voiding?'Voiding…':'Confirm void'}
+        </button>
+
+        <button
+          className="cancel-void"
+          type="button"
+          disabled={voiding}
+          onClick={closeVoid}
+        >
+          Cancel
+        </button>
+      </section>
+    </div>}
   </main>
 }
