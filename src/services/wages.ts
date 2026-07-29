@@ -8,6 +8,7 @@ import {
   writeBatch,
 } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
+import { monthDateRange } from '../lib/wage'
 import type { WageEntry } from '../types'
 
 export interface StoredWageEntry extends WageEntry {
@@ -33,6 +34,9 @@ export interface WageVoidRecord {
 export interface DailyWageData {
   entries:StoredWageEntry[]
   voids:WageVoidRecord[]
+}
+export interface MonthlyWageData extends DailyWageData {
+  monthKey:string
 }
 
 export async function saveWageEntries(entries:WageEntry[]):Promise<void> {
@@ -80,6 +84,42 @@ export async function loadDailyWageData(dateKey:string):Promise<DailyWageData> {
     loadVoidsByDate(dateKey),
   ])
   return {entries,voids}
+}
+
+export async function loadWageEntriesByMonth(monthKey:string):Promise<StoredWageEntry[]> {
+  if (!firebaseConfigured) throw new Error('Firebase is not configured')
+  const {startDateKey,endDateKey}=monthDateRange(monthKey)
+  const snapshot=await getDocs(
+    query(
+      collection(db,'fishHeadWageEntries'),
+      where('dateKey','>=',startDateKey),
+      where('dateKey','<=',endDateKey),
+    ),
+  )
+  return snapshot.docs
+    .map(item=>({id:item.id,...item.data()} as StoredWageEntry))
+    .filter(entry=>entry.deleted===false)
+}
+
+export async function loadVoidsByMonth(monthKey:string):Promise<WageVoidRecord[]> {
+  if (!firebaseConfigured) throw new Error('Firebase is not configured')
+  const {startDateKey,endDateKey}=monthDateRange(monthKey)
+  const snapshot=await getDocs(
+    query(
+      collection(db,'fishHeadWageVoids'),
+      where('dateKey','>=',startDateKey),
+      where('dateKey','<=',endDateKey),
+    ),
+  )
+  return snapshot.docs.map(item=>({id:item.id,...item.data()} as WageVoidRecord))
+}
+
+export async function loadMonthlyWageData(monthKey:string):Promise<MonthlyWageData> {
+  const [entries,voids]=await Promise.all([
+    loadWageEntriesByMonth(monthKey),
+    loadVoidsByMonth(monthKey),
+  ])
+  return {monthKey,entries,voids}
 }
 
 export async function voidWageEntry(entry:StoredWageEntry,reason:string):Promise<void> {

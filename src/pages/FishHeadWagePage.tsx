@@ -169,7 +169,10 @@ export function FishHeadWagePage({
       <h1>Fish Head Wage</h1>
     </header>
 
-    <Link className="summary-link" to="/today">Today / Daily Summary</Link>
+    <nav className="summary-nav" aria-label="Wage summaries">
+      <Link className="summary-link" to="/today">Today / Daily Summary</Link>
+      <Link className="summary-link monthly" to="/monthly">Monthly Summary</Link>
+    </nav>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}
 

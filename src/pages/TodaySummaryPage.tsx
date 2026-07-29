@@ -1,6 +1,6 @@
 import { useEffect,useMemo,useRef,useState } from 'react'
-import { Link } from 'react-router-dom'
-import { malaysiaDateKey,money } from '../lib/wage'
+import { Link,useSearchParams } from 'react-router-dom'
+import { malaysiaDateKey,money,rmStringToCents } from '../lib/wage'
 import {
   loadDailyWageData,
   voidWageEntry,
@@ -30,10 +30,6 @@ const VOID_REASONS=[
   'Other',
 ] as const
 
-function cents(value:string){
-  return Math.round(Number(value)*100)
-}
-
 function timestampMillis(value:unknown){
   if(!value||typeof value!=='object')return 0
   const candidate=value as {toMillis?:()=>number}
@@ -62,7 +58,10 @@ export function TodaySummaryPage({
   loader=loadDailyWageData,
   voider=voidWageEntry,
 }:Props){
-  const [dateKey,setDateKey]=useState(()=>malaysiaDateKey())
+  const [searchParams]=useSearchParams()
+  const requestedDate=searchParams.get('date')
+  const initialDate=requestedDate&&/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)?requestedDate:malaysiaDateKey()
+  const [dateKey,setDateKey]=useState(initialDate)
   const [entries,setEntries]=useState<StoredWageEntry[]>([])
   const [voids,setVoids]=useState<WageVoidRecord[]>([])
   const [loading,setLoading]=useState(true)
@@ -122,7 +121,7 @@ export function TodaySummaryPage({
       }
       current.entries.push(entry)
       current.totalWeight+=entry.weightKg
-      current.totalWageCents+=cents(entry.wageRm)
+      current.totalWageCents+=rmStringToCents(entry.wageRm)
       grouped.set(key,current)
     }
 
@@ -133,7 +132,7 @@ export function TodaySummaryPage({
     workers:groups.length,
     baskets:entries.length,
     weight:entries.reduce((sum,entry)=>sum+entry.weightKg,0),
-    wageCents:entries.reduce((sum,entry)=>sum+cents(entry.wageRm),0),
+    wageCents:entries.reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0),
   }),[entries,groups.length])
 
   const resolvedReason=reason==='Other'?otherReason.trim():reason
@@ -184,6 +183,7 @@ export function TodaySummaryPage({
       <p className="eyebrow">CCM Fishery</p>
       <h1>Daily Summary</h1>
       <Link className="page-link" to="/">← Back to wage entry</Link>
+      <Link className="page-link" to="/monthly">Monthly Summary</Link>
     </header>
 
     <section className="date-filter">
