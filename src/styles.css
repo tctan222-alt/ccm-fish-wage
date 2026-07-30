@@ -547,3 +547,22 @@ html,body,#root,main{
 .pay-selected{position:sticky;bottom:8px;margin-top:12px}
 @media(max-width:380px){.purchase-filters,.receipt-form,.receipt-line,.receipt-actions,.confirm-receipt dl{grid-template-columns:1fr}.purchase-search,.receipt-form .wide,.receipt-line>strong:first-child,.line-amount,.receipt-line .danger-action{grid-column:1}.receipt-card{grid-template-columns:1fr}.receipt-card>div:last-child{text-align:left;justify-items:start}.monthly-receipt dl{grid-template-columns:1fr}}
 @media print{.purchase-month-controls,.pay-selected,.monthly-receipt button,.monthly-receipt .check-label{display:none!important}.monthly-receipt{break-inside:avoid}}
+
+.trip-list-totals{display:grid;justify-items:end;gap:.3rem}
+.trip-list-totals span{font-size:.85rem;color:#486581}
+.trip-summary-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin-bottom:1rem}
+.trip-summary-grid article{display:flex;flex-direction:column;gap:.3rem;background:#fff;border:2px solid #d9e2ec;border-radius:18px;padding:1rem}
+.trip-summary-grid small,.trip-summary-grid span{color:#486581}
+.trip-summary-grid strong{font-size:1.2rem}
+.trip-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem;margin:1rem 0}
+.inline-entry-form{background:#fff;border:2px solid #d9e2ec;border-radius:18px;padding:1rem;display:grid;gap:.75rem}
+.inline-entry-form h2{margin:0}
+.inline-entry-form label,.crew-pay-form label{display:grid;gap:.3rem;font-weight:800}
+.inline-entry-form input,.inline-entry-form select,.crew-pay-form input,.crew-pay-form select{width:100%;min-height:54px;padding:10px;border:2px solid #627d98;border-radius:10px;background:#fff;font:inherit}
+.inline-entry-form button,.crew-pay-form button{min-height:54px}
+.calculated-total{font-size:1.15rem;font-weight:800}
+.crew-pay-form{display:grid;grid-template-columns:1fr 1fr auto;gap:.6rem;align-items:end;margin-top:.8rem}
+.payment-history{display:flex;justify-content:space-between;align-items:center;gap:.6rem}
+.payment-history.voided{text-decoration:line-through;color:#627d98}
+.record-status.settled{background:#dbeafe;color:#075985}
+@media(max-width:700px){.trip-summary-grid,.trip-actions{grid-template-columns:1fr}.crew-pay-form{grid-template-columns:1fr}.trip-list-totals{justify-items:start}}
