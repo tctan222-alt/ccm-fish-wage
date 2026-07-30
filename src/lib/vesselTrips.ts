@@ -9,7 +9,39 @@ export interface VesselWageTemplate {
   name:string
   dayRateCents:number
   nightRateCents:number
+  captainDayRateCents?:number
+  captainNightRateCents?:number
+  crewDayRateCents?:number
+  crewNightRateCents?:number
+  crewHeadcount?:number
   active:boolean
+}
+
+export interface VesselCrewWageRate {
+  role:VesselCrewRole
+  headcount:number
+  dayRateCents:number
+  nightRateCents:number
+}
+
+export const DEFAULT_VESSEL_CREW_WAGE_RATES:VesselCrewWageRate[]=[
+  {role:'captain',headcount:1,dayRateCents:14000,nightRateCents:10000},
+  {role:'crew',headcount:4,dayRateCents:9000,nightRateCents:5000},
+]
+
+export function crewWageRateForRole(role:VesselCrewRole){
+  return DEFAULT_VESSEL_CREW_WAGE_RATES.find(item=>item.role===role)!
+}
+
+export function crewWageRateForTemplate(template:VesselWageTemplate|undefined,role:VesselCrewRole){
+  const fallback=crewWageRateForRole(role)
+  if(!template)return fallback
+  return role==='captain'
+    ?{...fallback,dayRateCents:template.captainDayRateCents??fallback.dayRateCents,
+      nightRateCents:template.captainNightRateCents??fallback.nightRateCents}
+    :{...fallback,headcount:template.crewHeadcount??fallback.headcount,
+      dayRateCents:template.crewDayRateCents??fallback.dayRateCents,
+      nightRateCents:template.crewNightRateCents??fallback.nightRateCents}
 }
 
 export const DEFAULT_VESSEL_WAGE_TEMPLATES:VesselWageTemplate[]=[

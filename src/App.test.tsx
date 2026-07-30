@@ -29,16 +29,16 @@ afterEach(cleanup)
 
 async function showLogin() {
   render(<App />)
-  expect(screen.getByRole('status')).toHaveTextContent('Loading CCM Fishery')
+  expect(screen.getByRole('status')).toHaveTextContent('正在载入 CCM Fishery')
   firebase.authState?.(null)
-  return screen.findByRole('heading', { name: 'Sign in' })
+  return screen.findByRole('heading', { name: '登录' })
 }
 
 describe('authentication gate', () => {
   it('shows login when unauthenticated and does not load wage services', async () => {
     await showLogin()
-    expect(screen.getByLabelText('Email')).toHaveAttribute('type', 'email')
-    expect(screen.getByLabelText('Password')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('电邮')).toHaveAttribute('type', 'email')
+    expect(screen.getByLabelText('密码')).toHaveAttribute('type', 'password')
     expect(firebase.wageScreen).not.toHaveBeenCalled()
   })
 
@@ -51,19 +51,19 @@ describe('authentication gate', () => {
   it('signs in with the entered credentials', async () => {
     firebase.signIn.mockResolvedValue({})
     await showLogin()
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' admin@example.test ' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'test-password' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }))
+    fireEvent.change(screen.getByLabelText('电邮'), { target: { value: ' admin@example.test ' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'test-password' } })
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
     await waitFor(() => expect(firebase.signIn).toHaveBeenCalledWith({}, 'admin@example.test', 'test-password'))
   })
 
   it('displays a friendly invalid-credential message without a raw code', async () => {
     firebase.signIn.mockRejectedValue({ code: 'auth/invalid-credential' })
     await showLogin()
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.test' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'bad' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Sign In' }))
-    expect(await screen.findByRole('alert')).toHaveTextContent('The email or password is incorrect.')
+    fireEvent.change(screen.getByLabelText('电邮'), { target: { value: 'a@b.test' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'bad' } })
+    fireEvent.click(screen.getByRole('button', { name: '登录' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('电邮或密码不正确。')
     expect(screen.getByRole('alert')).not.toHaveTextContent('auth/')
   })
 
@@ -71,11 +71,11 @@ describe('authentication gate', () => {
     let resolve = () => {}
     firebase.signIn.mockImplementation(() => new Promise(done => { resolve = () => done({}) }))
     await showLogin()
-    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'a@b.test' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'password' } })
-    const button = screen.getByRole('button', { name: 'Sign In' })
+    fireEvent.change(screen.getByLabelText('电邮'), { target: { value: 'a@b.test' } })
+    fireEvent.change(screen.getByLabelText('密码'), { target: { value: 'password' } })
+    const button = screen.getByRole('button', { name: '登录' })
     fireEvent.click(button); fireEvent.click(button)
-    expect(screen.getByRole('button', { name: 'Signing in…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '登录中…' })).toBeDisabled()
     expect(firebase.signIn).toHaveBeenCalledOnce()
     resolve()
   })
@@ -83,7 +83,7 @@ describe('authentication gate', () => {
   it('signs out', async () => {
     render(<App />)
     firebase.authState?.({ uid: 'admin' } as User)
-    fireEvent.click(await screen.findByRole('button', { name: 'Sign Out' }))
+    fireEvent.click(await screen.findByRole('button', { name: '退出登录' }))
     expect(firebase.signOut).toHaveBeenCalledWith({})
   })
 })

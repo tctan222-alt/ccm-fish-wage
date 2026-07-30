@@ -1,0 +1,19 @@
+{
+  "name": "CCM Fishery 现场称重",
+  "short_name": "CCM 称重",
+  "description": "CCM Fishery iPhone 现场称重录入",
+  "lang": "zh-Hans",
+  "start_url": "/weighing/new",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f8fb",
+  "theme_color": "#075985",
+  "icons": [
+    {
+      "src": "/weighing-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

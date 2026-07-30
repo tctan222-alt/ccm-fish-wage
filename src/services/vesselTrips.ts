@@ -44,7 +44,15 @@ function dataCrew(id:string,data:Record<string,unknown>):VesselCrewSettlement{
 
 export async function loadVesselWageTemplates():Promise<VesselWageTemplate[]>{
   const snapshot=await getDocs(collection(db,'vesselWageTemplates'))
-  const stored=snapshot.docs.map(item=>({id:item.id,...item.data()} as VesselWageTemplate))
+  const stored=snapshot.docs.map(item=>{
+    const data=item.data(),fallback=DEFAULT_VESSEL_WAGE_TEMPLATES.find(value=>value.vesselCode===data.vesselCode)
+    return {id:item.id,vesselId:String(data.vesselId??''),vesselCode:String(data.vesselCode??''),
+      name:String(data.name??''),active:data.active===true,captainDayRateCents:Number(data.captainDayRateCents??14000),
+      captainNightRateCents:Number(data.captainNightRateCents??10000),crewDayRateCents:Number(data.crewDayRateCents??9000),
+      crewNightRateCents:Number(data.crewNightRateCents??5000),crewHeadcount:Number(data.crewHeadcount??4),
+      dayRateCents:Number(data.dayRateCents??fallback?.dayRateCents??50000),
+      nightRateCents:Number(data.nightRateCents??fallback?.nightRateCents??30000)} satisfies VesselWageTemplate
+  })
   const codes=new Set(stored.map(item=>item.vesselCode))
   return [...stored,...DEFAULT_VESSEL_WAGE_TEMPLATES.filter(item=>!codes.has(item.vesselCode))]
     .sort((a,b)=>a.vesselCode.localeCompare(b.vesselCode))
@@ -52,10 +60,15 @@ export async function loadVesselWageTemplates():Promise<VesselWageTemplate[]>{
 
 export async function saveVesselWageTemplate(value:VesselWageTemplate){
   const user=requireUser()
-  if(!value.vesselCode.trim()||!Number.isInteger(value.dayRateCents)||value.dayRateCents<0||
-    !Number.isInteger(value.nightRateCents)||value.nightRateCents<0)throw new Error('Valid vessel and integer-cent rates are required.')
+  const captainDay=value.captainDayRateCents??14000,captainNight=value.captainNightRateCents??10000
+  const crewDay=value.crewDayRateCents??9000,crewNight=value.crewNightRateCents??5000,headcount=value.crewHeadcount??4
+  if(!value.vesselCode.trim()||![captainDay,captainNight,crewDay,crewNight,headcount].every(Number.isInteger)
+    ||Math.min(captainDay,captainNight,crewDay,crewNight)<0||headcount<1)throw new Error('Valid vessel and integer-cent rates are required.')
   const ref=value.id.startsWith('default-')?doc(collection(db,'vesselWageTemplates')):doc(db,'vesselWageTemplates',value.id)
-  const result={...value,id:ref.id,vesselCode:value.vesselCode.trim(),name:value.name.trim()}
+  const result={...value,id:ref.id,vesselCode:value.vesselCode.trim(),name:value.name.trim(),
+    captainDayRateCents:captainDay,captainNightRateCents:captainNight,crewDayRateCents:crewDay,
+    crewNightRateCents:crewNight,crewHeadcount:headcount,
+    dayRateCents:captainDay+crewDay*headcount,nightRateCents:captainNight+crewNight*headcount}
   const existing=await getDoc(ref),timestamp=serverTimestamp()
   await setDoc(ref,{...result,createdBy:existing.exists()?existing.data().createdBy:user.uid,
     createdAt:existing.exists()?existing.data().createdAt:timestamp,updatedBy:user.uid,updatedAt:timestamp})

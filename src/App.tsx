@@ -20,9 +20,13 @@ const PurchaseCategoriesPage = lazy(() => import('./pages/PurchaseCategoriesPage
 const VesselTripsPage = lazy(() => import('./pages/VesselTripsPage').then(module => ({ default: module.VesselTripsPage })))
 const VesselTripPage = lazy(() => import('./pages/VesselTripPage').then(module => ({ default: module.VesselTripPage })))
 const VesselWageTemplatesPage = lazy(() => import('./pages/VesselWageTemplatesPage').then(module => ({ default: module.VesselWageTemplatesPage })))
+const WeighingEntryPage = lazy(() => import('./pages/WeighingEntryPage').then(module => ({ default: module.WeighingEntryPage })))
+const WeighingSessionsPage = lazy(() => import('./pages/WeighingSessionsPage').then(module => ({ default: module.WeighingSessionsPage })))
+const WeighingReviewPage = lazy(() => import('./pages/WeighingReviewPage').then(module => ({ default: module.WeighingReviewPage })))
+const FishSpeciesPage = lazy(() => import('./pages/FishSpeciesPage').then(module => ({ default: module.FishSpeciesPage })))
 
 function LoadingScreen() {
-  return <main className="loading-screen" role="status"><strong>Loading CCM Fishery…</strong></main>
+  return <main className="loading-screen" role="status"><strong>正在载入 CCM Fishery…</strong></main>
 }
 
 function AuthenticatedApp() {
@@ -31,7 +35,7 @@ function AuthenticatedApp() {
   if (!user) return <LoginPage />
 
   return <BrowserRouter>
-    <button className="sign-out" type="button" onClick={() => void signOut(auth)}>Sign Out</button>
+    <button className="sign-out" type="button" onClick={() => void signOut(auth)}>退出登录</button>
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
         <Route path="/" element={<FishHeadWagePage />} />
@@ -51,6 +55,11 @@ function AuthenticatedApp() {
         <Route path="/vessel-trips/new" element={<VesselTripPage />} />
         <Route path="/vessel-trips/:tripId" element={<VesselTripPage />} />
         <Route path="/vessel-wage-templates" element={<VesselWageTemplatesPage />} />
+        <Route path="/weighing" element={<WeighingSessionsPage />} />
+        <Route path="/weighing/new" element={<WeighingEntryPage />} />
+        <Route path="/weighing/:sessionId" element={<WeighingEntryPage />} />
+        <Route path="/weighing/:sessionId/review" element={<WeighingReviewPage />} />
+        <Route path="/fish-species" element={<FishSpeciesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

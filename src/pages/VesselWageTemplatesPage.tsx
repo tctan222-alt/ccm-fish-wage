@@ -1,6 +1,6 @@
 import { useEffect,useState,type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
-import type { VesselWageTemplate } from '../lib/vesselTrips'
+import { crewWageRateForTemplate,type VesselWageTemplate } from '../lib/vesselTrips'
 import { loadVesselWageTemplates,saveVesselWageTemplate } from '../services/vesselTrips'
 
 export function VesselWageTemplatesPage({loader=loadVesselWageTemplates,saver=saveVesselWageTemplate}:{
@@ -16,6 +16,10 @@ export function VesselWageTemplatesPage({loader=loadVesselWageTemplates,saver=sa
       <div className="master-card-heading"><div><small>Vessel {item.vesselCode}</small><h2>{item.name}</h2></div>
         <span className={`record-status ${item.active?'active':'inactive'}`}>{item.active?'Active':'Inactive'}</span></div>
       <p>Day RM {(item.dayRateCents/100).toFixed(2)} · Night RM {(item.nightRateCents/100).toFixed(2)}</p>
+      {(['captain','crew'] as const).map(role=>crewWageRateForTemplate(item,role)).map(rate=><p key={rate.role}>
+        {rate.role==='captain'?'Captain':'4 crew'}: {rate.role==='crew'&&'each '}
+        RM {(rate.dayRateCents/100).toFixed(2)}/day · RM {(rate.nightRateCents/100).toFixed(2)}/night
+      </p>)}
       <button onClick={()=>setEditing(item)}>Edit Rates</button>
     </article>)}</div>
     {editing&&<TemplateDialog item={editing} close={()=>setEditing(null)} save={async next=>{const saved=await saver(next)
@@ -24,15 +28,26 @@ export function VesselWageTemplatesPage({loader=loadVesselWageTemplates,saver=sa
 }
 
 function TemplateDialog({item,save,close}:{item:VesselWageTemplate;save:(value:VesselWageTemplate)=>Promise<void>;close:()=>void}){
-  const [name,setName]=useState(item.name),[day,setDay]=useState((item.dayRateCents/100).toFixed(2)),[night,setNight]=useState((item.nightRateCents/100).toFixed(2))
+  const captain=crewWageRateForTemplate(item,'captain'),crew=crewWageRateForTemplate(item,'crew')
+  const [name,setName]=useState(item.name)
+  const [captainDay,setCaptainDay]=useState((captain.dayRateCents/100).toFixed(2))
+  const [captainNight,setCaptainNight]=useState((captain.nightRateCents/100).toFixed(2))
+  const [crewDay,setCrewDay]=useState((crew.dayRateCents/100).toFixed(2))
+  const [crewNight,setCrewNight]=useState((crew.nightRateCents/100).toFixed(2))
+  const [headcount,setHeadcount]=useState(String(crew.headcount))
   const [error,setError]=useState(''),[busy,setBusy]=useState(false)
   async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError('')
-    try{await save({...item,name,dayRateCents:Math.round(Number(day)*100),nightRateCents:Math.round(Number(night)*100)})}
+    try{await save({...item,name,captainDayRateCents:Math.round(Number(captainDay)*100),
+      captainNightRateCents:Math.round(Number(captainNight)*100),crewDayRateCents:Math.round(Number(crewDay)*100),
+      crewNightRateCents:Math.round(Number(crewNight)*100),crewHeadcount:Number(headcount)})}
     catch(problem){setError(problem instanceof Error?problem.message:'Template was not saved.');setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>Edit {item.vesselCode} Wage Template</h2>
     <form className="master-form" onSubmit={submit}><label>Template name<input value={name} onChange={e=>setName(e.target.value)}/></label>
-      <label>Day rate (RM)<input inputMode="decimal" value={day} onChange={e=>setDay(e.target.value)}/></label>
-      <label>Night rate (RM)<input inputMode="decimal" value={night} onChange={e=>setNight(e.target.value)}/></label>
+      <label>Captain day rate (RM)<input inputMode="decimal" value={captainDay} onChange={e=>setCaptainDay(e.target.value)}/></label>
+      <label>Captain night rate (RM)<input inputMode="decimal" value={captainNight} onChange={e=>setCaptainNight(e.target.value)}/></label>
+      <label>Crew headcount<input type="number" min="1" value={headcount} onChange={e=>setHeadcount(e.target.value)}/></label>
+      <label>Each crew day rate (RM)<input inputMode="decimal" value={crewDay} onChange={e=>setCrewDay(e.target.value)}/></label>
+      <label>Each crew night rate (RM)<input inputMode="decimal" value={crewNight} onChange={e=>setCrewNight(e.target.value)}/></label>
       {error&&<p className="error" role="alert">{error}</p>}<button className="primary-action" disabled={busy}>{busy?'Saving…':'Save Template'}</button>
       <button type="button" onClick={close} disabled={busy}>Cancel</button></form></section></div>
 }

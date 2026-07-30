@@ -18,6 +18,9 @@ function lineFrom(id:string,data:DocumentData):PurchaseReceiptLine{
   return {id,lineNo:Number(data.lineNo),categoryId:String(data.categoryId),categoryCodeSnapshot:String(data.categoryCodeSnapshot),
     categoryNameSnapshot:String(data.categoryNameSnapshot),basketCount:Number(data.basketCount),weightGrams:Number(data.weightGrams),
     unitPriceCentsPerKg:Number(data.unitPriceCentsPerKg),amountCents:Number(data.amountCents),notes:String(data.notes??''),
+    sourceWeighingSessionId:data.sourceWeighingSessionId?String(data.sourceWeighingSessionId):null,
+    productType:data.productType??null,fishSpeciesCode:data.fishSpeciesCode?String(data.fishSpeciesCode):null,
+    fishMealQuality:data.fishMealQuality??null,
     createdAt:data.createdAt,updatedAt:data.updatedAt}
 }
 const line=(item:QueryDocumentSnapshot<DocumentData>)=>lineFrom(item.id,item.data())
@@ -30,6 +33,7 @@ function receipt(id:string,data:DocumentData,lines:PurchaseReceiptLine[]=[]):Pur
     paymentStatus:data.paymentStatus,notes:String(data.notes??''),duplicateAcknowledged:data.duplicateAcknowledged===true,lines,
     createdBy:data.createdBy,createdAt:data.createdAt,updatedBy:data.updatedBy,updatedAt:data.updatedAt,lastActionId:String(data.lastActionId??''),
     lineIds:Array.isArray(data.lineIds)?data.lineIds.map(String):[],draftVersion:Number(data.draftVersion??0),
+    sourceWeighingSessionId:data.sourceWeighingSessionId?String(data.sourceWeighingSessionId):null,
     confirmedBy:data.confirmedBy??null,confirmedAt:data.confirmedAt??null,voidedBy:data.voidedBy??null,voidedAt:data.voidedAt??null,
     voidReason:data.voidReason??null}
 }
@@ -40,6 +44,7 @@ function receiptData(value:PurchaseReceipt,userId:string,isCreate:boolean,lastAc
     supplierNameSnapshot:value.supplierNameSnapshot,vesselId:value.vesselId,vesselCodeSnapshot:value.vesselCodeSnapshot,
     vesselNameSnapshot:value.vesselNameSnapshot,status:'draft',...totals,paidCents:0,paymentStatus:'unpaid',notes:value.notes.trim(),
     duplicateAcknowledged:value.duplicateAcknowledged,updatedBy:userId,updatedAt:serverTimestamp(),lastActionId,lineIds,draftVersion,
+    sourceWeighingSessionId:value.sourceWeighingSessionId??null,
     ...(isCreate?{createdBy:userId,createdAt:serverTimestamp(),confirmedBy:null,confirmedAt:null,voidedBy:null,voidedAt:null,voidReason:null}:{})}
 }
 function actionData(type:string,value:PurchaseReceipt,userId:string,extra:Record<string,unknown>={}){
@@ -50,7 +55,9 @@ function lineData(value:PurchaseReceiptLine,isCreate:boolean){
   return {lineNo:value.lineNo,categoryId:value.categoryId,categoryCodeSnapshot:value.categoryCodeSnapshot,
     categoryNameSnapshot:value.categoryNameSnapshot,basketCount:value.basketCount,weightGrams:value.weightGrams,
     unitPriceCentsPerKg:value.unitPriceCentsPerKg,amountCents:lineAmountCents(value.weightGrams,value.unitPriceCentsPerKg),
-    notes:value.notes.trim(),updatedAt:serverTimestamp(),...(isCreate?{createdAt:serverTimestamp()}:{})}
+    notes:value.notes.trim(),sourceWeighingSessionId:value.sourceWeighingSessionId??null,productType:value.productType??null,
+    fishSpeciesCode:value.fishSpeciesCode??null,fishMealQuality:value.fishMealQuality??null,
+    updatedAt:serverTimestamp(),...(isCreate?{createdAt:serverTimestamp()}:{})}
 }
 
 export async function loadPurchaseReceipts(){
