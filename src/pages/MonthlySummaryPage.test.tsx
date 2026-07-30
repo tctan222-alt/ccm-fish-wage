@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { MonthlySummaryPage } from './MonthlySummaryPage'
 import type { MonthlyWageData } from '../services/wages'
+import type { WageMonthClosingData } from '../services/monthClosing'
 
 afterEach(()=>{
   vi.useRealTimers()
@@ -64,9 +65,10 @@ const data:MonthlyWageData={
 }
 
 function setup(loader=vi.fn(async()=>data),requestTimeoutMs?:number){
+  const closingLoader=vi.fn(async():Promise<WageMonthClosingData>=>({month:null,statements:[],payments:[]}))
   render(
     <MemoryRouter>
-      <MonthlySummaryPage loader={loader} requestTimeoutMs={requestTimeoutMs}/>
+      <MonthlySummaryPage loader={loader} closingLoader={closingLoader} requestTimeoutMs={requestTimeoutMs}/>
     </MemoryRouter>,
   )
   return loader

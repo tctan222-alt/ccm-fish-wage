@@ -4,6 +4,30 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
 
+    function monthPath(monthKey) {
+      return /databases/$(database)/documents/fishHeadWageMonths/$(monthKey);
+    }
+
+    function monthKeyForDate(dateKey) { return dateKey[0:7]; }
+
+    function monthOpenAfter(dateKey) {
+      let path = monthPath(monthKeyForDate(dateKey));
+      return !existsAfter(path)
+        || (getAfter(path).data.status == 'open' && getAfter(path).data.closingToken == null);
+    }
+
+    function actionPath(monthKey, actionId) {
+      return /databases/$(database)/documents/fishHeadWageMonths/$(monthKey)/actions/$(actionId);
+    }
+
+    function paymentPath(monthKey, paymentId) {
+      return /databases/$(database)/documents/fishHeadWageMonths/$(monthKey)/payments/$(paymentId);
+    }
+
+    function statementPath(monthKey, statementId) {
+      return /databases/$(database)/documents/fishHeadWageMonths/$(monthKey)/statements/$(statementId);
+    }
+
     function validWorker(data) {
       return data.keys().hasOnly(['name', 'active', 'order'])
         && data.keys().hasAll(['name', 'active', 'order'])
@@ -31,6 +55,188 @@ service cloud.firestore {
         && data.deleted is bool;
     }
 
+    function validMonth(data) {
+      return data.keys().hasOnly([
+          'monthKey', 'status', 'closeVersion', 'workerCount', 'basketCount',
+          'totalWeightKg', 'totalWageCents', 'paidCents', 'closedBy', 'closedAt',
+          'reopenedBy', 'reopenedAt', 'updatedAt', 'lastActionId',
+          'closingToken', 'closingBy', 'closingAt', 'statementIds'
+        ])
+        && data.keys().hasAll([
+          'monthKey', 'status', 'closeVersion', 'workerCount', 'basketCount',
+          'totalWeightKg', 'totalWageCents', 'paidCents', 'closedBy', 'closedAt',
+          'reopenedBy', 'reopenedAt', 'updatedAt', 'lastActionId',
+          'closingToken', 'closingBy', 'closingAt', 'statementIds'
+        ])
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.status in ['open', 'closed']
+        && data.closeVersion is int && data.closeVersion >= 0
+        && data.workerCount is int && data.workerCount >= 0
+        && data.basketCount is int && data.basketCount >= 0
+        && data.totalWeightKg is int && data.totalWeightKg >= 0
+        && data.totalWageCents is int && data.totalWageCents >= 0
+        && data.paidCents is int && data.paidCents >= 0 && data.paidCents <= data.totalWageCents
+        && (data.closedBy == null || (data.closedBy is string && data.closedBy.size() > 0))
+        && (data.closedAt == null || data.closedAt is timestamp)
+        && (data.reopenedBy == null || data.reopenedBy is string)
+        && (data.reopenedAt == null || data.reopenedAt is timestamp)
+        && data.updatedAt is timestamp
+        && data.lastActionId is string && data.lastActionId.size() > 0
+        && (data.closingToken == null || (data.closingToken is string && data.closingToken.size() > 0))
+        && (data.closingBy == null || (data.closingBy is string && data.closingBy.size() > 0))
+        && (data.closingAt == null || data.closingAt is timestamp)
+        && data.statementIds is list
+        && (
+          (data.status == 'open'
+            && data.closingToken == null && data.closingBy == null && data.closingAt == null)
+          ||
+          (data.status == 'open'
+            && data.closingToken is string && data.closingBy is string && data.closingAt is timestamp)
+          ||
+          (data.status == 'closed'
+            && data.closeVersion >= 1 && data.workerCount >= 1 && data.basketCount >= 1
+            && data.totalWeightKg >= 1 && data.totalWageCents >= 1
+            && data.closedBy is string && data.closedAt is timestamp
+            && data.closingToken == null && data.closingBy == null && data.closingAt == null
+            && data.statementIds.size() == data.workerCount)
+        );
+    }
+
+    function validRateBreakdown(data) {
+      return data is map
+        && data.keys().hasOnly(['rate12Cents', 'rate15Cents', 'rate18Cents', 'customCents'])
+        && data.keys().hasAll(['rate12Cents', 'rate15Cents', 'rate18Cents', 'customCents'])
+        && data.rate12Cents is int && data.rate12Cents >= 0
+        && data.rate15Cents is int && data.rate15Cents >= 0
+        && data.rate18Cents is int && data.rate18Cents >= 0
+        && data.customCents is int && data.customCents >= 0;
+    }
+
+    function validStatement(data) {
+      return data.keys().hasOnly([
+          'id', 'monthKey', 'closeVersion', 'workerId', 'workerName',
+          'basketCount', 'totalWeightKg', 'wageCents', 'paidCents',
+          'rateBreakdown', 'snapshotAt', 'createdBy', 'lastActionId'
+        ])
+        && data.keys().hasAll([
+          'id', 'monthKey', 'closeVersion', 'workerId', 'workerName',
+          'basketCount', 'totalWeightKg', 'wageCents', 'paidCents',
+          'rateBreakdown', 'snapshotAt', 'createdBy', 'lastActionId'
+        ])
+        && data.id is string && data.id.size() > 0
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.closeVersion is int && data.closeVersion >= 1
+        && data.workerId is string && data.workerId.size() > 0
+        && data.workerName is string && data.workerName.size() > 0 && data.workerName.size() <= 100
+        && data.basketCount is int && data.basketCount >= 1
+        && data.totalWeightKg is int && data.totalWeightKg >= 1
+        && data.wageCents is int && data.wageCents >= 1
+        && data.paidCents is int && data.paidCents >= 0 && data.paidCents <= data.wageCents
+        && validRateBreakdown(data.rateBreakdown)
+        && data.rateBreakdown.rate12Cents + data.rateBreakdown.rate15Cents
+          + data.rateBreakdown.rate18Cents + data.rateBreakdown.customCents == data.wageCents
+        && data.snapshotAt is timestamp
+        && data.createdBy is string && data.createdBy.size() > 0
+        && data.lastActionId is string && data.lastActionId.size() > 0;
+    }
+
+    function validPayment(data) {
+      return data.keys().hasOnly([
+          'monthKey', 'closeVersion', 'workerId', 'workerName', 'statementId',
+          'amountCents', 'method', 'paymentDate', 'reference', 'note',
+          'createdBy', 'createdAt', 'voided', 'voidReason', 'voidedBy', 'voidedAt'
+        ])
+        && data.keys().hasAll([
+          'monthKey', 'closeVersion', 'workerId', 'workerName', 'statementId',
+          'amountCents', 'method', 'paymentDate', 'reference', 'note',
+          'createdBy', 'createdAt', 'voided', 'voidReason', 'voidedBy', 'voidedAt'
+        ])
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.closeVersion is int && data.closeVersion >= 1
+        && data.workerId is string && data.workerId.size() > 0
+        && data.workerName is string && data.workerName.size() > 0 && data.workerName.size() <= 100
+        && data.statementId is string && data.statementId.size() > 0
+        && data.amountCents is int && data.amountCents > 0
+        && data.method in ['cash', 'bank', 'other']
+        && data.paymentDate is string && data.paymentDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.reference is string && data.reference.size() <= 100
+        && data.note is string && data.note.size() <= 500
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.voided is bool
+        && (data.voidReason == null || data.voidReason is string)
+        && (data.voidedBy == null || data.voidedBy is string)
+        && (data.voidedAt == null || data.voidedAt is timestamp);
+    }
+
+    function validAction(data) {
+      return data.keys().hasOnly([
+          'type', 'monthKey', 'closeVersion', 'workerId', 'paymentId', 'reason',
+          'performedBy', 'performedAt', 'beforeSnapshot', 'afterSnapshot'
+        ])
+        && data.keys().hasAll(['type', 'monthKey', 'closeVersion', 'performedBy', 'performedAt'])
+        && data.type in ['close', 'reopen', 'payment_create', 'payment_void']
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
+        && data.closeVersion is int && data.closeVersion >= 1
+        && data.performedBy == request.auth.uid
+        && data.performedAt == request.time
+        && (!('workerId' in data) || data.workerId is string)
+        && (!('paymentId' in data) || data.paymentId is string)
+        && (!('reason' in data) || (data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 100))
+        && (
+          (data.type == 'close' && 'afterSnapshot' in data)
+          || (data.type == 'reopen' && 'reason' in data && 'beforeSnapshot' in data && 'afterSnapshot' in data)
+          || (data.type == 'payment_create' && 'workerId' in data && 'paymentId' in data && 'afterSnapshot' in data)
+          || (data.type == 'payment_void' && 'workerId' in data && 'paymentId' in data
+            && 'reason' in data && 'beforeSnapshot' in data && 'afterSnapshot' in data)
+        );
+    }
+
+    function validCloseAction(monthKey, version, actionId) {
+      let month = getAfter(monthPath(monthKey)).data;
+      let action = getAfter(actionPath(monthKey, actionId)).data;
+      return actionId == 'close_' + string(version)
+        && existsAfter(actionPath(monthKey, actionId))
+        && action.type == 'close'
+        && action.monthKey == monthKey
+        && action.closeVersion == version
+        && action.afterSnapshot.monthKey == month.monthKey
+        && action.afterSnapshot.status == month.status
+        && action.afterSnapshot.closeVersion == month.closeVersion
+        && action.afterSnapshot.workerCount == month.workerCount
+        && action.afterSnapshot.basketCount == month.basketCount
+        && action.afterSnapshot.totalWeightKg == month.totalWeightKg
+        && action.afterSnapshot.totalWageCents == month.totalWageCents
+        && action.afterSnapshot.paidCents == month.paidCents
+        && action.afterSnapshot.statementIds == month.statementIds;
+    }
+
+    function validPaymentMonthUpdate(monthKey) {
+      let action = getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data;
+      let payment = getAfter(paymentPath(monthKey, action.paymentId)).data;
+      return resource.data.status == 'closed'
+        && request.resource.data.status == 'closed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'updatedAt', 'lastActionId'])
+        && request.resource.data.updatedAt == request.time
+        && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
+        && existsAfter(paymentPath(monthKey, action.paymentId))
+        && action.monthKey == monthKey
+        && action.closeVersion == resource.data.closeVersion
+        && payment.closeVersion == resource.data.closeVersion
+        && (
+          (action.type == 'payment_create'
+            && request.resource.data.lastActionId == 'payment_create_' + action.paymentId
+            && payment.voided == false
+            && payment.createdAt == request.time
+            && request.resource.data.paidCents == resource.data.paidCents + payment.amountCents)
+          ||
+          (action.type == 'payment_void'
+            && request.resource.data.lastActionId == 'payment_void_' + action.paymentId
+            && payment.voided == true
+            && payment.voidedAt == request.time
+            && request.resource.data.paidCents == resource.data.paidCents - payment.amountCents)
+        );
+    }
+
     match /workers/{workerId} {
       allow read: if signedIn();
       allow create, update: if signedIn() && validWorker(request.resource.data);
@@ -43,17 +249,18 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.deleted == false
         && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time;
-      // The only client update currently permitted is a one-way soft delete.
+        && request.resource.data.updatedAt == request.time
+        && monthOpenAfter(request.resource.data.dateKey);
       allow update: if signedIn() && validWageEntry(request.resource.data)
         && resource.data.deleted == false && request.resource.data.deleted == true
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'updatedAt'])
-        && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedAt == request.time
+        && monthOpenAfter(resource.data.dateKey);
       allow delete: if false;
     }
+
     match /fishHeadWageVoids/{voidId} {
       allow read: if signedIn();
-
       allow create: if signedIn()
         && request.resource.data.keys().hasOnly([
           'entryId', 'dateKey', 'workerId', 'workerName', 'weightKg',
@@ -63,52 +270,223 @@ service cloud.firestore {
           'entryId', 'dateKey', 'workerId', 'workerName', 'weightKg',
           'rateRm', 'wageRm', 'voidReason', 'voidedBy', 'voidedAt'
         ])
-        && request.resource.data.entryId is string
         && request.resource.data.entryId == voidId
-        && request.resource.data.dateKey is string
-        && request.resource.data.workerId is string
-        && request.resource.data.workerName is string
-        && request.resource.data.workerName.size() > 0
-        && request.resource.data.workerName.size() <= 100
-        && request.resource.data.weightKg is int
-        && request.resource.data.weightKg >= 1
-        && request.resource.data.weightKg <= 300
-        && request.resource.data.rateRm is string
-        && request.resource.data.rateRm.matches('^[0-9][.][0-9]{2}$')
-        && request.resource.data.wageRm is string
-        && request.resource.data.wageRm.matches('^[0-9]+[.][0-9]{2}$')
-        && request.resource.data.voidReason is string
-        && request.resource.data.voidReason.size() > 0
-        && request.resource.data.voidReason.size() <= 100
+        && request.resource.data.workerName is string && request.resource.data.workerName.size() > 0
+        && request.resource.data.weightKg is int && request.resource.data.weightKg >= 1 && request.resource.data.weightKg <= 300
+        && request.resource.data.rateRm is string && request.resource.data.rateRm.matches('^[0-9][.][0-9]{2}$')
+        && request.resource.data.wageRm is string && request.resource.data.wageRm.matches('^[0-9]+[.][0-9]{2}$')
+        && request.resource.data.voidReason is string && request.resource.data.voidReason.size() > 0 && request.resource.data.voidReason.size() <= 100
         && request.resource.data.voidedBy == request.auth.uid
         && request.resource.data.voidedAt == request.time
-        && get(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.deleted == false
-        && getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.deleted == true
-        && request.resource.data.dateKey == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.dateKey
-        && request.resource.data.workerId == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.workerId
-        && request.resource.data.workerName == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.workerName
-        && request.resource.data.weightKg == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.weightKg
-        && request.resource.data.rateRm == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.rateRm
-        && request.resource.data.wageRm == getAfter(
-          /databases/$(database)/documents/fishHeadWageEntries/$(voidId)
-        ).data.wageRm;
-
+        && monthOpenAfter(request.resource.data.dateKey)
+        && get(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == false
+        && getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == true
+        && request.resource.data.dateKey == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.dateKey
+        && request.resource.data.workerId == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerId
+        && request.resource.data.workerName == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerName
+        && request.resource.data.weightKg == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.weightKg
+        && request.resource.data.rateRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.rateRm
+        && request.resource.data.wageRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.wageRm;
       allow update, delete: if false;
+    }
+
+    match /fishHeadWageMonths/{monthKey} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validMonth(request.resource.data)
+        && request.resource.data.monthKey == monthKey
+        && request.resource.data.status == 'open'
+        && request.resource.data.closeVersion == 0
+        && request.resource.data.workerCount == 0
+        && request.resource.data.basketCount == 0
+        && request.resource.data.totalWeightKg == 0
+        && request.resource.data.totalWageCents == 0
+        && request.resource.data.paidCents == 0
+        && request.resource.data.closedBy == null
+        && request.resource.data.closedAt == null
+        && request.resource.data.closingToken is string
+        && request.resource.data.closingBy == request.auth.uid
+        && request.resource.data.closingAt == request.time
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastActionId == 'closing_lock'
+        && request.resource.data.statementIds.size() == 0;
+      allow update: if signedIn() && validMonth(request.resource.data)
+        && request.resource.data.monthKey == resource.data.monthKey
+        && (
+          (resource.data.status == 'open'
+            && (resource.data.closingToken == null
+              || request.time >= resource.data.closingAt + duration.value(5, 'm'))
+            && request.resource.data.status == 'open'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
+            && request.resource.data.closingToken is string
+            && request.resource.data.closingBy == request.auth.uid
+            && request.resource.data.closingAt == request.time
+            && request.resource.data.updatedAt == request.time)
+          ||
+          (resource.data.status == 'open'
+            && resource.data.closingToken is string
+            && resource.data.closingBy == request.auth.uid
+            && request.resource.data.status == 'closed'
+            && request.resource.data.closeVersion == resource.data.closeVersion + 1
+            && request.resource.data.paidCents == 0
+            && request.resource.data.closedBy == request.auth.uid
+            && request.resource.data.closedAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.closingToken == null
+            && request.resource.data.closingBy == null
+            && request.resource.data.closingAt == null
+            && validCloseAction(monthKey, request.resource.data.closeVersion, request.resource.data.lastActionId))
+          ||
+          (resource.data.status == 'open'
+            && resource.data.closingToken is string
+            && resource.data.closingBy == request.auth.uid
+            && request.resource.data.status == 'open'
+            && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
+            && request.resource.data.closingToken == null
+            && request.resource.data.closingBy == null
+            && request.resource.data.closingAt == null
+            && request.resource.data.updatedAt == request.time)
+          ||
+          (resource.data.status == 'closed'
+            && resource.data.paidCents == 0
+            && request.resource.data.status == 'open'
+            && request.resource.data.closeVersion == resource.data.closeVersion
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'reopenedBy', 'reopenedAt', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.reopenedBy == request.auth.uid
+            && request.resource.data.reopenedAt == request.time
+            && request.resource.data.updatedAt == request.time
+            && request.resource.data.lastActionId == 'reopen_' + string(resource.data.closeVersion)
+            && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'reopen'
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.reason is string
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.performedBy == request.auth.uid
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.beforeSnapshot.status == 'closed'
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.beforeSnapshot.paidCents == 0
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.afterSnapshot.status == 'open'
+            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.afterSnapshot.paidCents == 0)
+          ||
+          validPaymentMonthUpdate(monthKey)
+        );
+      allow delete: if false;
+
+      match /statements/{statementId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validStatement(request.resource.data)
+          && request.resource.data.id == statementId
+          && request.resource.data.monthKey == monthKey
+          && request.resource.data.paidCents == 0
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.snapshotAt == request.time
+          && getAfter(monthPath(monthKey)).data.status == 'closed'
+          && request.resource.data.closeVersion == getAfter(monthPath(monthKey)).data.closeVersion
+          && request.resource.data.lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
+          && statementId in getAfter(monthPath(monthKey)).data.statementIds
+          && validCloseAction(monthKey, request.resource.data.closeVersion, request.resource.data.lastActionId);
+        allow update: if signedIn() && validStatement(request.resource.data)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'lastActionId'])
+          && request.resource.data.closeVersion == resource.data.closeVersion
+          && request.resource.data.lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
+          && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
+          && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.workerId == resource.data.workerId
+          && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.closeVersion == resource.data.closeVersion
+          && (
+            (getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'payment_create'
+              && request.resource.data.paidCents == resource.data.paidCents
+                + getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.paymentId)).data.amountCents)
+            ||
+            (getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'payment_void'
+              && request.resource.data.paidCents == resource.data.paidCents
+                - getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.paymentId)).data.amountCents)
+          );
+        allow delete: if false;
+      }
+
+      match /payments/{paymentId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validPayment(request.resource.data)
+          && request.resource.data.monthKey == monthKey
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.createdAt == request.time
+          && request.resource.data.voided == false
+          && request.resource.data.voidReason == null
+          && request.resource.data.voidedBy == null
+          && request.resource.data.voidedAt == null
+          && get(monthPath(monthKey)).data.status == 'closed'
+          && request.resource.data.closeVersion == get(monthPath(monthKey)).data.closeVersion
+          && get(statementPath(monthKey, request.resource.data.statementId)).data.closeVersion == request.resource.data.closeVersion
+          && request.resource.data.workerId == get(statementPath(monthKey, request.resource.data.statementId)).data.workerId
+          && request.resource.data.workerName == get(statementPath(monthKey, request.resource.data.statementId)).data.workerName
+          && request.resource.data.amountCents <= get(statementPath(monthKey, request.resource.data.statementId)).data.wageCents
+            - get(statementPath(monthKey, request.resource.data.statementId)).data.paidCents
+          && getAfter(statementPath(monthKey, request.resource.data.statementId)).data.paidCents
+            == get(statementPath(monthKey, request.resource.data.statementId)).data.paidCents + request.resource.data.amountCents
+          && getAfter(monthPath(monthKey)).data.paidCents
+            == get(monthPath(monthKey)).data.paidCents + request.resource.data.amountCents
+          && getAfter(statementPath(monthKey, request.resource.data.statementId)).data.lastActionId == 'payment_create_' + paymentId
+          && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_create_' + paymentId
+          && existsAfter(actionPath(monthKey, 'payment_create_' + paymentId));
+        allow update: if signedIn() && validPayment(request.resource.data)
+          && resource.data.voided == false && request.resource.data.voided == true
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided', 'voidReason', 'voidedBy', 'voidedAt'])
+          && request.resource.data.voidReason is string
+          && request.resource.data.voidReason.size() >= 3 && request.resource.data.voidReason.size() <= 100
+          && request.resource.data.voidedBy == request.auth.uid
+          && request.resource.data.voidedAt == request.time
+          && getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents
+            == get(statementPath(monthKey, resource.data.statementId)).data.paidCents - resource.data.amountCents
+          && getAfter(monthPath(monthKey)).data.paidCents
+            == get(monthPath(monthKey)).data.paidCents - resource.data.amountCents
+          && getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents >= 0
+          && getAfter(monthPath(monthKey)).data.paidCents >= 0
+          && getAfter(statementPath(monthKey, resource.data.statementId)).data.lastActionId == 'payment_void_' + paymentId
+          && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_void_' + paymentId
+          && existsAfter(actionPath(monthKey, 'payment_void_' + paymentId))
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.reason
+            == request.resource.data.voidReason
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.amountCents
+            == resource.data.amountCents
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.statementPaidCents
+            == get(statementPath(monthKey, resource.data.statementId)).data.paidCents
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.monthPaidCents
+            == get(monthPath(monthKey)).data.paidCents
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.statementPaidCents
+            == getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents
+          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.monthPaidCents
+            == getAfter(monthPath(monthKey)).data.paidCents;
+        allow delete: if false;
+      }
+
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validAction(request.resource.data)
+          && request.resource.data.monthKey == monthKey
+          && getAfter(monthPath(monthKey)).data.lastActionId == actionId
+          && (
+            (request.resource.data.type == 'close' && actionId == 'close_' + string(request.resource.data.closeVersion))
+            || (request.resource.data.type == 'reopen' && actionId == 'reopen_' + string(request.resource.data.closeVersion))
+            || (request.resource.data.type == 'payment_create'
+              && actionId == 'payment_create_' + request.resource.data.paymentId
+              && getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.createdAt == request.time
+              && request.resource.data.afterSnapshot.amountCents
+                == getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.amountCents
+              && request.resource.data.afterSnapshot.statementPaidCents
+                == getAfter(statementPath(
+                  monthKey,
+                  getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.statementId
+                )).data.paidCents
+              && request.resource.data.afterSnapshot.monthPaidCents
+                == getAfter(monthPath(monthKey)).data.paidCents)
+            || (request.resource.data.type == 'payment_void'
+              && actionId == 'payment_void_' + request.resource.data.paymentId
+              && getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.voidedAt == request.time
+              && request.resource.data.reason
+                == getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.voidReason)
+          );
+        allow update, delete: if false;
+      }
     }
   }
 }
-
