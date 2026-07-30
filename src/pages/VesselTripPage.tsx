@@ -2,7 +2,7 @@ import { useEffect,useMemo,useState,type FormEvent } from 'react'
 import { Link,useNavigate,useParams } from 'react-router-dom'
 import type { Vessel } from '../lib/purchasing'
 import {
-  calculateCrewWage,formatHalfDayUnits,type VesselCrewSettlement,type VesselTrip,type VesselWageTemplate,
+  calculateCrewWage,crewWageRateForTemplate,formatHalfDayUnits,type VesselCrewSettlement,type VesselTrip,type VesselWageTemplate,
 } from '../lib/vesselTrips'
 import type { Worker } from '../types'
 import { loadVessels } from '../services/purchaseMasterData'
@@ -87,10 +87,11 @@ function CrewForm({tripId,workers,templates,vesselCode,saved}:{tripId:string;wor
   const defaults=templates.find(item=>item.vesselCode===vesselCode)??templates[0]
   const [workerId,setWorkerId]=useState(''),[role,setRole]=useState<'captain'|'crew'>('crew'),[halfDayUnits,setHalfDayUnits]=useState(0)
   const [nightCount,setNightCount]=useState(0)
-  const gross=useMemo(()=>defaults?calculateCrewWage({halfDayUnits,nightCount,dayRateCents:defaults.dayRateCents,nightRateCents:defaults.nightRateCents}):0,[defaults,halfDayUnits,nightCount])
+  const roleRate=crewWageRateForTemplate(defaults,role)
+  const gross=useMemo(()=>calculateCrewWage({halfDayUnits,nightCount,dayRateCents:roleRate.dayRateCents,nightRateCents:roleRate.nightRateCents}),[roleRate,halfDayUnits,nightCount])
   async function submit(event:FormEvent){event.preventDefault();const worker=workers.find(item=>item.id===workerId);if(!worker||!defaults)return
     await addVesselCrewSettlement(tripId,{id:'',workerId,workerNameSnapshot:worker.name,role,halfDayUnits,nightCount,templateId:defaults.id,
-      dayRateCents:defaults.dayRateCents,nightRateCents:defaults.nightRateCents,advanceCents:0});setWorkerId('');await saved()}
+      dayRateCents:roleRate.dayRateCents,nightRateCents:roleRate.nightRateCents,advanceCents:0});setWorkerId('');await saved()}
   return <form className="inline-entry-form" onSubmit={submit}><h2>Add crew wage</h2>
     <label>Crew member<select value={workerId} onChange={e=>setWorkerId(e.target.value)}><option value="">Select Worker</option>{workers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
     <label>Role<select value={role} onChange={e=>setRole(e.target.value as 'captain'|'crew')}><option value="captain">Captain</option><option value="crew">Crew</option></select></label>

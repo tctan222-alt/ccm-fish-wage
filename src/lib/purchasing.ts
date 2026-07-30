@@ -5,6 +5,7 @@ export const MAX_PURCHASE_LINE_WEIGHT_GRAMS=100_000_000
 export const MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG=10_000_000
 export const MAX_PURCHASE_RECEIPT_LINES=100
 export const MAX_PURCHASE_DISTINCT_CATEGORIES=12
+export const MAX_WEIGHING_RECEIPT_DISTINCT_CATEGORIES=18
 
 export interface PurchaseCategory {
   id:string;categoryCode:string;displayName:string;active:boolean;order:number;notes:string
@@ -17,6 +18,8 @@ export interface Vessel {
 export interface PurchaseReceiptLine {
   id:string;lineNo:number;categoryId:string;categoryCodeSnapshot:string;categoryNameSnapshot:string
   basketCount:number;weightGrams:number;unitPriceCentsPerKg:number;amountCents:number;notes:string
+  sourceWeighingSessionId?:string|null;productType?:'fish_head'|'fish_meal'|null
+  fishSpeciesCode?:string|null;fishMealQuality?:'bucket'|'bag'|null
   createdAt?:unknown;updatedAt?:unknown
 }
 export interface PurchaseReceipt {
@@ -27,6 +30,7 @@ export interface PurchaseReceipt {
   paidCents:number;paymentStatus:PurchasePaymentStatus;notes:string;duplicateAcknowledged:boolean
   lines:PurchaseReceiptLine[];createdBy?:string;createdAt?:unknown;updatedBy?:string;updatedAt?:unknown
   lastActionId?:string
+  sourceWeighingSessionId?:string|null
   confirmedBy?:string|null;confirmedAt?:unknown|null;voidedBy?:string|null;voidedAt?:unknown|null;voidReason?:string|null
   lineIds?:string[];draftVersion?:number
 }
@@ -70,8 +74,12 @@ export function calculateReceiptTotals(lines:PurchaseReceiptLine[]){
 }
 export function assertPurchaseReceiptLineLimits(lines:PurchaseReceiptLine[]){
   if(lines.length>MAX_PURCHASE_RECEIPT_LINES)throw new Error('A receipt supports up to 100 lines.')
-  if(new Set(lines.map(item=>item.categoryId)).size>MAX_PURCHASE_DISTINCT_CATEGORIES){
-    throw new Error('A receipt supports up to 12 distinct categories.')
+  const distinctCount=new Set(lines.map(item=>item.categoryId)).size
+  const sourceIds=new Set(lines.map(item=>item.sourceWeighingSessionId).filter((value):value is string=>Boolean(value)))
+  const weighingReceipt=lines.length>0&&sourceIds.size===1&&lines.every(item=>item.sourceWeighingSessionId)
+  const limit=weighingReceipt?MAX_WEIGHING_RECEIPT_DISTINCT_CATEGORIES:MAX_PURCHASE_DISTINCT_CATEGORIES
+  if(distinctCount>limit){
+    throw new Error(`A receipt supports up to ${limit} distinct categories.`)
   }
 }
 export const paymentStatus=(paid:number,total:number):PurchasePaymentStatus=>paid<=0?'unpaid':paid>=total?'paid':'partial'

@@ -83,6 +83,13 @@ describe('purchase receiving domain',()=>{
     expect(()=>assertPurchaseReceiptLineLimits(Array.from({length:13},(_,index)=>({...lines[0],id:`l${index}`,categoryId:`c${index}`})))).toThrow('12 distinct')
   })
 
+  it('allows all 16 fish species plus two fish-meal qualities on one linked weighing receipt',()=>{
+    const linked=Array.from({length:18},(_,index)=>({...lines[0],id:`w${index}`,categoryId:`w${index}`,
+      sourceWeighingSessionId:'weighing-1'}))
+    expect(()=>assertPurchaseReceiptLineLimits(linked)).not.toThrow()
+    expect(()=>assertPurchaseReceiptLineLimits([...linked,{...linked[0],id:'w18',categoryId:'w18'}])).toThrow('18 distinct')
+  })
+
   it('confirms a draft with supplier and vessel kept separate and snapshots intact',()=>{
     const confirmed=confirmReceipt(receipt())
     expect(confirmed).toMatchObject({status:'confirmed',supplierId:'s1',vesselId:'v1',supplierNameSnapshot:'Ocean Supply',vesselNameSnapshot:'Boat 2031'})

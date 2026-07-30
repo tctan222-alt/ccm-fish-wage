@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_VESSEL_WAGE_TEMPLATES,
+  DEFAULT_VESSEL_CREW_WAGE_RATES,
   addCrewPayment,
   assertCrewPaymentCanBeVoided,
   calculateCrewWage,
@@ -33,6 +34,20 @@ describe('vessel wage templates',()=>{
   it('calculates 11.5 days and 2 nights as RM6,350',()=>{
     expect(calculateCrewWage({halfDayUnits:23,nightCount:2,dayRateCents:50000,nightRateCents:30000}))
       .toBe(635000)
+  })
+
+  it('keeps captain and four crew wage rates separate from the vessel total',()=>{
+    expect(DEFAULT_VESSEL_CREW_WAGE_RATES).toEqual([
+      {role:'captain',headcount:1,dayRateCents:14000,nightRateCents:10000},
+      {role:'crew',headcount:4,dayRateCents:9000,nightRateCents:5000},
+    ])
+    const captain=calculateCrewWage({halfDayUnits:23,nightCount:2,dayRateCents:14000,nightRateCents:10000})
+    const worker=calculateCrewWage({halfDayUnits:23,nightCount:2,dayRateCents:9000,nightRateCents:5000})
+    expect({captain,worker,total:captain+worker*4}).toEqual({
+      captain:181000,
+      worker:113500,
+      total:635000,
+    })
   })
 
   it('renders half-day units without floating point storage',()=>{
