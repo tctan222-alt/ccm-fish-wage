@@ -184,6 +184,7 @@ export function TodaySummaryPage({
       <h1>Daily Summary</h1>
       <Link className="page-link" to="/">← Back to wage entry</Link>
       <Link className="page-link" to="/monthly">Monthly Summary</Link>
+      <Link className="page-link" to="/master-data">Master Data</Link>
     </header>
 
     <section className="date-filter">

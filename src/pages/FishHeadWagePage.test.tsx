@@ -29,6 +29,14 @@ async function chooseWorkerAndEnter74Kg(){
 }
 
 describe('fish head worker session flow',()=>{
+  it('shows active workers and excludes inactive workers from wage entry',async()=>{
+    render(<MemoryRouter><FishHeadWagePage workerLoader={async()=>[
+      ...workers,{id:'w3',name:'Inactive Worker',active:false,order:3},
+    ]} batchSaver={vi.fn()}/></MemoryRouter>)
+    expect(await screen.findByRole('button',{name:'Ah Mei'})).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'Inactive Worker'})).not.toBeInTheDocument()
+  })
+
   it('adds an entry locally, lists it, and keeps worker and rate selected',async()=>{
     const batchSaver=setup()
     await chooseWorkerAndEnter74Kg()

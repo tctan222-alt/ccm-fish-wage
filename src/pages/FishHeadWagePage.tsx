@@ -42,7 +42,7 @@ export function FishHeadWagePage({
 
   useEffect(()=>{
     workerLoader()
-      .then(setWorkers)
+      .then(items=>setWorkers(items.filter(item=>item.active)))
       .catch(()=>{setWorkers([]);setError('Workers could not be loaded. Please try again.')})
   },[workerLoader])
 
@@ -181,6 +181,7 @@ export function FishHeadWagePage({
     <nav className="summary-nav" aria-label="Wage summaries">
       <Link className="summary-link" to="/today">Today / Daily Summary</Link>
       <Link className="summary-link monthly" to="/monthly">Monthly Summary</Link>
+      <Link className="summary-link master-data-link" to="/master-data">Master Data</Link>
     </nav>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}

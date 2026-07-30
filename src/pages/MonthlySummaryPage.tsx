@@ -223,6 +223,7 @@ export function MonthlySummaryPage({
       <p className="eyebrow">CCM Fishery</p>
       <h1>Monthly Summary</h1>
       <Link className="page-link" to="/">Back to wage entry</Link>
+      <Link className="page-link" to="/master-data">Master Data</Link>
     </header>
 
     <section className="date-filter">
