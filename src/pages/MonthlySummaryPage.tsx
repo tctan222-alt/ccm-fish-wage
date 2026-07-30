@@ -1,6 +1,16 @@
 import { useCallback,useEffect,useMemo,useRef,useState } from 'react'
 import { Link } from 'react-router-dom'
+import { MonthlyClosingPanel } from '../components/MonthlyClosingPanel'
 import { FIXED_RATE_CENTS,malaysiaMonthKey,money,rmStringToCents } from '../lib/wage'
+import {
+  closeWageMonth,
+  createWagePayment,
+  loadWageMonthClosingData,
+  reopenWageMonth,
+  voidWagePayment,
+  type CreatePaymentInput,
+  type WageMonthClosingData,
+} from '../services/monthClosing'
 import {
   loadMonthlyWageData,
   type MonthlyWageData,
@@ -10,6 +20,11 @@ import {
 
 interface Props {
   loader?:(monthKey:string)=>Promise<MonthlyWageData>
+  closingLoader?:(monthKey:string)=>Promise<WageMonthClosingData>
+  closeHandler?:(monthKey:string)=>Promise<void>
+  paymentHandler?:(input:CreatePaymentInput)=>Promise<void>
+  voidPaymentHandler?:(monthKey:string,paymentId:string,reason:string)=>Promise<void>
+  reopenHandler?:(monthKey:string,reason:string)=>Promise<void>
   requestTimeoutMs?:number
 }
 
@@ -52,10 +67,19 @@ function rateLabel(rateCents:number|null){
   return rateCents===null?'Custom rate':`RM${money(rateCents)}`
 }
 
-export function MonthlySummaryPage({loader=loadMonthlyWageData,requestTimeoutMs=MONTHLY_REQUEST_TIMEOUT_MS}:Props){
+export function MonthlySummaryPage({
+  loader=loadMonthlyWageData,
+  closingLoader=loadWageMonthClosingData,
+  closeHandler=closeWageMonth,
+  paymentHandler=createWagePayment,
+  voidPaymentHandler=voidWagePayment,
+  reopenHandler=reopenWageMonth,
+  requestTimeoutMs=MONTHLY_REQUEST_TIMEOUT_MS,
+}:Props){
   const [monthKey,setMonthKey]=useState(()=>malaysiaMonthKey())
   const [entries,setEntries]=useState<StoredWageEntry[]>([])
   const [voids,setVoids]=useState<WageVoidRecord[]>([])
+  const [closingData,setClosingData]=useState<WageMonthClosingData>({month:null,statements:[],payments:[]})
   const [loading,setLoading]=useState(true)
   const [error,setError]=useState('')
   const requestIdRef=useRef(0)
@@ -107,22 +131,24 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData,requestTimeoutMs=
       setLoading(false)
     },requestTimeoutMs)
 
-    loader(targetMonthKey)
-      .then(result=>{
+    Promise.all([loader(targetMonthKey),closingLoader(targetMonthKey)])
+      .then(([result,closing])=>{
         if(requestIdRef.current!==requestId||!mountedRef.current)return
         setEntries([...result.entries].sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||a.workerName.localeCompare(b.workerName)))
         setVoids([...result.voids].sort((a,b)=>b.dateKey.localeCompare(a.dateKey)||a.workerName.localeCompare(b.workerName)))
+        setClosingData(closing)
       })
       .catch(()=>{
         if(requestIdRef.current!==requestId||!mountedRef.current)return
         setEntries([])
         setVoids([])
+        setClosingData({month:null,statements:[],payments:[]})
         setError('Monthly records could not be loaded. Check your connection and try again.')
       })
       .finally(()=>{
         finishRequest(requestId)
       })
-  },[clearActiveTimeout,finishRequest,loader,requestTimeoutMs])
+  },[clearActiveTimeout,closingLoader,finishRequest,loader,requestTimeoutMs])
 
   useEffect(()=>{
     loadMonth(monthKey)
@@ -221,7 +247,17 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData,requestTimeoutMs=
 
     {error&&<p className="error" role="alert">{error}</p>}
 
-    <section className="monthly-grand-total" aria-label="Monthly totals">
+    {!loading&&<MonthlyClosingPanel
+      monthKey={monthKey}
+      liveEntries={entries}
+      data={closingData}
+      onClose={async target=>{await closeHandler(target);loadMonth(target)}}
+      onPayment={async input=>{await paymentHandler(input);loadMonth(input.monthKey)}}
+      onVoidPayment={async(target,paymentId,reason)=>{await voidPaymentHandler(target,paymentId,reason);loadMonth(target)}}
+      onReopen={async(target,reason)=>{await reopenHandler(target,reason);loadMonth(target)}}
+    />}
+
+    {closingData.month?.status!=='closed'&&<><section className="monthly-grand-total" aria-label="Monthly totals">
       <div><span>Workers</span><strong>{totals.workers}</strong></div>
       <div><span>Work days</span><strong>{totals.days}</strong></div>
       <div><span>Baskets</span><strong>{totals.baskets}</strong></div>
@@ -277,7 +313,7 @@ export function MonthlySummaryPage({loader=loadMonthlyWageData,requestTimeoutMs=
           </details>
         </section>)}
       </div>
-    }
+    }</>}
 
     <section className="void-history">
       <details>

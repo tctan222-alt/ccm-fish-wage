@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDocs,
+  getDocsFromServer,
   query,
   serverTimestamp,
   where,
@@ -90,6 +91,21 @@ export async function loadWageEntriesByMonth(monthKey:string):Promise<StoredWage
   if (!firebaseConfigured) throw new Error('Firebase is not configured')
   const {startDateKey,endDateKey}=monthDateRange(monthKey)
   const snapshot=await getDocs(
+    query(
+      collection(db,'fishHeadWageEntries'),
+      where('dateKey','>=',startDateKey),
+      where('dateKey','<=',endDateKey),
+    ),
+  )
+  return snapshot.docs
+    .map(item=>({id:item.id,...item.data()} as StoredWageEntry))
+    .filter(entry=>entry.deleted===false)
+}
+
+export async function loadWageEntriesByMonthFromServer(monthKey:string):Promise<StoredWageEntry[]> {
+  if (!firebaseConfigured) throw new Error('Firebase is not configured')
+  const {startDateKey,endDateKey}=monthDateRange(monthKey)
+  const snapshot=await getDocsFromServer(
     query(
       collection(db,'fishHeadWageEntries'),
       where('dateKey','>=',startDateKey),

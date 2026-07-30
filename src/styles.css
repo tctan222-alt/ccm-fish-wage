@@ -456,3 +456,51 @@ html,body,#root,main{
 
   .monthly-worker-total{grid-template-columns:1fr}
 }
+
+.month-closing{overflow:hidden;border:2px solid #bdd7e7}
+.month-closing-heading,.statement-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.month-status{display:inline-block;margin-top:4px;padding:7px 13px;border-radius:999px;color:#fff}
+.month-status.open{background:#087f5b}.month-status.closed{background:#7a4700}
+.close-meta{display:grid;gap:3px;text-align:right;color:#486581}
+.close-month-action,.print-action{width:100%;background:#9c5c00;border-color:#9c5c00;color:#fff}
+.confirm-panel,.action-form{display:grid;gap:12px;margin-top:14px;padding:14px;border:2px solid #9c5c00;border-radius:14px;background:#fff8e6}
+.confirm-totals,.closed-totals,.statement-totals,.statement-rate-breakdown,.statement-balance{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.confirm-totals div,.closed-totals div,.statement-totals div,.statement-rate-breakdown div,.statement-balance div{min-width:0;padding:10px 6px;border-radius:10px;background:#eef4f7;text-align:center}
+.confirm-totals span,.confirm-totals strong,.closed-totals span,.closed-totals strong,.statement-totals span,.statement-totals strong,.statement-rate-breakdown span,.statement-rate-breakdown strong,.statement-balance span,.statement-balance strong{display:block;overflow-wrap:anywhere}
+.confirm-totals span,.closed-totals span,.statement-totals span,.statement-rate-breakdown span,.statement-balance span{font-size:.8rem;color:#486581}
+.secondary-action{background:#fff;color:#5f3f00}
+.statement-list{display:grid;gap:12px;margin-top:14px}
+.statement-card{margin:0;border:2px solid #d9e2ec;box-shadow:none}
+.payment-status{padding:6px 10px;border-radius:999px;color:#fff;text-transform:capitalize}
+.payment-status.unpaid{background:#a51111}.payment-status.partial{background:#9c5c00}.payment-status.paid{background:#087f5b}
+.statement-link{display:flex;align-items:center;justify-content:center;min-height:54px;margin-top:12px;border:2px solid #075985;border-radius:12px;color:#075985;font-weight:800;text-decoration:none}
+.payment-actions{display:grid;gap:8px;margin-top:9px}
+.payment-actions button:first-child{background:#087f5b;border-color:#087f5b;color:#fff}
+.action-form label{display:grid;gap:6px;font-weight:800}
+.action-form input,.action-form select{width:100%;min-height:54px;border:2px solid #627d98;border-radius:10px;padding:10px;font-size:1rem;background:#fff}
+.payment-history{margin-top:14px;padding:10px;border:2px solid #d9e2ec;border-radius:12px}
+.payment-history summary{min-height:54px;padding:14px 4px;font-weight:800}
+.payment-history ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.payment-history li{display:grid;gap:8px;padding:10px;border-top:1px solid #d9e2ec}
+.payment-history li div{display:grid;gap:3px}
+.payment-voided{color:#a51111}.reopen-action{width:100%;margin-top:14px;border-color:#9c5c00;color:#7a4700}
+.statement-page{max-width:720px}.print-statement{overflow:hidden}
+.statement-title{display:grid;gap:8px}.statement-title div{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid #d9e2ec}
+.statement-title span{color:#486581}.statement-rate-breakdown,.statement-balance{margin:10px 0}
+.print-statement table{width:100%;border-collapse:collapse;font-size:.9rem}
+.print-statement th,.print-statement td{padding:8px 4px;border-bottom:1px solid #d9e2ec;text-align:left;overflow-wrap:anywhere}
+.printed-at{margin-top:24px;color:#627d98;font-size:.85rem}
+.statement-print-brand{display:none}
+
+@media(max-width:380px){
+  .confirm-totals,.closed-totals,.statement-totals,.statement-rate-breakdown,.statement-balance{grid-template-columns:1fr}
+  .print-statement table{font-size:.78rem}
+}
+
+@media print{
+  body{background:#fff;color:#000}
+  .sign-out,.statement-navigation,.print-action{display:none!important}
+  .statement-print-brand{display:block;font-size:1.35rem;font-weight:800;margin:0 0 18px}
+  main.statement-page{max-width:none;padding:0}
+  .print-statement{margin:0;padding:0;box-shadow:none}
+}
