@@ -4,6 +4,9 @@ export function MasterDataPage(){
     <nav className="master-data-entries" aria-label="Master data sections">
       <Link to="/partners"><strong>Business Partners</strong><span>Suppliers and customers</span></Link>
       <Link to="/workers"><strong>Workers</strong><span>Employees and wage selection</span></Link>
+      <Link to="/vessels"><strong>Vessels</strong><span>Receiving vessels and default suppliers</span></Link>
+      <Link to="/purchase-categories"><strong>Purchase Categories</strong><span>Fish categories used on receiving receipts</span></Link>
+      <Link to="/purchases"><strong>Purchases & Receiving</strong><span>Receipts, supplier payables and monthly statements</span></Link>
     </nav>
   </main>
 }

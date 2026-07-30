@@ -12,6 +12,11 @@ const MonthlySummaryPage = lazy(() => import('./pages/MonthlySummaryPage').then(
 const WorkerStatementPage = lazy(() => import('./pages/WorkerStatementPage').then(module => ({ default: module.WorkerStatementPage })))
 const MasterDataPage = lazy(() => import('./pages/MasterDataPage').then(module => ({ default: module.MasterDataPage })))
 const PartnersPage = lazy(() => import('./pages/PartnersPage').then(module => ({ default: module.PartnersPage })))
+const PurchasesPage = lazy(() => import('./pages/PurchasesPage').then(module => ({ default: module.PurchasesPage })))
+const PurchaseReceiptPage = lazy(() => import('./pages/PurchaseReceiptPage').then(module => ({ default: module.PurchaseReceiptPage })))
+const PurchaseMonthlyPage = lazy(() => import('./pages/PurchaseMonthlyPage').then(module => ({ default: module.PurchaseMonthlyPage })))
+const VesselsPage = lazy(() => import('./pages/VesselsPage').then(module => ({ default: module.VesselsPage })))
+const PurchaseCategoriesPage = lazy(() => import('./pages/PurchaseCategoriesPage').then(module => ({ default: module.PurchaseCategoriesPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>Loading CCM Fishery…</strong></main>
@@ -33,6 +38,12 @@ function AuthenticatedApp() {
         <Route path="/workers" element={<WorkersPage />} />
         <Route path="/master-data" element={<MasterDataPage />} />
         <Route path="/partners" element={<PartnersPage />} />
+        <Route path="/purchases" element={<PurchasesPage />} />
+        <Route path="/purchases/new" element={<PurchaseReceiptPage />} />
+        <Route path="/purchases/monthly" element={<PurchaseMonthlyPage />} />
+        <Route path="/purchases/:receiptId" element={<PurchaseReceiptPage />} />
+        <Route path="/vessels" element={<VesselsPage />} />
+        <Route path="/purchase-categories" element={<PurchaseCategoriesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

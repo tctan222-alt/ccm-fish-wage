@@ -528,3 +528,22 @@ html,body,#root,main{
 .master-form .check-label{display:flex;align-items:center;gap:8px;min-height:54px}.master-form .check-label input{width:26px;min-height:26px}
 .warning-action{border-color:#9c5c00;color:#7a4700;background:#fff8e6}
 @media(max-width:380px){.master-filters,.master-card dl,.master-actions{grid-template-columns:1fr}}
+
+.purchase-new-link{display:flex;align-items:center;justify-content:center;min-height:62px;margin:14px 0;text-decoration:none}
+.purchase-filters,.receipt-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}
+.purchase-filters label,.receipt-form label,.receipt-line label,.purchase-month-controls label{display:grid;gap:6px;font-weight:800;min-width:0}
+.purchase-filters input,.purchase-filters select,.receipt-form input,.receipt-form select,.receipt-form textarea,
+.receipt-line input,.receipt-line select,.purchase-month-controls input,.purchase-month-controls select{width:100%;min-width:0;min-height:54px;padding:10px;border:2px solid #627d98;border-radius:10px;background:#fff;font:inherit}
+.purchase-search,.receipt-form .wide{grid-column:1/3}.purchase-summary{margin:12px 0}.receipt-list,.receipt-lines,.monthly-receipt-list{display:grid;gap:10px}
+.snapshot-value{display:flex;align-items:center;min-height:54px;padding:10px;border:2px solid #d9e2ec;border-radius:10px;background:#eef4f7;font-weight:750}
+.receipt-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:14px;border:2px solid #d9e2ec;border-radius:14px;background:#fff;color:#102a43;text-decoration:none}
+.receipt-card>div{display:grid;gap:5px;min-width:0}.receipt-card>div:last-child{text-align:right;justify-items:end}.receipt-card small,.receipt-card span{overflow-wrap:anywhere;color:#486581}
+.record-status.draft{background:#e3f2fd;color:#075985}.record-status.confirmed{background:#d3f9d8;color:#087f5b}.record-status.voided{background:#ffe3e3;color:#a51111}
+.receipt-status-row{display:flex;gap:8px;margin:12px 0}.receipt-line{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:13px;border:2px solid #d9e2ec;border-radius:14px;background:#fff}
+.receipt-line>strong:first-child,.line-amount{grid-column:1/3}.line-amount{text-align:right;color:#075985;font-size:1.2rem}.receipt-line .danger-action{grid-column:1/3}
+.receipt-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}.receipt-void{width:100%;margin-top:12px}.confirm-receipt dl{display:grid;grid-template-columns:1fr 1fr;gap:8px}.confirm-receipt dl div{padding:9px;background:#eef4f7;border-radius:10px}.confirm-receipt dt{font-size:.8rem;color:#486581}.confirm-receipt dd{margin:3px 0;font-weight:800}
+.purchase-month-controls{display:grid;gap:10px}.purchase-month-controls input,.purchase-month-controls select{width:100%}.monthly-receipt{display:grid;gap:10px;padding:13px;border:2px solid #d9e2ec;border-radius:14px}
+.monthly-receipt>div{display:grid;gap:4px}.monthly-receipt dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin:0}.monthly-receipt dl div{padding:8px;background:#eef4f7;border-radius:9px}.monthly-receipt dt{font-size:.76rem;color:#486581}.monthly-receipt dd{margin:3px 0;font-weight:800}
+.pay-selected{position:sticky;bottom:8px;margin-top:12px}
+@media(max-width:380px){.purchase-filters,.receipt-form,.receipt-line,.receipt-actions,.confirm-receipt dl{grid-template-columns:1fr}.purchase-search,.receipt-form .wide,.receipt-line>strong:first-child,.line-amount,.receipt-line .danger-action{grid-column:1}.receipt-card{grid-template-columns:1fr}.receipt-card>div:last-child{text-align:left;justify-items:start}.monthly-receipt dl{grid-template-columns:1fr}}
+@media print{.purchase-month-controls,.pay-selected,.monthly-receipt button,.monthly-receipt .check-label{display:none!important}.monthly-receipt{break-inside:avoid}}
