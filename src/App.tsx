@@ -17,6 +17,9 @@ const PurchaseReceiptPage = lazy(() => import('./pages/PurchaseReceiptPage').the
 const PurchaseMonthlyPage = lazy(() => import('./pages/PurchaseMonthlyPage').then(module => ({ default: module.PurchaseMonthlyPage })))
 const VesselsPage = lazy(() => import('./pages/VesselsPage').then(module => ({ default: module.VesselsPage })))
 const PurchaseCategoriesPage = lazy(() => import('./pages/PurchaseCategoriesPage').then(module => ({ default: module.PurchaseCategoriesPage })))
+const VesselTripsPage = lazy(() => import('./pages/VesselTripsPage').then(module => ({ default: module.VesselTripsPage })))
+const VesselTripPage = lazy(() => import('./pages/VesselTripPage').then(module => ({ default: module.VesselTripPage })))
+const VesselWageTemplatesPage = lazy(() => import('./pages/VesselWageTemplatesPage').then(module => ({ default: module.VesselWageTemplatesPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>Loading CCM Fishery…</strong></main>
@@ -44,6 +47,10 @@ function AuthenticatedApp() {
         <Route path="/purchases/:receiptId" element={<PurchaseReceiptPage />} />
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/purchase-categories" element={<PurchaseCategoriesPage />} />
+        <Route path="/vessel-trips" element={<VesselTripsPage />} />
+        <Route path="/vessel-trips/new" element={<VesselTripPage />} />
+        <Route path="/vessel-trips/:tripId" element={<VesselTripPage />} />
+        <Route path="/vessel-wage-templates" element={<VesselWageTemplatesPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>

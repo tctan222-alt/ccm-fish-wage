@@ -351,6 +351,270 @@ service cloud.firestore {
         && validDraftPurchaseAction(receiptId, 'update_draft');
     }
 
+    function vesselTripPath(tripId) {
+      return /databases/$(database)/documents/vesselTrips/$(tripId);
+    }
+
+    function vesselTripCrewPath(tripId, crewId) {
+      return /databases/$(database)/documents/vesselTrips/$(tripId)/crew/$(crewId);
+    }
+
+    function vesselTripEntryPath(entryId) {
+      return /databases/$(database)/documents/vesselTripEntries/$(entryId);
+    }
+
+    function vesselCrewPaymentPath(paymentId) {
+      return /databases/$(database)/documents/vesselCrewPayments/$(paymentId);
+    }
+
+    function vesselTripActionPath(tripId, actionId) {
+      return /databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(actionId);
+    }
+
+    function validDraftVesselTripUpdate(tripId) {
+      let action = getAfter(vesselTripActionPath(tripId, request.resource.data.lastActionId)).data;
+      let crew = action.type == 'crew_add'
+        ? getAfter(vesselTripCrewPath(tripId, action.crewSettlementId)).data
+        : {};
+      let entry = action.type in ['entry_add', 'entry_void']
+        ? getAfter(vesselTripEntryPath(action.entryId)).data
+        : {};
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'incomeCents', 'expenseCents', 'crewWageCents', 'crewAdvanceCents',
+          'profitCents', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
+        ])
+        && (
+          (action.type == 'crew_add'
+            && existsAfter(vesselTripCrewPath(tripId, action.crewSettlementId))
+            && crew.lastActionId == request.resource.data.lastActionId
+            && request.resource.data.crewWageCents == resource.data.crewWageCents + crew.grossWageCents
+            && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents + crew.advanceCents)
+          ||
+          (action.type == 'entry_add'
+            && existsAfter(vesselTripEntryPath(action.entryId))
+            && entry.lastActionId == request.resource.data.lastActionId
+            && ((entry.type == 'income'
+                && request.resource.data.incomeCents == resource.data.incomeCents + entry.amountCents
+                && request.resource.data.expenseCents == resource.data.expenseCents)
+              || (entry.type == 'expense'
+                && request.resource.data.expenseCents == resource.data.expenseCents + entry.amountCents
+                && request.resource.data.incomeCents == resource.data.incomeCents)))
+          ||
+          (action.type == 'entry_void'
+            && existsAfter(vesselTripEntryPath(action.entryId))
+            && entry.voided == true && entry.lastActionId == request.resource.data.lastActionId
+            && ((entry.type == 'income'
+                && request.resource.data.incomeCents == resource.data.incomeCents - entry.amountCents
+                && request.resource.data.expenseCents == resource.data.expenseCents)
+              || (entry.type == 'expense'
+                && request.resource.data.expenseCents == resource.data.expenseCents - entry.amountCents
+                && request.resource.data.incomeCents == resource.data.incomeCents)))
+        );
+    }
+
+    function validVesselTripPaymentUpdate(tripId) {
+      let action = getAfter(vesselTripActionPath(tripId, request.resource.data.lastActionId)).data;
+      let payment = getAfter(vesselCrewPaymentPath(action.paymentId)).data;
+      return action.paymentId is string
+        && existsAfter(vesselCrewPaymentPath(action.paymentId))
+        && payment.tripId == tripId
+        && payment.lastActionId == request.resource.data.lastActionId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'crewAdvanceCents', 'crewPaidCents', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
+        ])
+        && (
+          (action.type == 'payment_create' && payment.voided == false
+            && payment.createdAt == request.time
+            && ((payment.paymentType == 'advance'
+                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents + payment.amountCents
+                && request.resource.data.crewPaidCents == resource.data.crewPaidCents)
+              || (payment.paymentType == 'settlement'
+                && request.resource.data.crewPaidCents == resource.data.crewPaidCents + payment.amountCents
+                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents)))
+          ||
+          (action.type == 'payment_void' && payment.voided == true
+            && payment.voidedAt == request.time
+            && ((payment.paymentType == 'advance'
+                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents - payment.amountCents
+                && request.resource.data.crewPaidCents == resource.data.crewPaidCents)
+              || (payment.paymentType == 'settlement'
+                && request.resource.data.crewPaidCents == resource.data.crewPaidCents - payment.amountCents
+                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents)))
+        );
+    }
+
+    function validVesselCrewPaymentUpdate(tripId) {
+      let actionId = getAfter(vesselTripPath(tripId)).data.lastActionId;
+      let action = getAfter(vesselTripActionPath(tripId, actionId)).data;
+      let payment = getAfter(vesselCrewPaymentPath(action.paymentId)).data;
+      return action.paymentId is string
+        && existsAfter(vesselCrewPaymentPath(action.paymentId))
+        && payment.tripId == tripId
+        && payment.crewSettlementId == resource.data.id
+        && request.resource.data.lastActionId == actionId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'advanceCents', 'paidCents', 'balanceCents', 'lastActionId'
+        ])
+        && (
+          (action.type == 'payment_create' && payment.createdAt == request.time
+            && ((payment.paymentType == 'advance'
+                && request.resource.data.advanceCents == resource.data.advanceCents + payment.amountCents
+                && request.resource.data.paidCents == resource.data.paidCents)
+              || (payment.paymentType == 'settlement'
+                && request.resource.data.paidCents == resource.data.paidCents + payment.amountCents
+                && request.resource.data.advanceCents == resource.data.advanceCents)))
+          ||
+          (action.type == 'payment_void' && payment.voidedAt == request.time
+            && ((payment.paymentType == 'advance'
+                && request.resource.data.advanceCents == resource.data.advanceCents - payment.amountCents
+                && request.resource.data.paidCents == resource.data.paidCents)
+              || (payment.paymentType == 'settlement'
+                && request.resource.data.paidCents == resource.data.paidCents - payment.amountCents
+                && request.resource.data.advanceCents == resource.data.advanceCents)))
+        );
+    }
+
+    function validVesselWageTemplate(data) {
+      return data.keys().hasOnly([
+          'id', 'vesselId', 'vesselCode', 'name', 'dayRateCents', 'nightRateCents', 'active',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'id', 'vesselId', 'vesselCode', 'name', 'dayRateCents', 'nightRateCents', 'active',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt'
+        ])
+        && data.id is string && data.vesselId is string
+        && data.vesselCode is string && data.vesselCode.size() >= 1 && data.vesselCode.size() <= 30
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && data.dayRateCents is int && data.dayRateCents >= 0
+        && data.nightRateCents is int && data.nightRateCents >= 0
+        && data.active is bool
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp;
+    }
+
+    function validVesselTrip(data) {
+      return data.keys().hasOnly([
+          'id', 'tripCode', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
+          'departureDate', 'returnDate', 'status', 'incomeCents', 'expenseCents',
+          'crewWageCents', 'crewAdvanceCents', 'crewPaidCents', 'profitCents',
+          'notes', 'revision', 'voidReason', 'createdBy', 'createdAt', 'updatedBy',
+          'updatedAt', 'lastActionId', 'confirmedBy', 'confirmedAt', 'settledBy', 'settledAt',
+          'voidedBy', 'voidedAt'
+        ])
+        && data.keys().hasAll([
+          'id', 'tripCode', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
+          'departureDate', 'returnDate', 'status', 'incomeCents', 'expenseCents',
+          'crewWageCents', 'crewAdvanceCents', 'crewPaidCents', 'profitCents',
+          'notes', 'revision', 'voidReason', 'createdBy', 'createdAt', 'updatedBy',
+          'updatedAt', 'lastActionId'
+        ])
+        && data.id is string && data.tripCode is string && data.tripCode.size() >= 1 && data.tripCode.size() <= 50
+        && data.vesselId is string && data.vesselId.size() > 0
+        && data.vesselCodeSnapshot is string && data.vesselNameSnapshot is string
+        && data.departureDate is string && data.departureDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.returnDate is string && data.returnDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.returnDate >= data.departureDate
+        && data.status in ['draft', 'confirmed', 'settled', 'voided']
+        && data.incomeCents is int && data.incomeCents >= 0
+        && data.expenseCents is int && data.expenseCents >= 0
+        && data.crewWageCents is int && data.crewWageCents >= 0
+        && data.crewAdvanceCents is int && data.crewAdvanceCents >= 0
+        && data.crewPaidCents is int && data.crewPaidCents >= 0
+        && data.crewAdvanceCents + data.crewPaidCents <= data.crewWageCents
+        && data.profitCents == data.incomeCents - data.expenseCents - data.crewWageCents
+        && data.notes is string && data.notes.size() <= 500
+        && data.revision is int && data.revision >= 1
+        && (data.voidReason == null || (data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100))
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp
+        && data.lastActionId is string && data.lastActionId.size() > 0
+        && (!('confirmedBy' in data) || data.confirmedBy is string)
+        && (!('confirmedAt' in data) || data.confirmedAt is timestamp)
+        && (!('settledBy' in data) || data.settledBy is string)
+        && (!('settledAt' in data) || data.settledAt is timestamp)
+        && (!('voidedBy' in data) || data.voidedBy is string)
+        && (!('voidedAt' in data) || data.voidedAt is timestamp);
+    }
+
+    function validVesselCrewSettlement(data) {
+      return data.keys().hasOnly([
+          'id', 'tripId', 'workerId', 'workerNameSnapshot', 'role', 'templateId',
+          'halfDayUnits', 'nightCount', 'dayRateCents', 'nightRateCents', 'grossWageCents',
+          'advanceCents', 'paidCents', 'balanceCents', 'createdBy', 'createdAt', 'lastActionId'
+        ])
+        && data.keys().hasAll([
+          'id', 'tripId', 'workerId', 'workerNameSnapshot', 'role', 'templateId',
+          'halfDayUnits', 'nightCount', 'dayRateCents', 'nightRateCents', 'grossWageCents',
+          'advanceCents', 'paidCents', 'balanceCents', 'createdBy', 'createdAt', 'lastActionId'
+        ])
+        && data.id is string && data.tripId is string
+        && data.workerId is string && data.workerId.size() > 0
+        && data.workerNameSnapshot is string && data.workerNameSnapshot.size() > 0
+        && data.role in ['captain', 'crew'] && data.templateId is string
+        && data.halfDayUnits is int && data.halfDayUnits >= 1 && data.halfDayUnits <= 730
+        && data.nightCount is int && data.nightCount >= 0 && data.nightCount <= 365
+        && data.dayRateCents is int && data.dayRateCents >= 0
+        && data.nightRateCents is int && data.nightRateCents >= 0
+        && data.grossWageCents is int
+        && data.grossWageCents == int(data.halfDayUnits * data.dayRateCents / 2) + data.nightCount * data.nightRateCents
+        && data.advanceCents is int && data.advanceCents >= 0
+        && data.paidCents is int && data.paidCents >= 0
+        && data.balanceCents == data.grossWageCents - data.advanceCents - data.paidCents
+        && data.balanceCents is int && data.balanceCents >= 0
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.lastActionId is string && data.lastActionId.size() > 0;
+    }
+
+    function validVesselTripEntry(data) {
+      return data.keys().hasOnly([
+          'tripId', 'type', 'category', 'amountCents', 'date', 'note',
+          'voided', 'voidReason', 'createdBy', 'createdAt', 'lastActionId'
+        ])
+        && data.keys().hasAll([
+          'tripId', 'type', 'category', 'amountCents', 'date', 'note',
+          'voided', 'voidReason', 'createdBy', 'createdAt', 'lastActionId'
+        ])
+        && data.tripId is string && data.type in ['income', 'expense']
+        && data.category is string && data.category.size() >= 1 && data.category.size() <= 80
+        && data.amountCents is int && data.amountCents > 0
+        && data.date is string && data.date.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.note is string && data.note.size() <= 500
+        && data.voided is bool
+        && ((data.voided == false && data.voidReason == null)
+          || (data.voided == true && data.voidReason is string
+            && data.voidReason.size() >= 3 && data.voidReason.size() <= 100))
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.lastActionId is string;
+    }
+
+    function validVesselCrewPayment(data) {
+      return data.keys().hasOnly([
+          'tripId', 'crewSettlementId', 'workerId', 'workerNameSnapshot', 'amountCents',
+          'paymentType', 'method', 'paymentDate', 'reference', 'note', 'voided', 'voidReason',
+          'createdBy', 'createdAt', 'voidedBy', 'voidedAt', 'lastActionId'
+        ])
+        && data.keys().hasAll([
+          'tripId', 'crewSettlementId', 'workerId', 'workerNameSnapshot', 'amountCents',
+          'paymentType', 'method', 'paymentDate', 'reference', 'note', 'voided', 'voidReason',
+          'createdBy', 'createdAt', 'voidedBy', 'voidedAt', 'lastActionId'
+        ])
+        && data.tripId is string && data.crewSettlementId is string
+        && data.workerId is string && data.workerNameSnapshot is string
+        && data.paymentType in ['advance', 'settlement']
+        && data.amountCents is int && data.amountCents > 0
+        && data.method in ['cash', 'bank', 'other']
+        && data.paymentDate is string && data.paymentDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.reference is string && data.reference.size() <= 100
+        && data.note is string && data.note.size() <= 500
+        && data.voided is bool
+        && (data.voidReason == null || (data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100))
+        && data.createdBy is string && data.createdAt is timestamp
+        && (data.voidedBy == null || data.voidedBy is string)
+        && (data.voidedAt == null || data.voidedAt is timestamp)
+        && data.lastActionId is string;
+    }
+
     function validWageEntry(data) {
       return data.keys().hasOnly([
           'dateKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
@@ -810,6 +1074,272 @@ service cloud.firestore {
           resource.data.receiptId,
           getAfter(purchaseReceiptPath(resource.data.receiptId)).data.lastActionId
         )).data.reason == request.resource.data.voidReason;
+      allow delete: if false;
+    }
+
+    match /vesselWageTemplates/{templateId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validVesselWageTemplate(request.resource.data)
+        && request.resource.data.id == templateId
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn() && validVesselWageTemplate(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+
+    match /vesselTrips/{tripId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validVesselTrip(request.resource.data)
+        && request.resource.data.id == tripId
+        && request.resource.data.status == 'draft'
+        && request.resource.data.incomeCents == 0 && request.resource.data.expenseCents == 0
+        && request.resource.data.crewWageCents == 0 && request.resource.data.crewAdvanceCents == 0
+        && request.resource.data.crewPaidCents == 0 && request.resource.data.profitCents == 0
+        && request.resource.data.revision == 1 && request.resource.data.voidReason == null
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastActionId == 'create'
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode
+          == request.resource.data.vesselCodeSnapshot
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.displayName
+          == request.resource.data.vesselNameSnapshot;
+      allow update: if signedIn() && validVesselTrip(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.vesselId == resource.data.vesselId
+        && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
+        && request.resource.data.vesselNameSnapshot == resource.data.vesselNameSnapshot
+        && request.resource.data.tripCode == resource.data.tripCode
+        && request.resource.data.departureDate == resource.data.departureDate
+        && request.resource.data.returnDate == resource.data.returnDate
+        && request.resource.data.notes == resource.data.notes
+        && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId))
+        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId)).data.performedBy
+          == request.auth.uid
+        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId)).data.performedAt
+          == request.time
+        && (
+          (resource.data.status == 'draft' && request.resource.data.status == 'draft'
+            && validDraftVesselTripUpdate(tripId))
+          ||
+          (resource.data.status == 'draft' && request.resource.data.status == 'confirmed'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'revision', 'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.confirmedBy == request.auth.uid
+            && request.resource.data.confirmedAt == request.time
+            && request.resource.data.lastActionId == 'confirm')
+          ||
+          (resource.data.status in ['draft', 'confirmed']
+            && request.resource.data.status == resource.data.status
+            && validVesselTripPaymentUpdate(tripId))
+          ||
+          (resource.data.status == 'confirmed' && request.resource.data.status == 'settled'
+            && request.resource.data.crewAdvanceCents + request.resource.data.crewPaidCents
+              == request.resource.data.crewWageCents
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'revision', 'settledBy', 'settledAt', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.settledBy == request.auth.uid
+            && request.resource.data.settledAt == request.time
+            && request.resource.data.lastActionId == 'settle')
+          ||
+          (resource.data.status in ['draft', 'confirmed', 'settled']
+            && request.resource.data.status == 'voided'
+            && resource.data.crewAdvanceCents == 0 && request.resource.data.crewAdvanceCents == 0
+            && resource.data.crewPaidCents == 0 && request.resource.data.crewPaidCents == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'voidReason', 'revision', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.voidedBy == request.auth.uid
+            && request.resource.data.voidedAt == request.time
+            && request.resource.data.lastActionId == 'void'
+            && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/void).data.reason
+              == request.resource.data.voidReason)
+        );
+      allow delete: if false;
+
+      match /crew/{crewId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validVesselCrewSettlement(request.resource.data)
+          && request.resource.data.id == crewId && request.resource.data.tripId == tripId
+          && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+          && request.resource.data.advanceCents == 0 && request.resource.data.paidCents == 0
+          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.active == true
+          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.department == 'vessel'
+          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.name
+            == request.resource.data.workerNameSnapshot
+          && get(vesselTripPath(tripId)).data.status == 'draft'
+          && request.resource.data.lastActionId == 'crew_add_' + crewId
+          && getAfter(vesselTripPath(tripId)).data.lastActionId == request.resource.data.lastActionId
+          && getAfter(vesselTripPath(tripId)).data.crewWageCents
+            == get(vesselTripPath(tripId)).data.crewWageCents + request.resource.data.grossWageCents
+          && getAfter(vesselTripPath(tripId)).data.crewAdvanceCents
+            == get(vesselTripPath(tripId)).data.crewAdvanceCents + request.resource.data.advanceCents;
+        allow update: if signedIn() && validVesselCrewSettlement(request.resource.data)
+          && validVesselCrewPaymentUpdate(tripId);
+        allow delete: if false;
+      }
+
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.keys().hasAll(['type', 'performedBy', 'performedAt'])
+          && request.resource.data.type in ['crew_add', 'entry_add', 'entry_void', 'confirm', 'settle', 'payment_create', 'payment_void', 'void']
+          && request.resource.data.performedBy == request.auth.uid
+          && request.resource.data.performedAt == request.time
+          && getAfter(vesselTripPath(tripId)).data.lastActionId == actionId
+          && (
+            !(request.resource.data.type in ['entry_void', 'payment_void'])
+            ||
+            (request.resource.data.reason is string
+              && request.resource.data.reason.size() >= 3 && request.resource.data.reason.size() <= 100
+              && request.resource.data.beforeSnapshot is map
+              && request.resource.data.afterSnapshot is map)
+          );
+        allow update, delete: if false;
+      }
+    }
+
+    match /vesselTripEntries/{entryId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validVesselTripEntry(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.lastActionId == 'entry_add_' + entryId
+        && get(vesselTripPath(request.resource.data.tripId)).data.status == 'draft'
+        && getAfter(vesselTripPath(request.resource.data.tripId)).data.lastActionId == request.resource.data.lastActionId
+        && (
+          (request.resource.data.type == 'income'
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.incomeCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.incomeCents + request.resource.data.amountCents
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.expenseCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.expenseCents)
+          ||
+          (request.resource.data.type == 'expense'
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.expenseCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.expenseCents + request.resource.data.amountCents
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.incomeCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.incomeCents)
+        );
+      allow update: if signedIn() && validVesselTripEntry(request.resource.data)
+        && resource.data.voided == false && request.resource.data.voided == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided', 'voidReason', 'lastActionId'])
+        && request.resource.data.lastActionId == 'entry_void_' + entryId
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.reason
+          == request.resource.data.voidReason
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.type
+          == resource.data.type
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.amountCents
+          == resource.data.amountCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.voided == true
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.incomeCents
+          == getAfter(vesselTripPath(resource.data.tripId)).data.incomeCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.expenseCents
+          == getAfter(vesselTripPath(resource.data.tripId)).data.expenseCents
+        && get(vesselTripPath(resource.data.tripId)).data.status == 'draft'
+        && getAfter(vesselTripPath(resource.data.tripId)).data.lastActionId == request.resource.data.lastActionId
+        && (
+          (resource.data.type == 'income'
+            && getAfter(vesselTripPath(resource.data.tripId)).data.incomeCents
+              == get(vesselTripPath(resource.data.tripId)).data.incomeCents - resource.data.amountCents)
+          ||
+          (resource.data.type == 'expense'
+            && getAfter(vesselTripPath(resource.data.tripId)).data.expenseCents
+              == get(vesselTripPath(resource.data.tripId)).data.expenseCents - resource.data.amountCents)
+        );
+      allow delete: if false;
+    }
+
+    match /vesselCrewPayments/{paymentId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validVesselCrewPayment(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.voided == false && request.resource.data.voidReason == null
+        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
+        && request.resource.data.lastActionId == 'payment_create_' + paymentId
+        && ((request.resource.data.paymentType == 'advance'
+            && get(vesselTripPath(request.resource.data.tripId)).data.status in ['draft', 'confirmed'])
+          || (request.resource.data.paymentType == 'settlement'
+            && get(vesselTripPath(request.resource.data.tripId)).data.status == 'confirmed'))
+        && request.resource.data.workerId
+          == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.workerId
+        && request.resource.data.workerNameSnapshot
+          == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.workerNameSnapshot
+        && request.resource.data.amountCents
+          <= get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.balanceCents
+        && ((request.resource.data.paymentType == 'advance'
+            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
+                + request.resource.data.amountCents
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.crewAdvanceCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.crewAdvanceCents + request.resource.data.amountCents
+            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents)
+          || (request.resource.data.paymentType == 'settlement'
+            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
+                + request.resource.data.amountCents
+            && getAfter(vesselTripPath(request.resource.data.tripId)).data.crewPaidCents
+              == get(vesselTripPath(request.resource.data.tripId)).data.crewPaidCents + request.resource.data.amountCents
+            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents));
+      allow update: if signedIn() && validVesselCrewPayment(request.resource.data)
+        && resource.data.voided == false && request.resource.data.voided == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'voided', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
+        ])
+        && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+        && request.resource.data.lastActionId == 'payment_void_' + paymentId
+        && get(vesselTripPath(resource.data.tripId)).data.status in ['draft', 'confirmed']
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.reason
+          == request.resource.data.voidReason
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.paymentType
+          == resource.data.paymentType
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.amountCents
+          == resource.data.amountCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.crewAdvanceCents
+          == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.crewPaidCents
+          == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.tripAdvanceCents
+          == get(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.tripPaidCents
+          == get(vesselTripPath(resource.data.tripId)).data.crewPaidCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.crewAdvanceCents
+          == getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.crewPaidCents
+          == getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.tripAdvanceCents
+          == getAfter(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
+        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.tripPaidCents
+          == getAfter(vesselTripPath(resource.data.tripId)).data.crewPaidCents
+        && ((resource.data.paymentType == 'advance'
+            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
+                - resource.data.amountCents
+            && getAfter(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
+              == get(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents - resource.data.amountCents
+            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents)
+          || (resource.data.paymentType == 'settlement'
+            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
+                - resource.data.amountCents
+            && getAfter(vesselTripPath(resource.data.tripId)).data.crewPaidCents
+              == get(vesselTripPath(resource.data.tripId)).data.crewPaidCents - resource.data.amountCents
+            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents));
       allow delete: if false;
     }
 
