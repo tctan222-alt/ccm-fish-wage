@@ -85,6 +85,272 @@ service cloud.firestore {
           || (!data.active && data.inactiveBy is string && data.inactiveAt is timestamp));
     }
 
+    function purchaseReceiptPath(receiptId) {
+      return /databases/$(database)/documents/purchaseReceipts/$(receiptId);
+    }
+
+    function purchaseActionPath(receiptId, actionId) {
+      return /databases/$(database)/documents/purchaseReceipts/$(receiptId)/actions/$(actionId);
+    }
+
+    function purchasePaymentPath(paymentId) {
+      return /databases/$(database)/documents/purchasePayments/$(paymentId);
+    }
+
+    function validPurchaseCategory(data) {
+      return data.keys().hasOnly([
+          'categoryCode', 'displayName', 'active', 'order', 'notes',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+        ])
+        && data.keys().hasAll([
+          'categoryCode', 'displayName', 'active', 'order', 'notes',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+        ])
+        && data.categoryCode is string && data.categoryCode.matches('^[a-z0-9_]{1,40}$')
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.active is bool && data.order is int && data.order >= 0
+        && data.notes is string && data.notes.size() <= 500
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp
+        && (data.inactiveBy == null || data.inactiveBy is string)
+        && (data.inactiveAt == null || data.inactiveAt is timestamp);
+    }
+
+    function validVessel(data) {
+      return data.keys().hasOnly([
+          'vesselCode', 'displayName', 'defaultSupplierId', 'defaultSupplierNameSnapshot',
+          'active', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+        ])
+        && data.keys().hasAll([
+          'vesselCode', 'displayName', 'defaultSupplierId', 'defaultSupplierNameSnapshot',
+          'active', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+        ])
+        && data.vesselCode is string && data.vesselCode.size() >= 1 && data.vesselCode.size() <= 30
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && data.defaultSupplierId is string && data.defaultSupplierNameSnapshot is string
+        && data.active is bool && data.notes is string && data.notes.size() <= 500
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp
+        && (data.inactiveBy == null || data.inactiveBy is string)
+        && (data.inactiveAt == null || data.inactiveAt is timestamp);
+    }
+
+    function validPurchaseReceipt(data) {
+      return data.keys().hasOnly([
+          'receiptCode', 'receiptDate', 'monthKey', 'externalSlipNo',
+          'supplierId', 'supplierCodeSnapshot', 'supplierNameSnapshot',
+          'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot', 'status',
+          'lineCount', 'totalBasketCount', 'totalWeightGrams', 'totalAmountCents',
+          'paidCents', 'paymentStatus', 'notes', 'duplicateAcknowledged',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'lastActionId',
+          'confirmedBy', 'confirmedAt', 'voidedBy', 'voidedAt', 'voidReason',
+          'lineIds', 'draftVersion'
+        ])
+        && data.keys().hasAll([
+          'receiptCode', 'receiptDate', 'monthKey', 'externalSlipNo',
+          'supplierId', 'supplierCodeSnapshot', 'supplierNameSnapshot',
+          'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot', 'status',
+          'lineCount', 'totalBasketCount', 'totalWeightGrams', 'totalAmountCents',
+          'paidCents', 'paymentStatus', 'notes', 'duplicateAcknowledged',
+          'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'lastActionId',
+          'confirmedBy', 'confirmedAt', 'voidedBy', 'voidedAt', 'voidReason',
+          'lineIds', 'draftVersion'
+        ])
+        && data.receiptCode is string && data.receiptCode.matches('^RC-[A-Z0-9]{8}$')
+        && data.receiptDate is string && data.receiptDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.monthKey == data.receiptDate[0:7]
+        && data.externalSlipNo is string && data.externalSlipNo.size() <= 100
+        && data.supplierId is string && data.supplierId.size() > 0
+        && data.supplierCodeSnapshot is string && data.supplierNameSnapshot is string && data.supplierNameSnapshot.size() > 0
+        && data.vesselId is string && data.vesselId.size() > 0
+        && data.vesselCodeSnapshot is string && data.vesselNameSnapshot is string
+        && data.status in ['draft', 'confirmed', 'voided']
+        && data.lineCount is int && data.lineCount >= 0
+        && data.lineIds is list && data.lineIds.size() == data.lineCount && data.lineIds.size() <= 100
+        && data.draftVersion is int && data.draftVersion >= 1
+        && data.totalBasketCount is int && data.totalBasketCount >= 0
+        && data.totalWeightGrams is int && data.totalWeightGrams >= 0
+        && data.totalAmountCents is int && data.totalAmountCents >= 0
+        && data.paidCents is int && data.paidCents >= 0 && data.paidCents <= data.totalAmountCents
+        && data.paymentStatus in ['unpaid', 'partial', 'paid']
+        && ((data.paidCents == 0 && data.paymentStatus == 'unpaid')
+          || (data.paidCents > 0 && data.paidCents < data.totalAmountCents && data.paymentStatus == 'partial')
+          || (data.totalAmountCents > 0 && data.paidCents == data.totalAmountCents && data.paymentStatus == 'paid'))
+        && data.notes is string && data.notes.size() <= 500 && data.duplicateAcknowledged is bool
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp
+        && data.lastActionId is string && data.lastActionId.size() > 0
+        && (data.confirmedBy == null || data.confirmedBy is string)
+        && (data.confirmedAt == null || data.confirmedAt is timestamp)
+        && (data.voidedBy == null || data.voidedBy is string)
+        && (data.voidedAt == null || data.voidedAt is timestamp)
+        && (data.voidReason == null || (data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100));
+    }
+
+    function validActivePurchaseParties(data) {
+      let supplier = get(/databases/$(database)/documents/businessPartners/$(data.supplierId)).data;
+      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      return supplier.active == true && supplier.supplier == true
+        && supplier.partnerCode == data.supplierCodeSnapshot
+        && supplier.displayName == data.supplierNameSnapshot
+        && vessel.active == true
+        && vessel.vesselCode == data.vesselCodeSnapshot
+        && vessel.displayName == data.vesselNameSnapshot;
+    }
+
+    function validPurchaseLine(data) {
+      return data.keys().hasOnly([
+          'lineNo', 'categoryId', 'categoryCodeSnapshot', 'categoryNameSnapshot',
+          'basketCount', 'weightGrams', 'unitPriceCentsPerKg', 'amountCents',
+          'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasAll([
+          'lineNo', 'categoryId', 'categoryCodeSnapshot', 'categoryNameSnapshot',
+          'basketCount', 'weightGrams', 'unitPriceCentsPerKg', 'amountCents',
+          'notes', 'createdAt', 'updatedAt'
+        ])
+        && data.lineNo is int && data.lineNo >= 1
+        && data.categoryId is string && data.categoryId.size() > 0
+        && data.categoryCodeSnapshot is string && data.categoryNameSnapshot is string && data.categoryNameSnapshot.size() > 0
+        && data.basketCount is int && data.basketCount >= 0 && data.basketCount <= 9999
+        && data.weightGrams is int && data.weightGrams > 0 && data.weightGrams <= 100000000
+        && data.unitPriceCentsPerKg is int && data.unitPriceCentsPerKg > 0 && data.unitPriceCentsPerKg <= 10000000
+        && data.amountCents is int && data.amountCents > 0
+        && data.amountCents == int((data.weightGrams * data.unitPriceCentsPerKg + 500) / 1000)
+        && data.notes is string && data.notes.size() <= 500
+        && data.createdAt is timestamp && data.updatedAt is timestamp;
+    }
+
+    function validPurchasePayment(data) {
+      return data.keys().hasOnly([
+          'paymentGroupId', 'receiptId', 'receiptCode', 'supplierId', 'supplierNameSnapshot',
+          'amountCents', 'method', 'paymentDate', 'reference', 'note',
+          'createdBy', 'createdAt', 'voided', 'voidReason', 'voidedBy', 'voidedAt'
+        ])
+        && data.keys().hasAll([
+          'paymentGroupId', 'receiptId', 'receiptCode', 'supplierId', 'supplierNameSnapshot',
+          'amountCents', 'method', 'paymentDate', 'reference', 'note',
+          'createdBy', 'createdAt', 'voided', 'voidReason', 'voidedBy', 'voidedAt'
+        ])
+        && data.paymentGroupId is string && data.paymentGroupId.size() > 0
+        && data.receiptId is string && data.receiptId.size() > 0
+        && data.receiptCode is string && data.supplierId is string && data.supplierNameSnapshot is string
+        && data.amountCents is int && data.amountCents > 0
+        && data.method in ['cash', 'bank', 'other']
+        && data.paymentDate is string && data.paymentDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && data.reference is string && data.reference.size() <= 100
+        && data.note is string && data.note.size() <= 500
+        && data.createdBy is string && data.createdAt is timestamp && data.voided is bool
+        && (data.voidReason == null || (data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100))
+        && (data.voidedBy == null || data.voidedBy is string)
+        && (data.voidedAt == null || data.voidedAt is timestamp);
+    }
+
+    function validPurchaseAction(data) {
+      return data.keys().hasOnly([
+          'type', 'receiptId', 'receiptCode', 'supplierId', 'vesselId', 'paymentId',
+          'reason', 'performedBy', 'performedAt', 'beforeSnapshot', 'afterSnapshot'
+        ])
+        && data.keys().hasAll([
+          'type', 'receiptId', 'receiptCode', 'supplierId', 'vesselId', 'performedBy', 'performedAt'
+        ])
+        && data.type in ['create', 'update_draft', 'confirm', 'void', 'payment_create', 'payment_void']
+        && data.receiptId is string && data.receiptCode is string
+        && data.supplierId is string && data.vesselId is string
+        && data.performedBy == request.auth.uid && data.performedAt == request.time
+        && (!('paymentId' in data) || data.paymentId is string)
+        && (!('reason' in data) || (data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 100))
+        && 'afterSnapshot' in data;
+    }
+
+    function validLinkedPurchaseAction(receiptId, actionType) {
+      let actionId = getAfter(purchaseReceiptPath(receiptId)).data.lastActionId;
+      let action = getAfter(purchaseActionPath(receiptId, actionId)).data;
+      return existsAfter(purchaseActionPath(receiptId, actionId))
+        && action.type == actionType && action.receiptId == receiptId
+        && action.receiptCode == getAfter(purchaseReceiptPath(receiptId)).data.receiptCode
+        && action.supplierId == getAfter(purchaseReceiptPath(receiptId)).data.supplierId
+        && action.vesselId == getAfter(purchaseReceiptPath(receiptId)).data.vesselId
+        && action.performedBy == request.auth.uid && action.performedAt == request.time;
+    }
+
+    function validPurchaseReceiptPaymentUpdate(receiptId) {
+      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
+      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      let payment = getAfter(purchasePaymentPath(action.paymentId)).data;
+      return validLinkedPurchaseAction(receiptId, action.type)
+        && action.paymentId is string
+        && existsAfter(purchasePaymentPath(action.paymentId))
+        && payment.receiptId == receiptId
+        && (
+          (action.type == 'payment_create'
+            && payment.voided == false
+            && receipt.paidCents == resource.data.paidCents + payment.amountCents)
+          ||
+          (action.type == 'payment_void'
+            && payment.voided == true
+            && receipt.paidCents == resource.data.paidCents - payment.amountCents)
+        )
+        && action.afterSnapshot.paidCents == receipt.paidCents
+        && action.afterSnapshot.paymentStatus == receipt.paymentStatus;
+    }
+
+    function validDraftPurchaseAction(receiptId, actionType) {
+      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
+      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      return validLinkedPurchaseAction(receiptId, actionType)
+        && action.afterSnapshot.status == 'draft'
+        && action.afterSnapshot.draftVersion == receipt.draftVersion
+        && action.afterSnapshot.lineCount == receipt.lineCount
+        && action.afterSnapshot.totalBasketCount == receipt.totalBasketCount
+        && action.afterSnapshot.totalWeightGrams == receipt.totalWeightGrams
+        && action.afterSnapshot.totalAmountCents == receipt.totalAmountCents;
+    }
+
+    function validConfirmPurchaseAction(receiptId) {
+      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
+      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      return validLinkedPurchaseAction(receiptId, 'confirm')
+        && action.afterSnapshot.status == 'confirmed'
+        && action.afterSnapshot.lineCount == receipt.lineCount
+        && action.afterSnapshot.totalBasketCount == receipt.totalBasketCount
+        && action.afterSnapshot.totalWeightGrams == receipt.totalWeightGrams
+        && action.afterSnapshot.totalAmountCents == receipt.totalAmountCents;
+    }
+
+    function validVoidPurchaseAction(receiptId) {
+      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
+      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      return validLinkedPurchaseAction(receiptId, 'void')
+        && action.reason == receipt.voidReason
+        && action.beforeSnapshot.status == 'confirmed'
+        && action.beforeSnapshot.paidCents == 0
+        && action.afterSnapshot.status == 'voided';
+    }
+
+    function validDraftLineUpsert(receiptId, lineId) {
+      let path = purchaseReceiptPath(receiptId);
+      let after = getAfter(path).data;
+      return after.status == 'draft'
+        && lineId in after.lineIds
+        && (
+          (!exists(path) && validDraftPurchaseAction(receiptId, 'create'))
+          ||
+          (exists(path) && get(path).data.status == 'draft'
+            && after.draftVersion == get(path).data.draftVersion + 1
+            && validDraftPurchaseAction(receiptId, 'update_draft'))
+        );
+    }
+
+    function validDraftLineDelete(receiptId, lineId) {
+      let path = purchaseReceiptPath(receiptId);
+      let after = getAfter(path).data;
+      return exists(path) && get(path).data.status == 'draft'
+        && after.status == 'draft' && !(lineId in after.lineIds)
+        && after.draftVersion == get(path).data.draftVersion + 1
+        && validDraftPurchaseAction(receiptId, 'update_draft');
+    }
+
     function validWageEntry(data) {
       return data.keys().hasOnly([
           'dateKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
@@ -349,6 +615,201 @@ service cloud.firestore {
           || (resource.data.active == false && request.resource.data.active == true
             && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
         );
+      allow delete: if false;
+    }
+
+    match /purchaseCategories/{categoryId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validPurchaseCategory(request.resource.data)
+        && categoryId == request.resource.data.categoryCode
+        && request.resource.data.active == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
+      allow update: if signedIn() && validPurchaseCategory(request.resource.data)
+        && request.resource.data.categoryCode == resource.data.categoryCode
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && (
+          (request.resource.data.active == resource.data.active
+            && request.resource.data.inactiveBy == resource.data.inactiveBy
+            && request.resource.data.inactiveAt == resource.data.inactiveAt)
+          || (resource.data.active == true && request.resource.data.active == false
+            && request.resource.data.inactiveBy == request.auth.uid && request.resource.data.inactiveAt == request.time)
+          || (resource.data.active == false && request.resource.data.active == true
+            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+        );
+      allow delete: if false;
+    }
+
+    match /vessels/{vesselId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validVessel(request.resource.data)
+        && request.resource.data.active == true
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
+      allow update: if signedIn() && validVessel(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && (
+          (request.resource.data.active == resource.data.active
+            && request.resource.data.inactiveBy == resource.data.inactiveBy
+            && request.resource.data.inactiveAt == resource.data.inactiveAt)
+          || (resource.data.active == true && request.resource.data.active == false
+            && request.resource.data.inactiveBy == request.auth.uid && request.resource.data.inactiveAt == request.time)
+          || (resource.data.active == false && request.resource.data.active == true
+            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+        );
+      allow delete: if false;
+    }
+
+    match /purchaseReceipts/{receiptId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validPurchaseReceipt(request.resource.data)
+        && validActivePurchaseParties(request.resource.data)
+        && request.resource.data.status == 'draft'
+        && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.confirmedBy == null && request.resource.data.confirmedAt == null
+        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
+        && request.resource.data.voidReason == null
+        && validDraftPurchaseAction(receiptId, 'create');
+      allow update: if signedIn() && validPurchaseReceipt(request.resource.data)
+        && request.resource.data.receiptCode == resource.data.receiptCode
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && (
+          (resource.data.status == 'draft' && request.resource.data.status == 'draft'
+            && validActivePurchaseParties(request.resource.data)
+            && request.resource.data.draftVersion == resource.data.draftVersion + 1
+            && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
+            && request.resource.data.confirmedBy == null && request.resource.data.confirmedAt == null
+            && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
+            && request.resource.data.voidReason == null
+            && validDraftPurchaseAction(receiptId, 'update_draft'))
+          ||
+          (resource.data.status == 'draft' && request.resource.data.status == 'confirmed'
+            && validActivePurchaseParties(request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'supplierCodeSnapshot', 'supplierNameSnapshot', 'vesselCodeSnapshot', 'vesselNameSnapshot',
+              'status', 'lineCount', 'totalBasketCount', 'totalWeightGrams', 'totalAmountCents', 'paymentStatus',
+              'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.lineCount >= 1
+            && request.resource.data.totalWeightGrams > 0 && request.resource.data.totalAmountCents > 0
+            && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
+            && request.resource.data.confirmedBy == request.auth.uid && request.resource.data.confirmedAt == request.time
+            && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
+            && request.resource.data.voidReason == null
+            && validConfirmPurchaseAction(receiptId))
+          ||
+          (resource.data.status == 'confirmed' && request.resource.data.status == 'voided'
+            && resource.data.paidCents == 0 && request.resource.data.paidCents == 0
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+            && validVoidPurchaseAction(receiptId))
+          ||
+          (resource.data.status == 'confirmed' && request.resource.data.status == 'confirmed'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'paidCents', 'paymentStatus', 'updatedBy', 'updatedAt', 'lastActionId'
+            ])
+            && validPurchaseReceiptPaymentUpdate(receiptId))
+        );
+      allow delete: if false;
+
+      match /lines/{lineId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validPurchaseLine(request.resource.data)
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.active == true
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.categoryCode
+            == request.resource.data.categoryCodeSnapshot
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.displayName
+            == request.resource.data.categoryNameSnapshot
+          && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
+          && validDraftLineUpsert(receiptId, lineId);
+        allow update: if signedIn() && validPurchaseLine(request.resource.data)
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.active == true
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.categoryCode
+            == request.resource.data.categoryCodeSnapshot
+          && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.displayName
+            == request.resource.data.categoryNameSnapshot
+          && request.resource.data.createdAt == resource.data.createdAt
+          && request.resource.data.updatedAt == request.time
+          && (
+            validDraftLineUpsert(receiptId, lineId)
+            ||
+            (get(purchaseReceiptPath(receiptId)).data.status == 'draft'
+              && getAfter(purchaseReceiptPath(receiptId)).data.status == 'confirmed'
+              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'categoryCodeSnapshot', 'categoryNameSnapshot', 'amountCents', 'updatedAt'
+              ]))
+          );
+        allow delete: if signedIn() && validDraftLineDelete(receiptId, lineId);
+      }
+
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validPurchaseAction(request.resource.data)
+          && request.resource.data.receiptId == receiptId
+          && getAfter(purchaseReceiptPath(receiptId)).data.lastActionId == actionId;
+        allow update, delete: if false;
+      }
+    }
+
+    match /purchasePayments/{paymentId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validPurchasePayment(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.voided == false && request.resource.data.voidReason == null
+        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
+        && get(purchaseReceiptPath(request.resource.data.receiptId)).data.status == 'confirmed'
+        && request.resource.data.receiptCode == get(purchaseReceiptPath(request.resource.data.receiptId)).data.receiptCode
+        && request.resource.data.supplierId == get(purchaseReceiptPath(request.resource.data.receiptId)).data.supplierId
+        && request.resource.data.supplierNameSnapshot == get(purchaseReceiptPath(request.resource.data.receiptId)).data.supplierNameSnapshot
+        && request.resource.data.amountCents
+          <= get(purchaseReceiptPath(request.resource.data.receiptId)).data.totalAmountCents
+            - get(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents
+        && getAfter(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents
+          == get(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents + request.resource.data.amountCents
+        && validLinkedPurchaseAction(request.resource.data.receiptId, 'payment_create')
+        && getAfter(purchaseActionPath(
+          request.resource.data.receiptId,
+          getAfter(purchaseReceiptPath(request.resource.data.receiptId)).data.lastActionId
+        )).data.paymentId == paymentId;
+      allow update: if signedIn() && validPurchasePayment(request.resource.data)
+        && resource.data.voided == false && request.resource.data.voided == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'voided', 'voidReason', 'voidedBy', 'voidedAt'
+        ])
+        && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+        && getAfter(purchaseReceiptPath(resource.data.receiptId)).data.paidCents
+          == get(purchaseReceiptPath(resource.data.receiptId)).data.paidCents - resource.data.amountCents
+        && getAfter(purchaseReceiptPath(resource.data.receiptId)).data.paidCents >= 0
+        && validLinkedPurchaseAction(resource.data.receiptId, 'payment_void')
+        && getAfter(purchaseActionPath(
+          resource.data.receiptId,
+          getAfter(purchaseReceiptPath(resource.data.receiptId)).data.lastActionId
+        )).data.paymentId == paymentId
+        && getAfter(purchaseActionPath(
+          resource.data.receiptId,
+          getAfter(purchaseReceiptPath(resource.data.receiptId)).data.lastActionId
+        )).data.reason == request.resource.data.voidReason;
       allow delete: if false;
     }
 
