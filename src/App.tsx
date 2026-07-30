@@ -10,6 +10,8 @@ const WorkersPage = lazy(() => import('./pages/WorkersPage').then(module => ({ d
 const TodaySummaryPage = lazy(() => import('./pages/TodaySummaryPage').then(module => ({ default: module.TodaySummaryPage })))
 const MonthlySummaryPage = lazy(() => import('./pages/MonthlySummaryPage').then(module => ({ default: module.MonthlySummaryPage })))
 const WorkerStatementPage = lazy(() => import('./pages/WorkerStatementPage').then(module => ({ default: module.WorkerStatementPage })))
+const MasterDataPage = lazy(() => import('./pages/MasterDataPage').then(module => ({ default: module.MasterDataPage })))
+const PartnersPage = lazy(() => import('./pages/PartnersPage').then(module => ({ default: module.PartnersPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>Loading CCM Fishery…</strong></main>
@@ -29,6 +31,8 @@ function AuthenticatedApp() {
         <Route path="/monthly" element={<MonthlySummaryPage />} />
         <Route path="/monthly/:monthKey/worker/:workerId/statement" element={<WorkerStatementPage />} />
         <Route path="/workers" element={<WorkersPage />} />
+        <Route path="/master-data" element={<MasterDataPage />} />
+        <Route path="/partners" element={<PartnersPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
