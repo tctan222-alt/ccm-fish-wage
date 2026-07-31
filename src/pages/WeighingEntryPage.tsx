@@ -2,6 +2,7 @@ import { useCallback,useEffect,useMemo,useRef,useState,type FormEvent } from 're
 import { Link,useParams } from 'react-router-dom'
 import { auth } from '../firebase'
 import { rmInputToCentsPerKg, type Vessel } from '../lib/purchasing'
+import { malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
   activeFishSpecies,
@@ -39,7 +40,7 @@ import {
 } from '../services/weighing'
 
 const defaultStore=typeof indexedDB==='undefined'?undefined:createIndexedDbWeighingStore()
-const malaysiaToday=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
+const malaysiaToday=()=>malaysiaBusinessDate()
 const isoNow=()=>new Date().toISOString()
 const makeId=(kind:'session'|'entry'|'operation')=>`${kind}-${globalThis.crypto?.randomUUID?.()??`${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 function parseCachedRows<T>(value:string|undefined):T[]|undefined{
@@ -302,7 +303,7 @@ export function WeighingEntryPage({
     <section className="weighing-setup">
       <label>船号<select aria-label="船号" value={vesselId} disabled={Boolean(session)} onChange={event=>setVesselId(event.target.value)}>
         {vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-      <label>日期<input aria-label="日期" type="date" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
+      <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
 

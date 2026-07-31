@@ -119,20 +119,47 @@ service cloud.firestore {
     function validVessel(data) {
       return data.keys().hasOnly([
           'vesselCode', 'displayName', 'defaultSupplierId', 'defaultSupplierNameSnapshot',
-          'active', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+          'active', 'order', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
         ])
         && data.keys().hasAll([
           'vesselCode', 'displayName', 'defaultSupplierId', 'defaultSupplierNameSnapshot',
-          'active', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
+          'active', 'order', 'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
         ])
         && data.vesselCode is string && data.vesselCode.size() >= 1 && data.vesselCode.size() <= 30
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
         && data.defaultSupplierId is string && data.defaultSupplierNameSnapshot is string
-        && data.active is bool && data.notes is string && data.notes.size() <= 500
+        && data.active is bool && data.order is int && data.order >= 0 && data.notes is string && data.notes.size() <= 500
         && data.createdBy is string && data.createdAt is timestamp
         && data.updatedBy is string && data.updatedAt is timestamp
         && (data.inactiveBy == null || data.inactiveBy is string)
         && (data.inactiveAt == null || data.inactiveAt is timestamp);
+    }
+
+    function validBusinessDate(value) {
+      return value is string && value.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$');
+    }
+
+    function validIceWorkRecord(data) {
+      return data.workDate is string && validBusinessDate(data.workDate)
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{2}/[0-9]{4}$')
+        && data.dateSortKey is int && data.monthSortKey is int
+        && data.vesselId is string && data.vesselCodeSnapshot is string && data.vesselNameSnapshot is string
+        && data.factoryIncomingWeightGrams is int && data.factoryIncomingWeightGrams >= 0
+        && data.iceBoxHalfUnits is int && data.iceBoxHalfUnits >= 0
+        && data.dieselVolumeMilliliters is int && data.dieselVolumeMilliliters >= 0
+        && data.hawkerSaleWeightGrams is int && data.hawkerSaleWeightGrams >= 0
+        && data.directIceBarCount is int && data.directIceBarCount >= 0 && data.plasticBagCount is int && data.plasticBagCount >= 0
+        && data.factoryIncomingRateCentsPerKg == 10 && data.iceBoxRateCentsPerFullBox == 3000 && data.iceBoxRateCentsPerHalfUnit == 1500
+        && data.dieselRateCentsPerLiter == 2 && data.hawkerSaleRateCentsPerKg == 30 && data.directIceRateCentsPerBar == 1350 && data.plasticBagRateCentsEach == 140
+        && data.factoryIncomingAmountCents == int((data.factoryIncomingWeightGrams * 10 + 500) / 1000)
+        && data.iceBoxAmountCents == data.iceBoxHalfUnits * 1500
+        && data.dieselAmountCents == int((data.dieselVolumeMilliliters * 2 + 500) / 1000)
+        && data.hawkerSaleAmountCents == int((data.hawkerSaleWeightGrams * 30 + 500) / 1000)
+        && data.directIceAmountCents == data.directIceBarCount * 1350 && data.plasticBagAmountCents == data.plasticBagCount * 140
+        && data.workFeeSubtotalCents == data.factoryIncomingAmountCents + data.iceBoxAmountCents + data.dieselAmountCents + data.hawkerSaleAmountCents
+        && data.materialSubtotalCents == data.directIceAmountCents + data.plasticBagAmountCents && data.recordTotalCents == data.workFeeSubtotalCents + data.materialSubtotalCents
+        && data.status in ['draft','confirmed','reopened','voided'] && data.revision is int && data.revision >= 1 && data.voided is bool
+        && data.notes is string && data.notes.size() <= 500 && data.createdBy is string && data.createdAt is timestamp && data.updatedBy is string && data.updatedAt is timestamp;
     }
 
     function validPurchaseReceipt(data) {
@@ -594,7 +621,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time;
     }
 
-    function validIceWorkRecord(data) {
+    function validLegacyIceWorkRecord(data) {
       return data.keys().hasOnly([
           'workDate', 'monthKey', 'vesselId', 'vesselCodeSnapshot',
           'factoryWoodTubQuantity', 'iceBoxQuantity', 'hawkerSaleQuantity',
@@ -1506,6 +1533,7 @@ service cloud.firestore {
         && request.resource.data.updatedAt == request.time
         && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
       allow update: if signedIn() && validVessel(request.resource.data)
+        && request.resource.data.vesselCode == resource.data.vesselCode
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid
@@ -1574,6 +1602,37 @@ service cloud.firestore {
             && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthEndSettlement == true
             && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.vesselId == request.resource.data.vesselId
             && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthKey == request.resource.data.monthKey));
+      allow delete: if false;
+    }
+
+    match /iceWorkRecords/{recordId} {
+      allow create: if signedIn() && validIceWorkRecord(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true;
+      allow update: if signedIn() && validIceWorkRecord(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.revision == resource.data.revision + 1
+        && !(resource.data.status == 'confirmed' && request.resource.data.status == 'confirmed');
+      match /actions/{actionId} {
+        allow read, create: if signedIn() && request.resource.data.type in ['create','update','confirm','reopen','void']
+          && request.resource.data.recordId == recordId && request.resource.data.performedBy == request.auth.uid
+          && request.resource.data.performedAt == request.time && request.resource.data.revision is int;
+        allow update, delete: if false;
+      }
+    }
+
+    match /iceWorkMonthlySettlements/{settlementId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && request.resource.data.vesselId is string && request.resource.data.monthKey is string
+        && request.resource.data.monthKey.matches('^[0-9]{2}/[0-9]{4}$') && request.resource.data.monthSortKey is int
+        && request.resource.data.status == 'draft' && request.resource.data.revision == 1
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+      allow update: if signedIn() && request.resource.data.vesselId == resource.data.vesselId
+        && request.resource.data.monthSortKey == resource.data.monthSortKey && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
 

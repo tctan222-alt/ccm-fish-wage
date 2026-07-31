@@ -13,7 +13,7 @@ export interface PurchaseCategory {
 }
 export interface Vessel {
   id:string;vesselCode:string;displayName:string;defaultSupplierId:string;defaultSupplierNameSnapshot:string
-  active:boolean;notes:string;createdBy?:string;createdAt?:unknown;updatedBy?:string;updatedAt?:unknown;inactiveBy?:string|null;inactiveAt?:unknown|null
+  active:boolean;order?:number;notes:string;createdBy?:string;createdAt?:unknown;updatedBy?:string;updatedAt?:unknown;inactiveBy?:string|null;inactiveAt?:unknown|null
 }
 export interface PurchaseReceiptLine {
   id:string;lineNo:number;categoryId:string;categoryCodeSnapshot:string;categoryNameSnapshot:string
@@ -41,8 +41,10 @@ export interface PurchasePayment {
 }
 export interface PurchaseCategoryInput {categoryCode:string;displayName:string;order:number;notes:string}
 export interface VesselInput {
-  vesselCode:string;displayName:string;defaultSupplierId:string;defaultSupplierNameSnapshot:string;notes:string
+  vesselCode:string;displayName:string;defaultSupplierId:string;defaultSupplierNameSnapshot:string;order?:number;notes:string
 }
+const defaultVesselData=['978','833','2072','9633','4818','2031','1785','5202'] as const
+export const DEFAULT_VESSELS=defaultVesselData.map((vesselCode,order)=>({id:vesselCode,vesselCode,displayName:vesselCode,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order,notes:''}))
 
 const defaultCategoryData=[
   ['fish_head','鱼头'],['fish_meal','鱼仔'],['lai_ge','来戈'],['jin_xian','金线'],['mu_li','目力'],
@@ -53,7 +55,11 @@ export const DEFAULT_PURCHASE_CATEGORIES=defaultCategoryData.map(([categoryCode,
 }))
 
 export const activePurchaseCategories=(categories:PurchaseCategory[])=>categories.filter(item=>item.active).sort((a,b)=>a.order-b.order||a.displayName.localeCompare(b.displayName))
-export const activeVessels=(vessels:Vessel[])=>vessels.filter(item=>item.active).sort((a,b)=>a.vesselCode.localeCompare(b.vesselCode))
+export const activeVessels=(vessels:Vessel[])=>vessels.filter(item=>item.active).sort((a,b)=>(a.order??Number.MAX_SAFE_INTEGER)-(b.order??Number.MAX_SAFE_INTEGER)||a.vesselCode.localeCompare(b.vesselCode))
+export function buildDefaultVesselCreates(existing:Vessel[]){
+  const codes=new Set(existing.map(item=>item.vesselCode.trim().toLowerCase()))
+  return DEFAULT_VESSELS.filter(item=>!codes.has(item.vesselCode.toLowerCase()))
+}
 export function buildDefaultCategoryCreates(existing:PurchaseCategory[]){
   const codes=new Set(existing.map(item=>item.categoryCode))
   return DEFAULT_PURCHASE_CATEGORIES.filter(item=>!codes.has(item.categoryCode))
@@ -124,12 +130,13 @@ export function validateCategoryInput(input:PurchaseCategoryInput){
   return errors
 }
 export function normalizeVesselInput(input:VesselInput):VesselInput{
-  return {...input,vesselCode:input.vesselCode.trim(),displayName:input.displayName.trim(),notes:input.notes.trim()}
+  return {...input,vesselCode:input.vesselCode.trim(),displayName:input.displayName.trim(),order:input.order??0,notes:input.notes.trim()}
 }
 export function validateVesselInput(input:VesselInput){
   const value=normalizeVesselInput(input);const errors:string[]=[]
   if(value.vesselCode.length<1||value.vesselCode.length>30)errors.push('Vessel code must be 1 to 30 characters.')
   if(value.displayName.length<1||value.displayName.length>80)errors.push('Vessel name must be 1 to 80 characters.')
+  if(!Number.isInteger(value.order)||Number(value.order)<0)errors.push('Vessel order must be a non-negative whole number.')
   if(value.notes.length>500)errors.push('Notes must be 500 characters or fewer.')
   return errors
 }

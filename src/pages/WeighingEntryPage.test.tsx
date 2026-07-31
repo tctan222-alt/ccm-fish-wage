@@ -145,7 +145,7 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'2.5'}})
     fireEvent.click(screen.getByRole('button',{name:'确认'}))
     await screen.findByText('已保存')
-    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'2026-07-30',monthKey:'2026-07',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500,unitPriceCentsPerKg:1234,amountCents:3085})
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'30/07/2026',monthKey:'07/2026',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500,unitPriceCentsPerKg:1234,amountCents:3085})
   })
 
   it('keeps fish-meal bucket and bag prices separate and does not invent baskets for total weight',async()=>{

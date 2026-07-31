@@ -26,13 +26,14 @@ export function VesselsPage({loader=loadVessels,supplierLoader=loadActiveSupplie
   </main>
 }
 function VesselDialog({item,existing,suppliers,save,saved,close}:{item:Vessel|null;existing:Vessel[];suppliers:BusinessPartner[];save:(value:VesselInput)=>Promise<Vessel>;saved:(item:Vessel)=>void;close:()=>void}){
-  const [value,setValue]=useState<VesselInput>(item?{vesselCode:item.vesselCode,displayName:item.displayName,defaultSupplierId:item.defaultSupplierId,defaultSupplierNameSnapshot:item.defaultSupplierNameSnapshot,notes:item.notes}:{vesselCode:'',displayName:'',defaultSupplierId:'',defaultSupplierNameSnapshot:'',notes:''})
+  const [value,setValue]=useState<VesselInput>(item?{vesselCode:item.vesselCode,displayName:item.displayName,defaultSupplierId:item.defaultSupplierId,defaultSupplierNameSnapshot:item.defaultSupplierNameSnapshot,order:item.order??0,notes:item.notes}:{vesselCode:'',displayName:'',defaultSupplierId:'',defaultSupplierNameSnapshot:'',order:0,notes:''})
   const [ack,setAck]=useState(false);const [error,setError]=useState('');const [busy,setBusy]=useState(false)
   async function submit(event:FormEvent){event.preventDefault();if(!ack&&duplicateVesselCode(value.vesselCode,existing,item?.id)){setError('A vessel with this code exists. Confirm these are different vessels.');return}
     setBusy(true);try{saved(await save(value))}catch(problem){setError(problem instanceof Error?problem.message:'Vessel was not saved.')}finally{setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>{item?'Edit':'Add'} Vessel</h2>
     <form className="master-form" onSubmit={submit}><label>Vessel code<input value={value.vesselCode} maxLength={30} onChange={e=>{setValue({...value,vesselCode:e.target.value});setAck(false)}}/></label>
       <label>Display name<input value={value.displayName} maxLength={80} onChange={e=>setValue({...value,displayName:e.target.value})}/></label>
+      <label>Display order<input type="number" min="0" step="1" value={value.order??0} onChange={e=>setValue({...value,order:Number(e.target.value)})}/></label>
       <label>Default supplier<select value={value.defaultSupplierId} onChange={e=>{const supplier=suppliers.find(row=>row.id===e.target.value);setValue({...value,defaultSupplierId:e.target.value,defaultSupplierNameSnapshot:supplier?.displayName??''})}}><option value="">None</option>{suppliers.map(row=><option key={row.id} value={row.id}>{row.displayName}</option>)}</select></label>
       <label>Notes<textarea value={value.notes} maxLength={500} onChange={e=>setValue({...value,notes:e.target.value})}/></label>
       {error&&<p className="error" role="alert">{error}</p>}{error.includes('Confirm')&&<button type="button" className="warning-action" onClick={()=>{setAck(true);setError('')}}>Confirm duplicate code</button>}

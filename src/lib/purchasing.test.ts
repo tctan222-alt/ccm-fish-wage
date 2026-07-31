@@ -169,6 +169,14 @@ describe('purchase receiving domain',()=>{
     expect(activeVessels(vessels)).toEqual([])
   })
 
+  it('uses the master-data order for active vessel selectors',()=>{
+    const vessels=[
+      {id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:20,notes:''},
+      {id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:5,notes:''},
+    ]
+    expect(activeVessels(vessels).map(item=>item.vesselCode)).toEqual(['833','978'])
+  })
+
   it('builds one full-balance payment per selected receipt under one group',()=>{
     const group=buildPaymentGroup([receipt({id:'a',status:'confirmed',paidCents:43}),receipt({id:'b',status:'confirmed',paidCents:0})],'group-1')
     expect(group).toEqual([{receiptId:'a',amountCents:1700,paymentGroupId:'group-1'},{receiptId:'b',amountCents:1743,paymentGroupId:'group-1'}])
