@@ -39,7 +39,8 @@ export function WeighingReviewPage({
     const supplier=suppliers.find(item=>item.id===supplierId)
     if(!supplier){setError('请选择供应商。');return}
     try{
-      const cents=Object.fromEntries(groups.map(group=>[group.key,rmInputToCentsPerKg(prices[group.key]??'')]))
+      const cents=Object.fromEntries(groups.filter(group=>group.unitPriceCentsPerKg===null)
+        .map(group=>[group.key,rmInputToCentsPerKg(prices[group.key]??'')]))
       setBusy(true);setError('')
       const result=await processor({sessionId:session.id,supplier,lines:buildReceiptLinesFromWeighing(session.id,entries,cents)})
       setCreated(result);setBundle(current=>current?{...current,session:{...current.session,status:'processed',
@@ -74,9 +75,9 @@ export function WeighingReviewPage({
           <small>{group.entries.map(entry=>entry.entryMode==='individual'
             ?`第 ${entry.sequenceNo} 篮 ${formatWeightKg(entry.weightGrams)} kg`
             :`总重 ${formatWeightKg(entry.weightGrams)} kg${entry.remark?`（${entry.remark}）`:''}`).join(' · ')}</small></div>
-        {session.status==='completed'&&<label>{group.displayName}单价（RM/kg）
+        {session.status==='completed'&&(group.unitPriceCentsPerKg===null?<label>{group.displayName}单价（RM/kg）
           <input aria-label={`${group.displayName}单价（RM/kg）`} inputMode="decimal" value={prices[group.key]??''}
-            onChange={event=>setPrices(current=>({...current,[group.key]:event.target.value}))}/></label>}
+            onChange={event=>setPrices(current=>({...current,[group.key]:event.target.value}))}/></label>:<p>已保存单价：RM {(group.unitPriceCentsPerKg/100).toFixed(2)}/kg</p>)}
       </article>)}</div>
       {session.status==='completed'&&<div className="weighing-process-form"><label>供应商
         <select aria-label="Supplier" value={supplierId} onChange={event=>setSupplierId(event.target.value)}>
@@ -107,7 +108,7 @@ export function WeighingReviewPage({
 function RawEntry({entry}:{entry:WeighingEntry}){
   return <article className={entry.voided?'voided':''}><div><strong>{entry.sequenceNo?`第 ${entry.sequenceNo} 篮`:'总重'}</strong>
     <span>{entry.displayNameSnapshot}</span>{entry.remark&&<small>{entry.remark}</small>}</div>
-    <div><b>{formatWeightKg(entry.weightGrams)} kg</b><small>版本 {entry.revision}</small>
+    <div><b>{formatWeightKg(entry.weightGrams)} kg</b>{entry.unitPriceCentsPerKg!=null&&<small>RM {(entry.unitPriceCentsPerKg/100).toFixed(2)}/kg · RM {((entry.amountCents??0)/100).toFixed(2)}</small>}<small>版本 {entry.revision}</small>
       {entry.voided&&<em>已作废{entry.voidReason?`：${entry.voidReason}`:''}</em>}</div></article>
 }
 

@@ -9,6 +9,7 @@ import {
   summarizeWeighingEntries,
   type WeighingEntry,
   type WeighingSession,
+  summarizePricedWeighingEntries,
 } from './weighing'
 
 describe('现场称重产品选择', () => {
@@ -23,6 +24,26 @@ describe('现场称重产品选择', () => {
 })
 
 describe('现场称重记录规则', () => {
+  it('鱼头购入逐篮保留整数分单价与 half-up 金额快照', () => {
+    const priced = buildWeighingEntry({
+      id:'priced-1',sessionId:'session-1',productType:'fish_head',fishSpeciesId:'jin_xian',fishMealQuality:null,
+      entryMode:'individual',sequenceNo:1,weightGrams:1_250,remark:'',recordedAt:'2026-07-31T10:00:00+08:00',recordedBy:'admin',
+      unitPriceCentsPerKg:123,
+    })
+    expect(priced).toMatchObject({ unitPriceCentsPerKg:123, amountCents:154 })
+  })
+
+  it('同一鱼名不同价格分别汇总，且保留每篮实际价格', () => {
+    const entries=[
+      entry({id:'price-a',weightGrams:10_000,unitPriceCentsPerKg:100,amountCents:1_000}),
+      entry({id:'price-b',sequenceNo:2,weightGrams:5_000,unitPriceCentsPerKg:150,amountCents:750}),
+      entry({id:'price-c',sequenceNo:3,weightGrams:4_000,unitPriceCentsPerKg:100,amountCents:400}),
+    ]
+    expect(summarizePricedWeighingEntries(entries)).toEqual([
+      expect.objectContaining({displayName:'金线',unitPriceCentsPerKg:100,basketCount:2,totalWeightGrams:14_000,totalAmountCents:1_400}),
+      expect.objectContaining({displayName:'金线',unitPriceCentsPerKg:150,basketCount:1,totalWeightGrams:5_000,totalAmountCents:750}),
+    ])
+  })
   it('把最多三位小数的公斤输入准确保存为整数克', () => {
     expect(kgInputToGrams('12.345', 'individual')).toBe(12_345)
     expect(() => kgInputToGrams('12.3456', 'individual')).toThrow('最多三位小数')
@@ -141,6 +162,26 @@ describe('现场称重记录规则', () => {
       expect.objectContaining({categoryCodeSnapshot:'fish_meal_bag',basketCount:1,weightGrams:70_000,
         unitPriceCentsPerKg:120,amountCents:8400,fishMealQuality:'bag'}),
     ])
+  })
+
+  it('keeps baskets of the same fish in separate receipt lines when their saved prices differ',()=>{
+    const lines=buildReceiptLinesFromWeighing('session-1',[
+      entry({id:'jin-low',weightGrams:10_000,unitPriceCentsPerKg:250,amountCents:2500}),
+      entry({id:'jin-high',sequenceNo:2,weightGrams:10_000,unitPriceCentsPerKg:300,amountCents:3000}),
+    ],{})
+    expect(lines).toHaveLength(2)
+    expect(lines.map(item=>({basketCount:item.basketCount,unitPriceCentsPerKg:item.unitPriceCentsPerKg,amountCents:item.amountCents}))).toEqual([
+      {basketCount:1,unitPriceCentsPerKg:250,amountCents:2500},
+      {basketCount:1,unitPriceCentsPerKg:300,amountCents:3000},
+    ])
+  })
+
+  it('keeps basket-level rounding in the audit record while the formal line rounds its grouped weight',()=>{
+    const lines=buildReceiptLinesFromWeighing('session-1',[
+      entry({id:'round-one',weightGrams:333,unitPriceCentsPerKg:100,amountCents:33}),
+      entry({id:'round-two',sequenceNo:2,weightGrams:333,unitPriceCentsPerKg:100,amountCents:33}),
+    ],{})
+    expect(lines).toEqual([expect.objectContaining({weightGrams:666,unitPriceCentsPerKg:100,amountCents:67})])
   })
 })
 

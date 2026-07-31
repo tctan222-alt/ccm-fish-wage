@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { auth } from './firebase'
 import { LoginPage } from './pages/LoginPage'
+import { BackButton } from './components/BackButton'
 
 const FishHeadWagePage = lazy(() => import('./pages/FishHeadWagePage').then(module => ({ default: module.FishHeadWagePage })))
 const WorkersPage = lazy(() => import('./pages/WorkersPage').then(module => ({ default: module.WorkersPage })))
@@ -24,6 +25,12 @@ const WeighingEntryPage = lazy(() => import('./pages/WeighingEntryPage').then(mo
 const WeighingSessionsPage = lazy(() => import('./pages/WeighingSessionsPage').then(module => ({ default: module.WeighingSessionsPage })))
 const WeighingReviewPage = lazy(() => import('./pages/WeighingReviewPage').then(module => ({ default: module.WeighingReviewPage })))
 const FishSpeciesPage = lazy(() => import('./pages/FishSpeciesPage').then(module => ({ default: module.FishSpeciesPage })))
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(module => ({ default: module.DashboardPage })))
+const FishDepartmentPage = lazy(() => import('./pages/FishDepartmentPage').then(module => ({ default: module.FishDepartmentPage })))
+const IceDepartmentPage = lazy(() => import('./pages/IceDepartmentPage').then(module => ({ default: module.IceDepartmentPage })))
+const IceVesselPage = lazy(() => import('./pages/IceVesselPage').then(module => ({ default: module.IceVesselPage })))
+const CcmAdminPage = lazy(() => import('./pages/CcmAdminPage').then(module => ({ default: module.CcmAdminPage })))
+const PurchaseWeighingPage = lazy(() => import('./pages/PurchaseWeighingPage').then(module => ({ default: module.PurchaseWeighingPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>正在载入 CCM Fishery…</strong></main>
@@ -35,10 +42,20 @@ function AuthenticatedApp() {
   if (!user) return <LoginPage />
 
   return <BrowserRouter>
-    <button className="sign-out" type="button" onClick={() => void signOut(auth)}>退出登录</button>
+    <button className="sign-out" type="button" data-navigation-leave onClick={() => void signOut(auth)}>退出登录</button>
+    <BackButton />
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
-        <Route path="/" element={<FishHeadWagePage />} />
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/fish-department" element={<FishDepartmentPage />} />
+        <Route path="/fish-head-purchase" element={<PurchaseWeighingPage productType="fish_head" />} />
+        <Route path="/fish-meal-purchase" element={<PurchaseWeighingPage productType="fish_meal" />} />
+        <Route path="/fish-head-wages" element={<FishHeadWagePage />} />
+        <Route path="/daily" element={<TodaySummaryPage />} />
+        <Route path="/ice-department" element={<IceDepartmentPage />} />
+        <Route path="/ice-department/:vesselId" element={<IceVesselPage />} />
+        <Route path="/ccm-admin" element={<CcmAdminPage />} />
         <Route path="/today" element={<TodaySummaryPage />} />
         <Route path="/monthly" element={<MonthlySummaryPage />} />
         <Route path="/monthly/:monthKey/worker/:workerId/statement" element={<WorkerStatementPage />} />
@@ -60,7 +77,7 @@ function AuthenticatedApp() {
         <Route path="/weighing/:sessionId" element={<WeighingEntryPage />} />
         <Route path="/weighing/:sessionId/review" element={<WeighingReviewPage />} />
         <Route path="/fish-species" element={<FishSpeciesPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>
   </BrowserRouter>

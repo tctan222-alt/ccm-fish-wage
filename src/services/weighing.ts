@@ -68,13 +68,17 @@ function sessionFrom(id:string,data:DocumentData):WeighingSession {
 
 function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
   return {
-    id,clientEntryId:String(data.clientEntryId),sessionId,productType:data.productType as WeighingEntry['productType'],
+    id,clientEntryId:String(data.clientEntryId),sessionId,weighingDate:data.weighingDate?String(data.weighingDate):undefined,
+    monthKey:data.monthKey?String(data.monthKey):undefined,vesselId:data.vesselId?String(data.vesselId):undefined,
+    vesselCodeSnapshot:data.vesselCodeSnapshot?String(data.vesselCodeSnapshot):undefined,productType:data.productType as WeighingEntry['productType'],
     fishSpeciesId:data.fishSpeciesId?String(data.fishSpeciesId):null,
     fishSpeciesCodeSnapshot:data.fishSpeciesCodeSnapshot?String(data.fishSpeciesCodeSnapshot):null,
     fishSpeciesNameSnapshot:data.fishSpeciesNameSnapshot?String(data.fishSpeciesNameSnapshot):null,
     fishMealQuality:data.fishMealQuality as WeighingEntry['fishMealQuality'],
     displayNameSnapshot:String(data.displayNameSnapshot),entryMode:data.entryMode as WeighingEntry['entryMode'],
-    sequenceNo:data.sequenceNo===null?null:Number(data.sequenceNo),weightGrams:Number(data.weightGrams),remark:String(data.remark??''),
+    sequenceNo:data.sequenceNo===null?null:Number(data.sequenceNo),weightGrams:Number(data.weightGrams),
+    unitPriceCentsPerKg:data.unitPriceCentsPerKg===undefined||data.unitPriceCentsPerKg===null?null:Number(data.unitPriceCentsPerKg),
+    amountCents:data.amountCents===undefined||data.amountCents===null?null:Number(data.amountCents),remark:String(data.remark??''),
     recordedAtClient:String(data.recordedAtClient),recordedAt:data.recordedAt,recordedBy:String(data.recordedBy),
     syncStatus:'synced',voided:Boolean(data.voided),voidReason:data.voidReason?String(data.voidReason):null,
     voidedBy:data.voidedBy?String(data.voidedBy):null,voidedAt:data.voidedAt??null,revision:Number(data.revision),
@@ -84,10 +88,13 @@ function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
 
 function storedEntry(entry:WeighingEntry,userId:string,timestamp:unknown,lastActionId:string,isCreate:boolean){
   return {
-    clientEntryId:entry.clientEntryId,sessionId:entry.sessionId,productType:entry.productType,fishSpeciesId:entry.fishSpeciesId,
+    clientEntryId:entry.clientEntryId,sessionId:entry.sessionId,
+    ...(entry.weighingDate?{weighingDate:entry.weighingDate,monthKey:entry.monthKey,vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot}:{}),
+    productType:entry.productType,fishSpeciesId:entry.fishSpeciesId,
     fishSpeciesCodeSnapshot:entry.fishSpeciesCodeSnapshot,fishSpeciesNameSnapshot:entry.fishSpeciesNameSnapshot,
     fishMealQuality:entry.fishMealQuality,displayNameSnapshot:entry.displayNameSnapshot,entryMode:entry.entryMode,
-    sequenceNo:entry.sequenceNo,weightGrams:entry.weightGrams,remark:entry.remark,voided:entry.voided,
+    sequenceNo:entry.sequenceNo,weightGrams:entry.weightGrams,
+    unitPriceCentsPerKg:entry.unitPriceCentsPerKg??null,amountCents:entry.amountCents??null,remark:entry.remark,voided:entry.voided,
     voidReason:entry.voidReason,voidedBy:entry.voided?userId:null,voidedAt:entry.voided?timestamp:null,
     revision:entry.revision,recordedAtClient:entry.recordedAtClient,recordedAt:isCreate?timestamp:entry.recordedAt,
     recordedBy:entry.recordedBy,updatedAt:timestamp,updatedBy:userId,lastActionId,
@@ -184,7 +191,8 @@ export async function syncWeighingOperation(operation:PendingWeighingOperation){
       transaction.set(entryRef,storedEntry(payload.entry,user.uid,timestamp,actionId,true))
       transaction.set(doc(sessionRef,'actions',actionId),{type:'entry_create',sessionId:sessionRef.id,entryId:entryRef.id,
         reason:null,performedBy:user.uid,performedAt:timestamp,beforeSnapshot:null,
-        afterSnapshot:{revision:payload.entry.revision,weightGrams:payload.entry.weightGrams},clientOperationId:operation.id})
+        afterSnapshot:{revision:payload.entry.revision,weightGrams:payload.entry.weightGrams,
+          unitPriceCentsPerKg:payload.entry.unitPriceCentsPerKg??null,amountCents:payload.entry.amountCents??null},clientOperationId:operation.id})
       if(!sessionSnapshot.exists()){
         transaction.set(doc(sessionRef,'actions',`create_${sessionRef.id}`),{type:'create',sessionId:sessionRef.id,entryId:null,
           reason:null,performedBy:user.uid,performedAt:timestamp,beforeSnapshot:null,
@@ -210,8 +218,10 @@ export async function syncWeighingOperation(operation:PendingWeighingOperation){
       transaction.set(sessionRef,storedSession(result.session,user.uid,timestamp,actionId,false),{merge:false})
       transaction.set(doc(sessionRef,'actions',actionId),{type:operation.type,sessionId:sessionRef.id,entryId:entryRef.id,
         reason:payload.after.voidReason??null,performedBy:user.uid,performedAt:timestamp,
-        beforeSnapshot:{revision:currentEntry.revision,weightGrams:currentEntry.weightGrams,voided:currentEntry.voided},
-        afterSnapshot:{revision:result.entry.revision,weightGrams:result.entry.weightGrams,voided:result.entry.voided},
+        beforeSnapshot:{revision:currentEntry.revision,weightGrams:currentEntry.weightGrams,voided:currentEntry.voided,
+          unitPriceCentsPerKg:currentEntry.unitPriceCentsPerKg??null,amountCents:currentEntry.amountCents??null},
+        afterSnapshot:{revision:result.entry.revision,weightGrams:result.entry.weightGrams,voided:result.entry.voided,
+          unitPriceCentsPerKg:result.entry.unitPriceCentsPerKg??null,amountCents:result.entry.amountCents??null},
         clientOperationId:operation.id})
       return {session:{...result.session,lastActionId:actionId},entry:{...result.entry,syncStatus:'synced',lastActionId:actionId}}
     })}catch(problem){

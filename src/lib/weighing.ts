@@ -65,6 +65,10 @@ export interface WeighingEntry {
   id:string
   clientEntryId:string
   sessionId:string
+  weighingDate?:string
+  monthKey?:string
+  vesselId?:string
+  vesselCodeSnapshot?:string
   productType:WeighingProductType
   fishSpeciesId:string|null
   fishSpeciesCodeSnapshot:string|null
@@ -74,6 +78,8 @@ export interface WeighingEntry {
   entryMode:WeighingEntryMode
   sequenceNo:number|null
   weightGrams:number
+  unitPriceCentsPerKg?:number|null
+  amountCents?:number|null
   remark:string
   recordedAtClient:string
   recordedAt:unknown
@@ -93,6 +99,10 @@ export interface BuildWeighingEntryInput {
   id:string
   clientEntryId?:string
   sessionId:string
+  weighingDate?:string
+  monthKey?:string
+  vesselId?:string
+  vesselCodeSnapshot?:string
   productType:WeighingProductType
   fishSpeciesId:string|null
   fishSpecies?:Pick<FishSpeciesRecord,'id'|'speciesCode'|'displayName'>|null
@@ -100,6 +110,7 @@ export interface BuildWeighingEntryInput {
   entryMode:WeighingEntryMode
   sequenceNo:number|null
   weightGrams:number
+  unitPriceCentsPerKg?:number|null
   remark:string
   recordedAtClient?:string
   recordedAt:unknown
@@ -188,11 +199,17 @@ export function buildWeighingEntry(input:BuildWeighingEntryInput):WeighingEntry 
     :undefined
   if(input.productType==='fish_head'&&!species)throw new Error('请选择鱼名。')
   if(input.productType==='fish_meal'&&!quality)throw new Error('请选择桶鱼仔或包鱼仔。')
+  if(input.unitPriceCentsPerKg!==undefined&&input.unitPriceCentsPerKg!==null
+    &&(!Number.isInteger(input.unitPriceCentsPerKg)||input.unitPriceCentsPerKg<=0))throw new Error('单价必须保存为正整数分。')
+  const priced=input.unitPriceCentsPerKg!==undefined&&input.unitPriceCentsPerKg!==null
+    ?{unitPriceCentsPerKg:input.unitPriceCentsPerKg,amountCents:Math.floor((input.weightGrams*input.unitPriceCentsPerKg+500)/1000)}
+    :{}
 
   return {
     id:input.id,
     clientEntryId:input.clientEntryId??input.id,
     sessionId:input.sessionId,
+    ...(input.weighingDate?{weighingDate:input.weighingDate,monthKey:input.monthKey??input.weighingDate.slice(0,7),vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''}:{}),
     productType:input.productType,
     fishSpeciesId:species?.id??null,
     fishSpeciesCodeSnapshot:species?.speciesCode??null,
@@ -202,6 +219,7 @@ export function buildWeighingEntry(input:BuildWeighingEntryInput):WeighingEntry 
     entryMode:input.entryMode,
     sequenceNo:input.entryMode==='individual'?input.sequenceNo:null,
     weightGrams:input.weightGrams,
+    ...priced,
     remark:input.remark.trim(),
     recordedAtClient:input.recordedAtClient??String(input.recordedAt),
     recordedAt:input.recordedAt,
@@ -219,6 +237,37 @@ export function summarizeWeighingEntries(entries:WeighingEntry[]) {
     recordCount:total.recordCount+1,
     totalWeightGrams:total.totalWeightGrams+item.weightGrams,
   }),{basketCount:0,recordCount:0,totalWeightGrams:0})
+}
+
+export interface PricedWeighingSummary {
+  key:string
+  displayName:string
+  productType:WeighingProductType
+  fishSpeciesCode:string|null
+  fishMealQuality:FishMealQuality|null
+  unitPriceCentsPerKg:number
+  basketCount:number
+  totalWeightGrams:number
+  totalAmountCents:number
+  entries:WeighingEntry[]
+}
+
+export function summarizePricedWeighingEntries(entries:WeighingEntry[]):PricedWeighingSummary[] {
+  const groups=new Map<string,PricedWeighingSummary>()
+  entries.filter(entry=>!entry.voided&&Number.isInteger(entry.unitPriceCentsPerKg)&&Number(entry.unitPriceCentsPerKg)>0).forEach(entry=>{
+    const price=Number(entry.unitPriceCentsPerKg)
+    const identity=entry.productType==='fish_head'?entry.fishSpeciesCodeSnapshot:entry.fishMealQuality
+    const key=`${entry.productType}:${identity}:${price}`
+    const current=groups.get(key)??{key,displayName:entry.displayNameSnapshot,productType:entry.productType,
+      fishSpeciesCode:entry.fishSpeciesCodeSnapshot,fishMealQuality:entry.fishMealQuality,unitPriceCentsPerKg:price,
+      basketCount:0,totalWeightGrams:0,totalAmountCents:0,entries:[]}
+    current.basketCount+=entry.entryMode==='individual'?1:0
+    current.totalWeightGrams+=entry.weightGrams
+    current.totalAmountCents+=Number(entry.amountCents??Math.floor((entry.weightGrams*price+500)/1000))
+    current.entries.push(entry)
+    groups.set(key,current)
+  })
+  return [...groups.values()]
 }
 
 export function completeWeighingSession(session:WeighingSession):WeighingSession {
@@ -242,6 +291,7 @@ export interface WeighingGroup {
   fishSpeciesCode:string|null
   fishMealQuality:FishMealQuality|null
   displayName:string
+  unitPriceCentsPerKg:number|null
   basketCount:number
   weightGrams:number
   entries:WeighingEntry[]
@@ -251,9 +301,15 @@ export function groupWeighingEntries(entries:WeighingEntry[]):WeighingGroup[] {
   const groups=new Map<string,WeighingGroup>()
   entries.filter(item=>!item.voided).sort((a,b)=>(a.sequenceNo??Number.MAX_SAFE_INTEGER)-(b.sequenceNo??Number.MAX_SAFE_INTEGER))
     .forEach(entry=>{
-      const key=entry.productType==='fish_head'?`species_${entry.fishSpeciesCodeSnapshot}`:`meal_${entry.fishMealQuality}`
+      const categoryKey=entry.productType==='fish_head'?`species_${entry.fishSpeciesCodeSnapshot}`:`meal_${entry.fishMealQuality}`
+      // A price is a basket snapshot, not a mutable category setting.
+      // Keeping it in the group key preserves mixed prices in one session.
+      const price=Number.isInteger(entry.unitPriceCentsPerKg)&&Number(entry.unitPriceCentsPerKg)>0
+        ?Number(entry.unitPriceCentsPerKg):null
+      const key=price===null?categoryKey:`${categoryKey}_price_${price}`
       const group=groups.get(key)??{key,productType:entry.productType,fishSpeciesCode:entry.fishSpeciesCodeSnapshot,
-        fishMealQuality:entry.fishMealQuality,displayName:entry.displayNameSnapshot,basketCount:0,weightGrams:0,entries:[]}
+        fishMealQuality:entry.fishMealQuality,displayName:entry.displayNameSnapshot,unitPriceCentsPerKg:price,
+        basketCount:0,weightGrams:0,entries:[]}
       group.basketCount+=entry.entryMode==='individual'?1:0
       group.weightGrams+=entry.weightGrams
       group.entries.push(entry)
@@ -264,7 +320,7 @@ export function groupWeighingEntries(entries:WeighingEntry[]):WeighingGroup[] {
 
 export function buildReceiptLinesFromWeighing(sessionId:string,entries:WeighingEntry[],prices:Record<string,number>):PurchaseReceiptLine[] {
   return groupWeighingEntries(entries).map((group,index)=>{
-    const unitPriceCentsPerKg=prices[group.key]
+    const unitPriceCentsPerKg=prices[group.key]??group.unitPriceCentsPerKg
     if(!Number.isInteger(unitPriceCentsPerKg)||unitPriceCentsPerKg<=0)throw new Error(`请输入${group.displayName}的有效单价。`)
     const categoryCodeSnapshot=group.productType==='fish_head'
       ?group.fishSpeciesCode!
@@ -272,7 +328,11 @@ export function buildReceiptLinesFromWeighing(sessionId:string,entries:WeighingE
     return {
       id:'',lineNo:index+1,categoryId:categoryCodeSnapshot,categoryCodeSnapshot,
       categoryNameSnapshot:group.displayName,basketCount:group.basketCount,weightGrams:group.weightGrams,
-      unitPriceCentsPerKg,amountCents:lineAmountCents(group.weightGrams,unitPriceCentsPerKg),notes:'',
+      unitPriceCentsPerKg,
+      // The formal receipt line is one category-price total and remains
+      // independently rule-verifiable. Each original basket still retains its
+      // own immutable, individually half-up-rounded amount for audit.
+      amountCents:lineAmountCents(group.weightGrams,unitPriceCentsPerKg),notes:'',
       sourceWeighingSessionId:sessionId,productType:group.productType,fishSpeciesCode:group.fishSpeciesCode,
       fishMealQuality:group.fishMealQuality,
     }
