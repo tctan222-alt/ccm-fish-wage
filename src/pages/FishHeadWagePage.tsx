@@ -181,10 +181,6 @@ export function FishHeadWagePage({
     <nav className="summary-nav" aria-label="Wage summaries">
       <Link className="summary-link" to="/today">Today / Daily Summary</Link>
       <Link className="summary-link monthly" to="/monthly">Monthly Summary</Link>
-      <Link className="summary-link master-data-link" to="/master-data">Master Data</Link>
-      <Link className="summary-link monthly" to="/purchases">Purchases & Receiving</Link>
-      <Link className="summary-link vessel-trips-link" to="/vessel-trips">Vessel Trips</Link>
-      <Link className="summary-link weighing-link" to="/weighing/new">现场称重</Link>
     </nav>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}

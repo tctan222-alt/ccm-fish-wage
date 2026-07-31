@@ -23,7 +23,7 @@ import {
   type WeighingProductType,
   type WeighingSession,
 } from '../lib/weighing'
-import { loadVessels } from '../services/purchaseMasterData'
+import { initializeDefaultVessels } from '../services/purchaseMasterData'
 import {
   createIndexedDbWeighingStore,
   flushWeighingQueue,
@@ -32,6 +32,7 @@ import {
 } from '../services/weighingOffline'
 import {
   findOpenWeighingSession,
+  initializeDefaultFishSpecies,
   loadFishSpecies,
   loadWeighingBundle,
   saveFishSpecies,
@@ -41,6 +42,7 @@ import {
 
 const defaultStore=typeof indexedDB==='undefined'?undefined:createIndexedDbWeighingStore()
 const malaysiaToday=()=>malaysiaBusinessDate()
+const loadOrInitializeFishSpecies=async()=>initializeDefaultFishSpecies(await loadFishSpecies())
 const isoNow=()=>new Date().toISOString()
 const makeId=(kind:'session'|'entry'|'operation')=>`${kind}-${globalThis.crypto?.randomUUID?.()??`${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 function parseCachedRows<T>(value:string|undefined):T[]|undefined{
@@ -65,7 +67,7 @@ interface Props {
 }
 
 export function WeighingEntryPage({
-  vesselLoader=loadVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
+  vesselLoader=initializeDefaultVessels,speciesLoader=loadOrInitializeFishSpecies,openSessionLoader=findOpenWeighingSession,
   bundleLoader=loadWeighingBundle,offlineStore=defaultStore,remoteSync=syncWeighingOperation,
   today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,requireUnitPrice=false,pageTitle='现场称重',speciesCreator=saveFishSpecies,
 }:Props){
@@ -88,6 +90,7 @@ export function WeighingEntryPage({
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
+  const [referenceAttempt,setReferenceAttempt]=useState(0)
   const [showComplete,setShowComplete]=useState(false)
   const [editing,setEditing]=useState<WeighingEntry|null>(null)
   const [showCustomSpecies,setShowCustomSpecies]=useState(false)
@@ -133,7 +136,7 @@ export function WeighingEntryPage({
       }
     })()
     return()=>{cancelled=true}
-  },[vesselLoader,speciesLoader,store])
+  },[vesselLoader,speciesLoader,store,referenceAttempt])
 
   useEffect(()=>{
     if(sessionId){
@@ -301,8 +304,8 @@ export function WeighingEntryPage({
     <header className="weighing-header"><div><p className="eyebrow">CCM Fishery</p><h1>{pageTitle}</h1></div>
       <Link to="/weighing">查看现场单</Link></header>
     <section className="weighing-setup">
-      <label>船号<select aria-label="船号" value={vesselId} disabled={Boolean(session)} onChange={event=>setVesselId(event.target.value)}>
-        {vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
+      <div className="vessel-choice"><span>船号</span>{vessels.length===0&&!error?<p className="notice" role="status">正在读取船号和鱼名资料…</p>:<div className="vessel-button-grid" role="group" aria-label="船号">
+        {vessels.map(item=><button type="button" key={item.id} disabled={Boolean(session)} aria-pressed={vesselId===item.id} className={vesselId===item.id?'selected':''} onClick={()=>setVesselId(item.id)}>{item.vesselCode}</button>)}</div>}</div>
       <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
@@ -338,7 +341,7 @@ export function WeighingEntryPage({
       </form>
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
-      {error&&<p className="error" role="alert">{error}</p>}
+      {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
       {message&&<p className="weighing-message" role="status">{message}</p>}
       <div className="recent-entry">
         <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg{latest.unitPriceCentsPerKg?` · ${formatRm(latest.unitPriceCentsPerKg)} · ${formatRm(latest.amountCents??0)}`:''}</span></>:<span>尚无记录</span>}</div>

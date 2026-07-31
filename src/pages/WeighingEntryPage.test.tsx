@@ -32,7 +32,7 @@ describe('iPhone 现场称重单页',()=>{
   it('在同一页显示中文船号、日期、产品、16 个鱼名、kg 和确认',async()=>{
     setup()
     expect(await screen.findByRole('heading',{name:'现场称重'})).toBeInTheDocument()
-    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByText('30/07/2026')).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'鱼头'})).toHaveAttribute('aria-pressed','true')
     const species=screen.getByRole('group',{name:'鱼名'})
@@ -122,7 +122,7 @@ describe('iPhone 现场称重单页',()=>{
       speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null}
       offlineStore={createMemoryWeighingStore(shared)} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
-    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByText('目前离线，已使用本机船号和鱼名资料。')).toBeInTheDocument()
   })
 

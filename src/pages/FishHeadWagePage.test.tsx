@@ -29,6 +29,15 @@ async function chooseWorkerAndEnter74Kg(){
 }
 
 describe('fish head worker session flow',()=>{
+  it('keeps the wage page limited to wage entry and wage summaries',async()=>{
+    setup()
+    expect(await screen.findByRole('link',{name:/Today \/ Daily Summary/i})).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:/Monthly Summary/i})).toBeInTheDocument()
+    expect(screen.queryByRole('link',{name:/Vessel Trips/i})).not.toBeInTheDocument()
+    expect(screen.queryByRole('link',{name:/现场称重/i})).not.toBeInTheDocument()
+    expect(screen.queryByRole('link',{name:/Purchases & Receiving/i})).not.toBeInTheDocument()
+  })
+
   it('shows active workers and excludes inactive workers from wage entry',async()=>{
     render(<MemoryRouter><FishHeadWagePage workerLoader={async()=>[
       ...workers,{id:'w3',name:'Inactive Worker',active:false,order:3},
