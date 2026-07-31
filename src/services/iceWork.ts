@@ -1,7 +1,6 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
-import { httpsCallable } from 'firebase/functions'
-import { auth, cloudFunctions, db, firebaseConfigured } from '../firebase'
-import { businessDateFromLegacy, monthKeyFromBusinessDate, monthSortKeyFromMonthKey } from '../lib/businessDate'
+import { auth, db, firebaseConfigured } from '../firebase'
+import { businessDateFromLegacy, monthKeyFromBusinessDate } from '../lib/businessDate'
 import { confirmIceWorkRecord, createIceWorkAction, createIceWorkRecord, iceWorkSettlementId, reopenIceWorkRecord, softVoidIceWorkRecord, type IceWorkAction, type IceWorkMonthlySettlement, type IceWorkRecord } from '../lib/iceWork'
 
 function requireUser() { if (!firebaseConfigured) throw new Error('Firebase 尚未设定。'); if (!auth.currentUser) throw new Error('请先登录。'); return auth.currentUser }
@@ -35,25 +34,3 @@ export async function saveIceWorkRecord(record: IceWorkRecord, clientOperationId
 export async function confirmIceWorkRecordInStore(record: IceWorkRecord, clientOperationId?: string) { const user = requireUser(); return saveRecordAndAction(confirmIceWorkRecord(record, user.uid), 'confirm', record, null, clientOperationId) }
 export async function reopenIceWorkRecordInStore(record: IceWorkRecord, reason: string, clientOperationId?: string) { const user = requireUser(); return saveRecordAndAction(reopenIceWorkRecord(record, reason, user.uid), 'reopen', record, reason, clientOperationId) }
 export async function voidIceWorkRecord(record: IceWorkRecord, reason: string, clientOperationId?: string) { const user = requireUser(); return saveRecordAndAction(softVoidIceWorkRecord(record, reason, user.uid), 'void', record, reason, clientOperationId) }
-
-type SettlementOperation = { vesselId: string; monthSortKey: number; clientOperationId: string; expectedRevision?: number; reason?: string }
-type SourceCheck = { sourceRecordCount: number; sourceRecordsHash: string; sourceChanged: boolean }
-const monthKeyFromSort = (monthSortKey: number) => `${String(monthSortKey % 100).padStart(2, '0')}/${Math.floor(monthSortKey / 100)}`
-async function callSettlement(name: 'rebuildIceWorkMonthlySettlement' | 'confirmIceWorkMonthlySettlement' | 'reopenIceWorkMonthlySettlement' | 'voidIceWorkMonthlySettlement', input: SettlementOperation) {
-  requireUser()
-  await httpsCallable<SettlementOperation, unknown>(cloudFunctions, name)(input)
-  const settlement = await loadIceWorkSettlement(input.vesselId, monthKeyFromSort(input.monthSortKey))
-  if (!settlement) throw new Error('服务器未返回月结结果，请重新载入。')
-  return settlement
-}
-const settlementInput = (vesselId: string, monthKey: string, clientOperationId: string, expectedRevision?: number, reason?: string): SettlementOperation => ({ vesselId, monthSortKey: monthSortKeyFromMonthKey(monthKey), clientOperationId, expectedRevision, ...(reason ? { reason } : {}) })
-export const createIceWorkMonthlySettlement = (vesselId: string, _vesselCodeSnapshot: string, monthKey: string, clientOperationId = operationId()) => callSettlement('rebuildIceWorkMonthlySettlement', settlementInput(vesselId, monthKey, clientOperationId))
-export const rebuildIceWorkMonthlySettlement = (settlement: IceWorkMonthlySettlement, clientOperationId = operationId()) => callSettlement('rebuildIceWorkMonthlySettlement', settlementInput(settlement.vesselId, settlement.monthKey, clientOperationId, settlement.revision))
-export const confirmIceWorkMonthlySettlement = (settlement: IceWorkMonthlySettlement, clientOperationId = operationId()) => callSettlement('confirmIceWorkMonthlySettlement', settlementInput(settlement.vesselId, settlement.monthKey, clientOperationId, settlement.revision))
-export const reopenIceWorkMonthlySettlement = (settlement: IceWorkMonthlySettlement, reason: string, clientOperationId = operationId()) => callSettlement('reopenIceWorkMonthlySettlement', settlementInput(settlement.vesselId, settlement.monthKey, clientOperationId, settlement.revision, reason))
-export const voidIceWorkMonthlySettlement = (settlement: IceWorkMonthlySettlement, reason: string, clientOperationId = operationId()) => callSettlement('voidIceWorkMonthlySettlement', settlementInput(settlement.vesselId, settlement.monthKey, clientOperationId, settlement.revision, reason))
-export async function checkIceWorkMonthlySettlementSource(settlement: IceWorkMonthlySettlement, clientOperationId = operationId()): Promise<SourceCheck> {
-  requireUser()
-  const input = settlementInput(settlement.vesselId, settlement.monthKey, clientOperationId, settlement.revision)
-  return (await httpsCallable<SettlementOperation, SourceCheck>(cloudFunctions, 'checkIceWorkMonthlySettlementSource')(input)).data
-}

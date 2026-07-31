@@ -7,6 +7,6 @@ export default defineConfig({
     setupFiles: './src/test/setup.ts',
     // The Rules suite uses a separate Node/Emulator configuration. Retain the
     // normal dependency exclusion so browser tests never discover package tests.
-    exclude: ['**/node_modules/**', '**/dist/**', 'src/firestore.rules.test.ts', 'functions/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'src/firestore.rules.test.ts'],
   },
 })
