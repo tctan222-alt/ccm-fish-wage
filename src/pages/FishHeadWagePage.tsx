@@ -180,8 +180,8 @@ export function FishHeadWagePage({
     </header>
 
     <nav className="summary-nav" aria-label="工钱汇总">
-      <Link className="summary-link" to="/today">工钱录入</Link>
-      <Link className="summary-link monthly" to="/monthly">工钱 Summary</Link>
+      <Link className="summary-link" to="/today" aria-label="Today / Daily Summary">工钱录入</Link>
+      <Link className="summary-link monthly" to="/monthly" aria-label="Monthly Summary">工钱 Summary</Link>
     </nav>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}
