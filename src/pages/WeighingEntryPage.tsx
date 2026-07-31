@@ -23,7 +23,7 @@ import {
   type WeighingProductType,
   type WeighingSession,
 } from '../lib/weighing'
-import { initializeDefaultVessels } from '../services/purchaseMasterData'
+import { loadActiveVessels } from '../services/purchaseMasterData'
 import {
   createIndexedDbWeighingStore,
   flushWeighingQueue,
@@ -32,7 +32,6 @@ import {
 } from '../services/weighingOffline'
 import {
   findOpenWeighingSession,
-  initializeDefaultFishSpecies,
   loadFishSpecies,
   loadWeighingBundle,
   saveFishSpecies,
@@ -42,7 +41,6 @@ import {
 
 const defaultStore=typeof indexedDB==='undefined'?undefined:createIndexedDbWeighingStore()
 const malaysiaToday=()=>malaysiaBusinessDate()
-const loadOrInitializeFishSpecies=async()=>initializeDefaultFishSpecies(await loadFishSpecies())
 const isoNow=()=>new Date().toISOString()
 const makeId=(kind:'session'|'entry'|'operation')=>`${kind}-${globalThis.crypto?.randomUUID?.()??`${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 function parseCachedRows<T>(value:string|undefined):T[]|undefined{
@@ -67,7 +65,7 @@ interface Props {
 }
 
 export function WeighingEntryPage({
-  vesselLoader=initializeDefaultVessels,speciesLoader=loadOrInitializeFishSpecies,openSessionLoader=findOpenWeighingSession,
+  vesselLoader=loadActiveVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
   bundleLoader=loadWeighingBundle,offlineStore=defaultStore,remoteSync=syncWeighingOperation,
   today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,requireUnitPrice=false,pageTitle='现场称重',speciesCreator=saveFishSpecies,
 }:Props){

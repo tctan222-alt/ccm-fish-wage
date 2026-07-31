@@ -9,7 +9,8 @@
     "typecheck": "tsc -b --pretty false",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:rules": "firebase.cmd emulators:exec --only firestore --project demo-ccm-rules \"vitest run --config vitest.rules.config.ts src/firestore.rules.test.ts\""
+    "test:rules": "firebase.cmd emulators:exec --only firestore --project demo-ccm-rules \"vitest run --config vitest.rules.config.ts src/firestore.rules.test.ts\"",
+    "test:functions:emulator": "firebase.cmd emulators:exec --only auth,firestore,functions --project demo-ccm-functions \"npm.cmd --prefix functions run test:emulator\""
   },
   "dependencies": {
     "firebase": "^12.0.0",

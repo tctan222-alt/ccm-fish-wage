@@ -1,0 +1,14 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "iceWorkRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "vesselId", "order": "ASCENDING" },
+        { "fieldPath": "monthSortKey", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

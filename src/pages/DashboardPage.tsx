@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import type { Vessel } from '../lib/purchasing'
-import { initializeDefaultVessels } from '../services/purchaseMasterData'
+import { loadActiveVessels } from '../services/purchaseMasterData'
 
 interface Props { vesselLoader?: () => Promise<Vessel[]> }
 
-export function DashboardPage({ vesselLoader = initializeDefaultVessels }: Props) {
+export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
   const [vessels, setVessels] = useState<Vessel[]>([])
   useEffect(() => { void vesselLoader().then(setVessels).catch(() => {}) }, [vesselLoader])
   return <main className="department-dashboard">

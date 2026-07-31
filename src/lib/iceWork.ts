@@ -35,6 +35,7 @@ export interface IceWorkMonthlySettlement {
   validRecordCount: number; factoryIncomingAmountCents: number; iceBoxAmountCents: number; dieselAmountCents: number; hawkerSaleAmountCents: number
   directIceAmountCents: number; plasticBagAmountCents: number; workFeeSubtotalCents: number; materialSubtotalCents: number; recordsTotalCents: number
   headmanFeeCents: number; clerkFeeCents: number; finalTotalCents: number; status: IceWorkStatus; revision: number
+  sourceRecordsHash?: string; sourceRecordCount?: number; calculatedAt?: unknown; calculatedBy?: string
   createdBy: string; createdAt?: unknown; updatedBy?: string; updatedAt?: unknown; confirmedBy?: string | null; confirmedAt?: unknown | null
   lastActionId?: string
   reopenedBy?: string | null; reopenedAt?: unknown | null; reopenReason?: string | null; voidedBy?: string | null; voidedAt?: unknown | null; voidReason?: string | null

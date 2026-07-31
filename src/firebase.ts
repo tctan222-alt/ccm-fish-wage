@@ -1,6 +1,7 @@
 import { getApp, getApps, initializeApp } from 'firebase/app'
 import { getAuth } from 'firebase/auth'
 import { getFirestore } from 'firebase/firestore'
+import { getFunctions } from 'firebase/functions'
 
 const productionConfig = {
   apiKey: 'AIzaSyD-FWdApghgsJwyJZc0V5vRCbjHAU1TMok',
@@ -25,3 +26,4 @@ export const app = getApps().length === 0 ? initializeApp(config) : getApp()
 export const firebaseApp = app
 export const auth = getAuth(app)
 export const db = getFirestore(app)
+export const cloudFunctions = getFunctions(app, 'asia-southeast1')

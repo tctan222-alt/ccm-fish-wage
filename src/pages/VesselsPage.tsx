@@ -3,19 +3,20 @@ import { Link } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
 import { duplicateVesselCode,type Vessel,type VesselInput } from '../lib/purchasing'
 import { loadActiveSuppliers } from '../services/businessPartners'
-import { createVessel,deactivateVessel,loadVessels,reactivateVessel,updateVessel } from '../services/purchaseMasterData'
+import { createVessel,deactivateVessel,initializeDefaultVessels,loadVessels,reactivateVessel,updateVessel } from '../services/purchaseMasterData'
 
 interface Props {loader?:()=>Promise<Vessel[]>;supplierLoader?:()=>Promise<BusinessPartner[]>;creator?:(value:VesselInput)=>Promise<Vessel>;
-  updater?:(item:Vessel,value:VesselInput)=>Promise<Vessel>;deactivator?:(item:Vessel)=>Promise<void>;reactivator?:(item:Vessel)=>Promise<void>;onCreated?:(item:Vessel)=>void}
+  updater?:(item:Vessel,value:VesselInput)=>Promise<Vessel>;deactivator?:(item:Vessel)=>Promise<void>;reactivator?:(item:Vessel)=>Promise<void>;initializer?:()=>Promise<Vessel[]>;onCreated?:(item:Vessel)=>void}
 export function VesselsPage({loader=loadVessels,supplierLoader=loadActiveSuppliers,creator=createVessel,updater=updateVessel,
-  deactivator=deactivateVessel,reactivator=reactivateVessel,onCreated=()=>{}}:Props){
+  deactivator=deactivateVessel,reactivator=reactivateVessel,initializer=initializeDefaultVessels,onCreated=()=>{}}:Props){
   const [items,setItems]=useState<Vessel[]|null>(null);const [suppliers,setSuppliers]=useState<BusinessPartner[]>([])
   const [editing,setEditing]=useState<Vessel|null|undefined>(undefined);const [error,setError]=useState('');const [busy,setBusy]=useState(false)
   useEffect(()=>{void Promise.all([loader(),supplierLoader()]).then(([rows,partners])=>{setItems(rows);setSuppliers(partners)}).catch(()=>{setItems([]);setError('Vessels could not be loaded.')})},[loader,supplierLoader])
   async function toggle(item:Vessel){setBusy(true);try{if(item.active)await deactivator(item);else await reactivator(item)
     setItems(current=>current?.map(row=>row.id===item.id?{...row,active:!item.active}:row)??[])}catch{setError('Vessel status was not changed.')}finally{setBusy(false)}}
+  async function initialize(){setBusy(true);setError('');try{await initializer();setItems(await loader())}catch{setError('Default vessels were not created.')}finally{setBusy(false)}}
   return <main><header><p className="eyebrow">CCM Fishery</p><h1>Vessels</h1><Link className="page-link" to="/master-data">← Master Data</Link></header>
-    <button className="primary-action master-add" onClick={()=>setEditing(null)}>Add Vessel</button>{error&&<p className="error" role="alert">{error}</p>}
+    <button className="primary-action master-add" onClick={()=>setEditing(null)}>Add Vessel</button><button className="activate-action" disabled={busy} onClick={()=>void initialize()}>建立 CCM 默认船号</button>{error&&<p className="error" role="alert">{error}</p>}
     {items===null?<p className="notice">Loading vessels…</p>:<div className="master-card-list">{items.map(item=><article className="master-card" key={item.id}>
       <div className="master-card-heading"><div><small>{item.vesselCode}</small><h2>{item.displayName}</h2></div><span className={`record-status ${item.active?'active':'inactive'}`}>{item.active?'Active':'Inactive'}</span></div>
       <p>Default supplier: {item.defaultSupplierNameSnapshot||'—'}</p>{item.notes&&<p>{item.notes}</p>}
