@@ -175,12 +175,13 @@ export function FishHeadWagePage({
   return <main>
     <header>
       <p className="eyebrow">CCM Fishery</p>
-      <h1>Fish Head Wage</h1>
+      <h1>切鱼头工钱</h1>
+      <Link className="page-link" to="/fish-department">← 返回</Link>
     </header>
 
-    <nav className="summary-nav" aria-label="Wage summaries">
-      <Link className="summary-link" to="/today">Today / Daily Summary</Link>
-      <Link className="summary-link monthly" to="/monthly">Monthly Summary</Link>
+    <nav className="summary-nav" aria-label="工钱汇总">
+      <Link className="summary-link" to="/today">工钱录入</Link>
+      <Link className="summary-link monthly" to="/monthly">工钱 Summary</Link>
     </nav>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}

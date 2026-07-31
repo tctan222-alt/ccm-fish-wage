@@ -448,8 +448,8 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>查看记录</h2>
     <p>修订版本：{entry.revision}{entry.voided&&` · 已作废：${entry.voidReason}`}</p>
     <form className="master-form" onSubmit={submit}>
-      {entry.productType==='fish_head'?<label>鱼名<select value={speciesId} disabled={locked||entry.voided} onChange={event=>setSpeciesId(event.target.value)}>
-        {species.map(item=><option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>:
+      {entry.productType==='fish_head'?<fieldset><legend>鱼名</legend><div className="species-grid">
+        {species.map(item=><button type="button" key={item.id} className={speciesId===item.id?'selected':''} disabled={locked||entry.voided} onClick={()=>setSpeciesId(item.id)}>{item.displayName}</button>)}</div></fieldset>:
         <label>鱼仔品质<select value={quality} disabled={locked||entry.voided} onChange={event=>setQuality(event.target.value as FishMealQuality)}>
           <option value="bucket">桶鱼仔</option><option value="bag">包鱼仔</option></select></label>}
       <label>重量（kg）<input value={weight} disabled={locked||entry.voided} onChange={event=>setWeight(event.target.value)}/></label>
