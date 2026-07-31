@@ -159,7 +159,24 @@ service cloud.firestore {
         && data.workFeeSubtotalCents == data.factoryIncomingAmountCents + data.iceBoxAmountCents + data.dieselAmountCents + data.hawkerSaleAmountCents
         && data.materialSubtotalCents == data.directIceAmountCents + data.plasticBagAmountCents && data.recordTotalCents == data.workFeeSubtotalCents + data.materialSubtotalCents
         && data.status in ['draft','confirmed','reopened','voided'] && data.revision is int && data.revision >= 1 && data.voided is bool
-        && data.notes is string && data.notes.size() <= 500 && data.createdBy is string && data.createdAt is timestamp && data.updatedBy is string && data.updatedAt is timestamp;
+        && data.notes is string && data.notes.size() <= 500 && data.createdBy is string && data.createdAt is timestamp && data.updatedBy is string && data.updatedAt is timestamp
+        && data.lastActionId is string && data.lastActionId.size() > 0;
+    }
+
+    function validIceWorkRecordAction(recordId, actionId, expectedType, expectedRevision) {
+      let action = getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)/actions/$(actionId)).data;
+      return existsAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)/actions/$(actionId))
+        && action.type == expectedType && action.recordId == recordId
+        && action.clientOperationId == actionId && action.performedBy == request.auth.uid
+        && action.performedAt == request.time && action.revision == expectedRevision;
+    }
+
+    function validIceWorkSettlementAction(settlementId, actionId, expectedType, expectedRevision) {
+      let action = getAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)/actions/$(actionId)).data;
+      return existsAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)/actions/$(actionId))
+        && action.type == expectedType && action.settlementId == settlementId
+        && action.clientOperationId == actionId && action.performedBy == request.auth.uid
+        && action.performedAt == request.time && action.revision == expectedRevision;
     }
 
     function validPurchaseReceipt(data) {
@@ -1552,56 +1569,15 @@ service cloud.firestore {
 
     match /iceWorkRecords/{recordId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validIceWorkRecord(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-          && request.resource.data.status == 'recorded' && request.resource.data.voided == false
-          && (request.resource.data.monthEndSettlement == false
-            || (existsAfter(iceWorkMonthClosingPath(request.resource.data.vesselId, request.resource.data.monthKey))
-              && getAfter(iceWorkMonthClosingPath(request.resource.data.vesselId, request.resource.data.monthKey)).data.status == 'active'
-              && getAfter(iceWorkMonthClosingPath(request.resource.data.vesselId, request.resource.data.monthKey)).data.activeRecordId == recordId))
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode == request.resource.data.vesselCodeSnapshot;
-      allow update: if signedIn() && validIceWorkRecord(request.resource.data)
-          && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
-          && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-          && resource.data.voided == false && request.resource.data.voided == true && request.resource.data.status == 'voided'
-          && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-            'status', 'voided', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt'
-          ])
-          && (resource.data.monthEndSettlement == false
-            || (existsAfter(iceWorkMonthClosingPath(resource.data.vesselId, resource.data.monthKey))
-              && getAfter(iceWorkMonthClosingPath(resource.data.vesselId, resource.data.monthKey)).data.status == 'voided'
-              && getAfter(iceWorkMonthClosingPath(resource.data.vesselId, resource.data.monthKey)).data.activeRecordId == recordId));
+      // Historical legacy records remain readable; all new writes use the
+      // audited model below and cannot bypass its action record.
+      allow create, update: if false;
       allow delete: if false;
     }
 
     match /iceWorkMonthClosings/{closingId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validIceWorkMonthClosing(request.resource.data)
-        && closingId == request.resource.data.vesselId + '_' + request.resource.data.monthKey
-        && request.resource.data.status == 'active' && request.resource.data.revision == 1
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && existsAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId))
-        && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthEndSettlement == true
-        && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.vesselId == request.resource.data.vesselId
-        && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthKey == request.resource.data.monthKey;
-      allow update: if signedIn() && validIceWorkMonthClosing(request.resource.data)
-        && request.resource.data.vesselId == resource.data.vesselId && request.resource.data.monthKey == resource.data.monthKey
-        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && request.resource.data.revision == resource.data.revision + 1
-        && ((resource.data.status == 'active' && request.resource.data.status == 'voided'
-            && request.resource.data.activeRecordId == resource.data.activeRecordId
-            && getAfter(/databases/$(database)/documents/iceWorkRecords/$(resource.data.activeRecordId)).data.voided == true)
-          || (resource.data.status == 'voided' && request.resource.data.status == 'active'
-            && request.resource.data.activeRecordId != resource.data.activeRecordId
-            && existsAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId))
-            && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthEndSettlement == true
-            && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.vesselId == request.resource.data.vesselId
-            && getAfter(/databases/$(database)/documents/iceWorkRecords/$(request.resource.data.activeRecordId)).data.monthKey == request.resource.data.monthKey));
+      allow create, update: if false;
       allow delete: if false;
     }
 
@@ -1609,16 +1585,32 @@ service cloud.firestore {
       allow create: if signedIn() && validIceWorkRecord(request.resource.data)
         && request.resource.data.createdBy == request.auth.uid && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true;
+        && request.resource.data.status == 'draft' && request.resource.data.revision == 1 && request.resource.data.voided == false
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode == request.resource.data.vesselCodeSnapshot
+        && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'create', 1);
       allow update: if signedIn() && validIceWorkRecord(request.resource.data)
         && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
         && request.resource.data.revision == resource.data.revision + 1
-        && !(resource.data.status == 'confirmed' && request.resource.data.status == 'confirmed');
+        && ((resource.data.status in ['draft', 'reopened'] && request.resource.data.status == resource.data.status
+              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'update', request.resource.data.revision))
+          || (resource.data.status in ['draft', 'reopened'] && request.resource.data.status == 'confirmed'
+              && request.resource.data.confirmedBy == request.auth.uid && request.resource.data.confirmedAt == request.time
+              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'confirm', request.resource.data.revision))
+          || (resource.data.status == 'confirmed' && request.resource.data.status == 'reopened'
+              && request.resource.data.reopenedBy == request.auth.uid && request.resource.data.reopenedAt == request.time
+              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'reopen', request.resource.data.revision))
+          || (resource.data.status != 'voided' && request.resource.data.status == 'voided' && request.resource.data.voided == true
+              && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'void', request.resource.data.revision)));
       match /actions/{actionId} {
         allow read, create: if signedIn() && request.resource.data.type in ['create','update','confirm','reopen','void']
           && request.resource.data.recordId == recordId && request.resource.data.performedBy == request.auth.uid
-          && request.resource.data.performedAt == request.time && request.resource.data.revision is int;
+        && request.resource.data.performedAt == request.time && request.resource.data.revision is int
+        && request.resource.data.clientOperationId == actionId
+          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.revision == request.resource.data.revision
+          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.lastActionId == actionId;
         allow update, delete: if false;
       }
     }
@@ -1629,11 +1621,37 @@ service cloud.firestore {
         && request.resource.data.monthKey.matches('^[0-9]{2}/[0-9]{4}$') && request.resource.data.monthSortKey is int
         && request.resource.data.status == 'draft' && request.resource.data.revision == 1
         && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastActionId is string && request.resource.data.lastActionId.size() > 0
+        && validIceWorkSettlementAction(settlementId, request.resource.data.lastActionId, 'create', 1);
       allow update: if signedIn() && request.resource.data.vesselId == resource.data.vesselId
         && request.resource.data.monthSortKey == resource.data.monthSortKey && request.resource.data.revision == resource.data.revision + 1
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && request.resource.data.lastActionId is string && request.resource.data.lastActionId.size() > 0
+        && ((resource.data.status in ['draft', 'reopened'] && request.resource.data.status == 'confirmed'
+              && request.resource.data.confirmedBy == request.auth.uid && request.resource.data.confirmedAt == request.time
+              && validIceWorkSettlementAction(settlementId, request.resource.data.lastActionId, 'confirm', request.resource.data.revision))
+          || (resource.data.status == 'confirmed' && request.resource.data.status == 'reopened'
+              && request.resource.data.reopenedBy == request.auth.uid && request.resource.data.reopenedAt == request.time
+              && validIceWorkSettlementAction(settlementId, request.resource.data.lastActionId, 'reopen', request.resource.data.revision))
+          || (resource.data.status != 'voided' && request.resource.data.status == 'voided'
+              && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+              && validIceWorkSettlementAction(settlementId, request.resource.data.lastActionId, 'void', request.resource.data.revision)));
       allow delete: if false;
+
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.type in ['create', 'confirm', 'reopen', 'recalculate', 'void']
+          && request.resource.data.settlementId == settlementId
+          && request.resource.data.performedBy == request.auth.uid
+          && request.resource.data.performedAt == request.time
+          && request.resource.data.revision is int
+          && request.resource.data.clientOperationId == actionId
+          && getAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)).data.revision == request.resource.data.revision
+          && getAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)).data.lastActionId == actionId;
+        allow update, delete: if false;
+      }
     }
 
     match /purchaseReceipts/{receiptId} {

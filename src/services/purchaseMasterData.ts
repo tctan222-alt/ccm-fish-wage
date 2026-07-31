@@ -3,7 +3,7 @@ import {
 } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
 import {
-  buildDefaultCategoryCreates,buildDefaultVesselCreates,normalizeCategoryInput,normalizeVesselInput,
+  buildDefaultCategoryCreates,buildDefaultVesselCreates,buildDefaultVesselOrderRepairs,normalizeCategoryInput,normalizeVesselInput,
   validateCategoryInput,validateVesselInput,activeVessels,type PurchaseCategory,type PurchaseCategoryInput,
   type Vessel,type VesselInput,
 } from '../lib/purchasing'
@@ -36,8 +36,8 @@ export async function loadVessels(){
 }
 export async function loadActiveVessels(){ return activeVessels(await loadVessels()) }
 export async function initializeDefaultVessels(){
-  const uid=user().uid,existing=await loadVessels(),missing=buildDefaultVesselCreates(existing)
-  if(!missing.length)return activeVessels(existing)
+  const uid=user().uid,existing=await loadVessels(),missing=buildDefaultVesselCreates(existing),orderRepairs=buildDefaultVesselOrderRepairs(existing)
+  if(!missing.length&&!orderRepairs.length)return activeVessels(existing)
   await runTransaction(db,async transaction=>{
     const refs=missing.map(item=>doc(db,'vessels',item.vesselCode))
     const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)))
@@ -45,7 +45,7 @@ export async function initializeDefaultVessels(){
       vesselCode:item.vesselCode,displayName:item.displayName,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:item.order,notes:'',
       createdBy:uid,createdAt:serverTimestamp(),updatedBy:uid,updatedAt:serverTimestamp(),inactiveBy:null,inactiveAt:null,
     })})
-    snapshots.forEach((snapshot,index)=>{if(snapshot.exists()&&!Number.isInteger(snapshot.data().order))transaction.update(refs[index],{order:missing[index].order,updatedBy:uid,updatedAt:serverTimestamp()})})
+    orderRepairs.forEach(item=>transaction.update(doc(db,'vessels',item.id),{order:item.order,updatedBy:uid,updatedAt:serverTimestamp()}))
   })
   return loadActiveVessels()
 }

@@ -60,6 +60,12 @@ export function buildDefaultVesselCreates(existing:Vessel[]){
   const codes=new Set(existing.map(item=>item.vesselCode.trim().toLowerCase()))
   return DEFAULT_VESSELS.filter(item=>!codes.has(item.vesselCode.toLowerCase()))
 }
+export function buildDefaultVesselOrderRepairs(existing:Vessel[]){
+  return existing.flatMap(item=>{
+    const defaultVessel=DEFAULT_VESSELS.find(defaultItem=>defaultItem.vesselCode===item.vesselCode)
+    return defaultVessel&&item.order===Number.MAX_SAFE_INTEGER?[{id:item.id,order:defaultVessel.order}]:[]
+  })
+}
 export function buildDefaultCategoryCreates(existing:PurchaseCategory[]){
   const codes=new Set(existing.map(item=>item.categoryCode))
   return DEFAULT_PURCHASE_CATEGORIES.filter(item=>!codes.has(item.categoryCode))

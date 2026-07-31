@@ -25,6 +25,7 @@ export interface IceWorkRecord {
   plasticBagCount: number; plasticBagRateCentsEach: number; plasticBagAmountCents: number
   workFeeSubtotalCents: number; materialSubtotalCents: number; recordTotalCents: number; notes: string
   status: IceWorkStatus; revision: number; createdBy: string; createdAt?: unknown; updatedBy?: string; updatedAt?: unknown
+  lastActionId?: string
   confirmedBy?: string | null; confirmedAt?: unknown | null; reopenedBy?: string | null; reopenedAt?: unknown | null; reopenReason?: string | null
   voided: boolean; voidReason: string | null; voidedBy: string | null; voidedAt?: unknown | null
 }
@@ -35,6 +36,7 @@ export interface IceWorkMonthlySettlement {
   directIceAmountCents: number; plasticBagAmountCents: number; workFeeSubtotalCents: number; materialSubtotalCents: number; recordsTotalCents: number
   headmanFeeCents: number; clerkFeeCents: number; finalTotalCents: number; status: IceWorkStatus; revision: number
   createdBy: string; createdAt?: unknown; updatedBy?: string; updatedAt?: unknown; confirmedBy?: string | null; confirmedAt?: unknown | null
+  lastActionId?: string
   reopenedBy?: string | null; reopenedAt?: unknown | null; reopenReason?: string | null; voidedBy?: string | null; voidedAt?: unknown | null; voidReason?: string | null
 }
 

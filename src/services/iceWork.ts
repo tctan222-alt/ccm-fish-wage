@@ -19,16 +19,16 @@ export async function loadIceWorkSettlement(vesselId: string, monthKey: string) 
 
 async function saveRecordAndAction(record: IceWorkRecord, type: IceWorkAction['type'], beforeSnapshot: unknown = null, reason: string | null = null, clientOperationId: string = operationId()) {
   const user = requireUser(), recordRef = doc(db, 'iceWorkRecords', record.id), actionRef = doc(recordRef, 'actions', clientOperationId)
-  const { id, ...stored } = record
+  const auditedRecord = { ...record, lastActionId: clientOperationId }, { id, ...stored } = auditedRecord
   await runTransaction(db, async transaction => {
     const [existing, existingAction] = await Promise.all([transaction.get(recordRef), transaction.get(actionRef)])
     if (existingAction.exists()) return
     if (type === 'create' && existing.exists()) throw new Error('冰工记录已存在。')
     if (type !== 'create' && (!existing.exists() || Number(existing.data().revision) !== record.revision - 1)) throw new Error('冰工记录已被其他操作更新，请重新载入。')
     transaction.set(recordRef, { ...stored, updatedBy: user.uid, updatedAt: serverTimestamp(), ...(type === 'create' ? { createdBy: record.createdBy || user.uid, createdAt: serverTimestamp() } : {}), ...(type === 'confirm' ? { confirmedBy: user.uid, confirmedAt: serverTimestamp() } : {}), ...(type === 'reopen' ? { reopenedBy: user.uid, reopenedAt: serverTimestamp() } : {}), ...(type === 'void' ? { voidedBy: user.uid, voidedAt: serverTimestamp() } : {}) }, { merge: type !== 'create' })
-    transaction.set(actionRef, { ...createIceWorkAction(type, record, user.uid, beforeSnapshot, clientOperationId, reason), performedAt: serverTimestamp() })
+    transaction.set(actionRef, { ...createIceWorkAction(type, auditedRecord, user.uid, beforeSnapshot, clientOperationId, reason), performedAt: serverTimestamp() })
   })
-  return { ...record, createdBy: record.createdBy || user.uid, updatedBy: user.uid }
+  return { ...auditedRecord, createdBy: record.createdBy || user.uid, updatedBy: user.uid }
 }
 export async function saveIceWorkRecord(record: IceWorkRecord, clientOperationId?: string) { return saveRecordAndAction(record, 'create', null, null, clientOperationId) }
 export async function confirmIceWorkRecordInStore(record: IceWorkRecord, clientOperationId?: string) { const user = requireUser(); return saveRecordAndAction(confirmIceWorkRecord(record, user.uid), 'confirm', record, null, clientOperationId) }
@@ -37,7 +37,7 @@ export async function voidIceWorkRecord(record: IceWorkRecord, reason: string, c
 
 export async function createIceWorkMonthlySettlement(vesselId: string, vesselCodeSnapshot: string, monthKey: string, clientOperationId = operationId()) {
   const user = requireUser(), settlementRef = doc(db, 'iceWorkMonthlySettlements', iceWorkSettlementId(vesselId, monthKey)), records = await loadIceWorkRecords(vesselId, monthKey)
-  const candidate = createIceWorkSettlement({ vesselId, vesselCodeSnapshot, monthKey, createdBy: user.uid, records }), actionRef = doc(settlementRef, 'actions', clientOperationId)
+  const candidate = { ...createIceWorkSettlement({ vesselId, vesselCodeSnapshot, monthKey, createdBy: user.uid, records }), lastActionId: clientOperationId }, actionRef = doc(settlementRef, 'actions', clientOperationId)
   await runTransaction(db, async transaction => {
     const [existing, existingAction] = await Promise.all([transaction.get(settlementRef), transaction.get(actionRef)])
     if (existingAction.exists()) return
@@ -50,7 +50,7 @@ export async function createIceWorkMonthlySettlement(vesselId: string, vesselCod
 }
 async function updateSettlement(settlement: IceWorkMonthlySettlement, type: 'confirm' | 'reopen' | 'void', reason: string | null = null, clientOperationId = operationId()) {
   const user = requireUser(), ref = doc(db, 'iceWorkMonthlySettlements', settlement.id)
-  const next = type === 'confirm' ? confirmIceWorkSettlement(settlement, user.uid) : type === 'reopen' ? reopenIceWorkSettlement(settlement, reason ?? '', user.uid) : voidIceWorkSettlement(settlement, reason ?? '', user.uid)
+  const next = { ...(type === 'confirm' ? confirmIceWorkSettlement(settlement, user.uid) : type === 'reopen' ? reopenIceWorkSettlement(settlement, reason ?? '', user.uid) : voidIceWorkSettlement(settlement, reason ?? '', user.uid)), lastActionId: clientOperationId }
   const actionRef = doc(ref, 'actions', clientOperationId), { id, ...stored } = next
   await runTransaction(db, async transaction => {
     const [existing, existingAction] = await Promise.all([transaction.get(ref), transaction.get(actionRef)])

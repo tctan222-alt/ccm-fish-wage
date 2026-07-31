@@ -5,10 +5,9 @@ import { applyEntryCreated,DEFAULT_FISH_SPECIES,type WeighingEntry,type Weighing
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
-const vessels=[
-  {id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,notes:''},
-  {id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,notes:''},
-]
+const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesselCode,order)=>(
+  {id:`v${vesselCode}`,vesselCode,displayName:vesselCode,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order,notes:''}
+))
 
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 
@@ -33,6 +32,7 @@ describe('iPhone 现场称重单页',()=>{
     setup()
     expect(await screen.findByRole('heading',{name:'现场称重'})).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
+    for(const vessel of vessels)expect(screen.getByRole('button',{name:vessel.vesselCode})).toBeInTheDocument()
     expect(screen.getByText('30/07/2026')).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'鱼头'})).toHaveAttribute('aria-pressed','true')
     const species=screen.getByRole('group',{name:'鱼名'})

@@ -9,6 +9,7 @@ describe('CCM 部门首页', () => {
       id: `v${vesselCode}`, vesselCode, displayName: vesselCode, defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order, notes: '',
     }))
     render(<MemoryRouter><DashboardPage vesselLoader={async () => vessels} /></MemoryRouter>)
+    expect(screen.queryByText(/Vessel Trip/i)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'CCM 首页' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: '鱼头鱼仔部' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '鱼头购入' })).toHaveAttribute('href', '/fish-head-purchase')
