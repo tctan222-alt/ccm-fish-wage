@@ -186,5 +186,5 @@ export function voidIceWorkSettlement(settlement: IceWorkMonthlySettlement, reas
 }
 
 // Compatibility helper for older callers. Fixed fees now belong only to monthly settlements.
-export function summarizeIceMonthEndFees(_records: IceWorkRecord[]) { return { headmanFeeCents: 0, clerkFeeCents: 0, recordId: null } }
+export function summarizeIceMonthEndFees(records: IceWorkRecord[]) { void records; return { headmanFeeCents: 0, clerkFeeCents: 0, recordId: null } }
 export const iceWorkMonthClosingId = iceWorkSettlementId

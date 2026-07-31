@@ -1,6 +1,6 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from '../firebase'
-import { businessDateFromLegacy, monthKeyFromBusinessDate } from '../lib/businessDate'
+import { businessDateFromLegacy } from '../lib/businessDate'
 import { confirmIceWorkRecord, createIceWorkAction, createIceWorkRecord, iceWorkSettlementId, reopenIceWorkRecord, softVoidIceWorkRecord, type IceWorkAction, type IceWorkMonthlySettlement, type IceWorkRecord } from '../lib/iceWork'
 
 function requireUser() { if (!firebaseConfigured) throw new Error('Firebase 尚未设定。'); if (!auth.currentUser) throw new Error('请先登录。'); return auth.currentUser }
@@ -19,7 +19,8 @@ export async function loadIceWorkSettlement(vesselId: string, monthKey: string) 
 
 async function saveRecordAndAction(record: IceWorkRecord, type: IceWorkAction['type'], beforeSnapshot: unknown = null, reason: string | null = null, clientOperationId: string = operationId()) {
   const user = requireUser(), recordRef = doc(db, 'iceWorkRecords', record.id), actionRef = doc(recordRef, 'actions', clientOperationId)
-  const auditedRecord = { ...record, lastActionId: clientOperationId }, { id, ...stored } = auditedRecord
+  const auditedRecord = { ...record, lastActionId: clientOperationId }
+  const stored = Object.fromEntries(Object.entries(auditedRecord).filter(([key]) => key !== 'id'))
   await runTransaction(db, async transaction => {
     const [existing, existingAction] = await Promise.all([transaction.get(recordRef), transaction.get(actionRef)])
     if (existingAction.exists()) return
