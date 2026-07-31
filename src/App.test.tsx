@@ -42,10 +42,12 @@ describe('authentication gate', () => {
     expect(firebase.wageScreen).not.toHaveBeenCalled()
   })
 
-  it('shows the application when authenticated', async () => {
+  it('shows the dashboard when authenticated instead of opening fish-head wages', async () => {
     render(<App />)
     firebase.authState?.({ uid: 'admin' } as User)
-    expect(await screen.findByRole('heading', { name: 'Fish Head Wage' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'CCM 首页' })).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'返回'})).toBeInTheDocument()
+    expect(firebase.wageScreen).not.toHaveBeenCalled()
   })
 
   it('signs in with the entered credentials', async () => {
