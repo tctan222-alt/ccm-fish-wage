@@ -584,11 +584,15 @@ html,body,#root,main{
 .species-grid button{width:100%;min-width:0;min-height:54px;height:54px;padding:2px;font-size:.94rem;line-height:1.08;overflow-wrap:anywhere}
 .quality-grid,.entry-mode-switch{margin-top:6px}.current-selection{margin:5px 2px;font-size:.82rem}
 .current-selection strong{margin-left:4px;color:#075985;font-size:1rem}
-.weighing-input-bar{position:sticky;bottom:calc(4px + env(safe-area-inset-bottom));z-index:4;display:grid;grid-template-columns:minmax(0,1.15fr) minmax(92px,.85fr);gap:6px;padding:5px;border-radius:12px;background:#fff;box-shadow:0 3px 14px #102a4340}
+  .weighing-input-bar{position:sticky;bottom:calc(4px + env(safe-area-inset-bottom));z-index:4;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:5px;border-radius:12px;background:#fff;box-shadow:0 3px 14px #102a4340}
 .weighing-input-bar label{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:5px;min-width:0;font-size:.75rem;font-weight:900}
 .weighing-input-bar input{width:100%;min-width:0;height:58px;border:3px solid #075985;border-radius:10px;padding:4px 8px;font-size:2rem;font-weight:900;color:#102a43}
 .weighing-input-bar input:focus{outline:3px solid #7dd3fc}
 .weighing-confirm{min-width:0;min-height:58px;background:#087f5b;border-color:#087f5b;color:#fff;font-size:1.35rem}
+.decimal-keypad{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-top:6px;width:100%;min-width:0}
+.decimal-keypad button{min-width:0;min-height:48px;padding:4px;border:2px solid #829ab1;border-radius:9px;background:#fff;color:#102a43;font-size:1.1rem;font-weight:900}
+.decimal-keypad .decimal-keypad-clear{grid-column:span 1;color:#7a4700;border-color:#d99a2b}
+.decimal-keypad .decimal-keypad-confirm{grid-column:span 2;background:#087f5b;border-color:#087f5b;color:#fff}
 .total-remark{margin:5px 0}.total-remark input{height:44px}
 .weighing-message,.weighing-page .error{margin:5px 0;padding:7px;font-size:.82rem}
 .recent-entry{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;margin-top:5px;padding:5px 7px;border:2px solid #d9e2ec;border-radius:9px}
@@ -598,6 +602,10 @@ html,body,#root,main{
 .weighing-compact-summary{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;align-items:center;gap:7px;margin-top:5px;padding:5px 7px;border-radius:9px;background:#eef4f7;font-size:.8rem}
 .weighing-compact-summary strong{color:#075985;font-size:1rem;white-space:nowrap}.weighing-compact-summary span{text-align:right}
 .weighing-compact-summary button{min-height:34px;padding:2px 7px;font-size:.75rem}
+.weighing-live-summary{margin-top:6px;padding:6px 7px;border:1px solid #d9e2ec;border-radius:9px;background:#f8fbfc}
+.weighing-live-summary h2{margin:0 0 4px;font-size:.88rem}.weighing-live-summary ul{margin:0;padding:0;list-style:none}
+.weighing-live-summary li{display:flex;justify-content:space-between;gap:6px;padding:3px 0;font-size:.8rem}.weighing-live-summary li span{text-align:right}
+.settlement-link{display:block;margin-top:8px;text-align:center}
 .weighing-history{padding:10px}.weighing-entry-list{display:grid;gap:5px}
 .weighing-entry-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:3px 7px;align-items:center;min-width:0;min-height:52px;padding:6px 8px;text-align:left;font-size:.84rem}
 .weighing-entry-row strong{overflow:hidden;text-overflow:ellipsis}.weighing-entry-row em{grid-column:2/4;color:#486581;font-size:.72rem}

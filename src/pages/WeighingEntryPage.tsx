@@ -1,10 +1,12 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type FormEvent } from 'react'
 import { Link,useParams } from 'react-router-dom'
 import { auth } from '../firebase'
-import { rmInputToCentsPerKg, type Vessel } from '../lib/purchasing'
+import { DEFAULT_VESSELS,type Vessel } from '../lib/purchasing'
+import { DecimalKeypad } from '../components/DecimalKeypad'
 import { malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
+  DEFAULT_FISH_SPECIES,
   activeFishSpecies,
   applyEntryCreated,
   applyEntryReplacement,
@@ -15,7 +17,6 @@ import {
   newWeighingSession,
   softVoidWeighingEntry,
   summarizeWeighingEntries,
-  summarizePricedWeighingEntries,
   type FishMealQuality,
   type FishSpeciesRecord,
   type WeighingEntry,
@@ -23,7 +24,7 @@ import {
   type WeighingProductType,
   type WeighingSession,
 } from '../lib/weighing'
-import { loadActiveVessels } from '../services/purchaseMasterData'
+import { initializeDefaultVessels,loadVessels } from '../services/purchaseMasterData'
 import {
   createIndexedDbWeighingStore,
   flushWeighingQueue,
@@ -33,6 +34,7 @@ import {
 import {
   findOpenWeighingSession,
   loadFishSpecies,
+  initializeDefaultFishSpecies,
   loadWeighingBundle,
   saveFishSpecies,
   syncWeighingOperation,
@@ -59,15 +61,33 @@ interface Props {
   now?:()=>string
   idFactory?:(kind:'session'|'entry'|'operation')=>string
   fixedProductType?:WeighingProductType
-  requireUnitPrice?:boolean
   pageTitle?:string
   speciesCreator?:(value:FishSpeciesRecord)=>Promise<FishSpeciesRecord>
+  vesselInitializer?:()=>Promise<Vessel[]>
+  speciesInitializer?:(items:FishSpeciesRecord[])=>Promise<FishSpeciesRecord[]>
+}
+
+function visibleVessels(items:Vessel[]){
+  const byCode=new Map(items.map(item=>[item.vesselCode,item]))
+  const defaults:Vessel[]=DEFAULT_VESSELS.map(item=>({...item}))
+  return defaults.flatMap(item=>{
+    const saved=byCode.get(item.vesselCode)
+    return saved?(saved.active?[saved]:[]):[item]
+  }).filter(item=>item.active)
+}
+
+function visibleFishSpecies(items:FishSpeciesRecord[]){
+  const byCode=new Map(items.map(item=>[item.speciesCode,item]))
+  const defaults=DEFAULT_FISH_SPECIES.map(item=>byCode.get(item.speciesCode)??item)
+  const custom=items.filter(item=>!DEFAULT_FISH_SPECIES.some(defaultItem=>defaultItem.speciesCode===item.speciesCode)&&item.active)
+  return [...defaults,...custom]
 }
 
 export function WeighingEntryPage({
-  vesselLoader=loadActiveVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
+  vesselLoader=loadVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
   bundleLoader=loadWeighingBundle,offlineStore=defaultStore,remoteSync=syncWeighingOperation,
-  today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,requireUnitPrice=false,pageTitle='现场称重',speciesCreator=saveFishSpecies,
+  today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,pageTitle='现场称重',speciesCreator=saveFishSpecies,
+  vesselInitializer=initializeDefaultVessels,speciesInitializer=initializeDefaultFishSpecies,
 }:Props){
   const {sessionId}=useParams()
   const [vessels,setVessels]=useState<Vessel[]>([])
@@ -82,7 +102,6 @@ export function WeighingEntryPage({
   const [quality,setQuality]=useState<FishMealQuality>('bucket')
   const [entryMode,setEntryMode]=useState<WeighingEntryMode>('individual')
   const [weight,setWeight]=useState('')
-  const [unitPrice,setUnitPrice]=useState('')
   const [remark,setRemark]=useState('')
   const [pending,setPending]=useState(0)
   const [busy,setBusy]=useState(false)
@@ -97,13 +116,13 @@ export function WeighingEntryPage({
 
   const store=offlineStore
   const activeSpecies=useMemo(()=>activeFishSpecies(species),[species])
+  const displayedSpecies=useMemo(()=>visibleFishSpecies(species),[species])
   const activeEntries=entries.filter(item=>!item.voided)
   const summary=summarizeWeighingEntries(entries)
   const latestIndividual=activeEntries.find(item=>item.entryMode==='individual')
   const latest=activeEntries[0]
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const locked=Boolean(session&&session.status!=='weighing')
-  const pricedSummary=useMemo(()=>summarizePricedWeighingEntries(entries),[entries])
 
   useEffect(()=>{if(fixedProductType)setProductType(fixedProductType)},[fixedProductType])
 
@@ -120,21 +139,25 @@ export function WeighingEntryPage({
         else speciesRows=parseCachedRows<FishSpeciesRecord>(await store.getMeta('reference:species'))
       }
       if(cancelled)return
-      if(!vesselRows?.length||!speciesRows?.length){
-        setError('无法载入船号或鱼名资料，请连接网络后重试。');return
-      }
-      const activeVessels=vesselRows.filter(item=>item.active)
-      setVessels(activeVessels);setSpecies(speciesRows)
-      setSpeciesId(activeFishSpecies(speciesRows)[0]?.id??'')
+      const sourceVessels=vesselRows??[],sourceSpecies=speciesRows??[]
+      const availableVessels=visibleVessels(sourceVessels)
+      setVessels(availableVessels);setSpecies(sourceSpecies)
+      setSpeciesId(visibleFishSpecies(sourceSpecies).find(item=>item.active)?.id??'')
       const preferred=store?await store.getMeta('lastVesselId'):undefined
       if(cancelled)return
-      setVesselId(activeVessels.some(item=>item.id===preferred)?preferred!:activeVessels[0]?.id??'')
+      setVesselId(availableVessels.some(item=>item.id===preferred)?preferred!:availableVessels[0]?.id??'')
+      if(vesselResult.status==='fulfilled'&&DEFAULT_VESSELS.some(item=>!sourceVessels.some(row=>row.vesselCode===item.vesselCode))){
+        void vesselInitializer().then(next=>{if(!cancelled)setVessels(visibleVessels(next))}).catch(()=>undefined)
+      }
+      if(speciesResult.status==='fulfilled'&&DEFAULT_FISH_SPECIES.some(item=>!sourceSpecies.some(row=>row.speciesCode===item.speciesCode))){
+        void speciesInitializer(sourceSpecies).then(next=>{if(!cancelled)setSpecies(next)}).catch(()=>undefined)
+      }
       if(vesselResult.status==='rejected'||speciesResult.status==='rejected'){
-        setMessage('目前离线，已使用本机船号和鱼名资料。')
+        setError('无法载入船号或鱼名资料，正在显示本机默认资料。')
       }
     })()
     return()=>{cancelled=true}
-  },[vesselLoader,speciesLoader,store,referenceAttempt])
+  },[vesselLoader,speciesLoader,store,referenceAttempt,speciesInitializer])
 
   useEffect(()=>{
     if(sessionId){
@@ -212,20 +235,40 @@ export function WeighingEntryPage({
     queueMicrotask(()=>weightRef.current?.focus())
   }
 
+  async function selectSpecies(item:FishSpeciesRecord){
+    if(!item.active){setError('这个鱼名已停用，请到主资料重新启用，或输入其他鱼名。');return}
+    setSpeciesId(item.id);setWeight('');setError('');queueMicrotask(()=>weightRef.current?.focus())
+    if(species.some(existing=>existing.id===item.id))return
+    try{const saved=await speciesCreator(item);setSpecies(current=>[...current,saved])}
+    catch{setError('默认鱼名建立失败，请连接网络后重试。')}
+  }
+
+  async function selectVessel(nextId:string){
+    setVesselId(nextId);setError('')
+    if(vessels.some(item=>item.id===nextId&&item.createdBy))return
+    try{const initialized=await vesselInitializer();setVessels(visibleVessels(initialized))}
+    catch{setError('默认船号建立失败，请连接网络后重试。')}
+  }
+
   async function confirmEntry(event?:FormEvent){
     event?.preventDefault()
     if(saveLock.current||busy||locked||!store||!selectedVessel)return
+    let vesselForEntry=selectedVessel
+    if(vesselForEntry.id===vesselForEntry.vesselCode&&!vesselForEntry.createdBy){
+      try{
+        const initialized=await vesselInitializer()
+        const resolved=visibleVessels(initialized).find(item=>item.vesselCode===vesselForEntry.vesselCode)
+        if(!resolved){setError('无法建立默认船号，请连接网络后重试。');return}
+        vesselForEntry=resolved;setVessels(visibleVessels(initialized));setVesselId(resolved.id)
+      }catch{setError('无法建立默认船号，请连接网络后重试。');return}
+    }
     let grams:number
     try{grams=kgInputToGrams(weight,entryMode)}catch(problem){setError(problem instanceof Error?problem.message:'重量格式不正确。');return}
-    const selectedSpecies=activeSpecies.find(item=>item.id===speciesId)
+    const selectedSpecies=displayedSpecies.find(item=>item.id===speciesId)
     if(productType==='fish_head'&&!selectedSpecies){setError('请选择鱼名。');return}
-    let unitPriceCentsPerKg:number|undefined
-    if(requireUnitPrice){
-      try{unitPriceCentsPerKg=rmInputToCentsPerKg(unitPrice)}catch(problem){setError(problem instanceof Error?problem.message:'单价格式不正确。');return}
-    }
     const recordedAtClient=now(),base=session??newWeighingSession({
-      id:idFactory('session'),vesselId:selectedVessel.id,vesselCodeSnapshot:selectedVessel.vesselCode,
-      vesselNameSnapshot:selectedVessel.displayName,weighingDate:date,externalSlipNo,
+      id:idFactory('session'),vesselId:vesselForEntry.id,vesselCodeSnapshot:vesselForEntry.vesselCode,
+      vesselNameSnapshot:vesselForEntry.displayName,weighingDate:date,externalSlipNo,
     })
     const entryId=idFactory('entry')
     let entry:WeighingEntry
@@ -235,7 +278,7 @@ export function WeighingEntryPage({
         fishSpeciesId:productType==='fish_head'?speciesId:null,fishSpecies:productType==='fish_head'?selectedSpecies:null,
         fishMealQuality:productType==='fish_meal'?quality:null,entryMode,
         sequenceNo:entryMode==='individual'?base.lastSequenceNo+1:null,weightGrams:grams,remark,
-        recordedAtClient,recordedAt:recordedAtClient,recordedBy:auth.currentUser?.uid??'local-user',unitPriceCentsPerKg})
+        recordedAtClient,recordedAt:recordedAtClient,recordedBy:auth.currentUser?.uid??'local-user'})
     }catch(problem){setError(problem instanceof Error?problem.message:'无法建立称重记录。');return}
     const next=applyEntryCreated(base,entry),operationId=`entry_create_${entry.clientEntryId}`
     saveLock.current=true;setBusy(true);setError('')
@@ -243,7 +286,7 @@ export function WeighingEntryPage({
       await store.commitOperation({session:next,entry:{...entry,syncStatus:'syncing'},
         operation:{id:operationId,type:'entry_create',sessionId:base.id,entryId:entry.id,
           createdAtClient:recordedAtClient,payload:{session:base,entry}},
-        meta:{[`current:${selectedVessel.id}:${date}`]:base.id,lastVesselId:selectedVessel.id}})
+        meta:{[`current:${vesselForEntry.id}:${date}`]:base.id,lastVesselId:vesselForEntry.id}})
       setSession(next);setEntries(current=>[{...entry,syncStatus:'syncing'},...current]);setPending(current=>current+1)
       setWeight('');if(entryMode==='total')setRemark('')
       setMessage('已保存');window.dispatchEvent(new Event('ccm:form-saved'));navigator.vibrate?.(40);queueMicrotask(()=>weightRef.current?.focus())
@@ -286,15 +329,18 @@ export function WeighingEntryPage({
     setSession(local);setPending(current=>current+1);setShowComplete(false);setMessage('已完成，等待同步');await syncNow()
   }
 
-  async function addCustomSpecies(value:{displayName:string;unitPrice:string;save:boolean}){
+  async function addCustomSpecies(value:{displayName:string;save:boolean}){
     const displayName=value.displayName.trim()
     if(!displayName){throw new Error('自定义鱼名必须填写名称。')}
-    const price=rmInputToCentsPerKg(value.unitPrice)
+    const matching=species.find(item=>item.displayName===displayName)
+    if(matching){
+      if(!matching.active)throw new Error('这个鱼名已停用，请到主资料重新启用，或输入其他鱼名。')
+      setSpeciesId(matching.id);setShowCustomSpecies(false);queueMicrotask(()=>weightRef.current?.focus());return
+    }
     const id=`custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2,7)}`
     const record:FishSpeciesRecord={id,speciesCode:id,displayName,active:true,order:Math.max(16,...species.map(item=>item.order))+1,notes:''}
-    const saved=value.save?await speciesCreator(record):record
-    setSpecies(current=>[...current,saved]);setSpeciesId(saved.id);setUnitPrice(value.unitPrice);setShowCustomSpecies(false)
-    void price
+    const saved=await speciesCreator(record)
+    setSpecies(current=>[...current,saved]);setSpeciesId(saved.id);setShowCustomSpecies(false)
     queueMicrotask(()=>weightRef.current?.focus())
   }
 
@@ -302,21 +348,22 @@ export function WeighingEntryPage({
     <header className="weighing-header"><div><p className="eyebrow">CCM Fishery</p><h1>{pageTitle}</h1></div>
       <Link to="/weighing">查看现场单</Link></header>
     <section className="weighing-setup">
-      <div className="vessel-choice"><span>船号</span>{vessels.length===0&&!error?<p className="notice" role="status">正在读取船号和鱼名资料…</p>:<div className="vessel-button-grid" role="group" aria-label="船号">
-        {vessels.map(item=><button type="button" key={item.id} disabled={Boolean(session)} aria-pressed={vesselId===item.id} className={vesselId===item.id?'selected':''} onClick={()=>setVesselId(item.id)}>{item.vesselCode}</button>)}</div>}</div>
+      <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} disabled={Boolean(session)} onChange={event=>void selectVessel(event.target.value)}>
+        <option value="">请选择船号</option>{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
       <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
 
-    {species.length===0&&<p className="notice">尚未建立鱼名资料，请先到鱼名管理建立 CCM 默认鱼名。</p>}
+    {species.length===0&&<p className="notice">正在显示 CCM 默认鱼名；选择后会安全补齐主资料。</p>}
     <section className="weighing-core">
       {!fixedProductType&&<div className="product-switch" role="group" aria-label="产品类型">
         <button type="button" aria-pressed={productType==='fish_head'} className={productType==='fish_head'?'selected':''} onClick={()=>switchProduct('fish_head')}>鱼头</button>
         <button type="button" aria-pressed={productType==='fish_meal'} className={productType==='fish_meal'?'selected':''} onClick={()=>switchProduct('fish_meal')}>鱼仔</button>
       </div>}
       {productType==='fish_head'?<div className="species-grid" role="group" aria-label="鱼名">
-        {activeSpecies.map(item=><button type="button" key={item.id} aria-pressed={speciesId===item.id}
-          className={speciesId===item.id?'selected':''} onClick={()=>{setSpeciesId(item.id);weightRef.current?.focus()}}>{item.displayName}</button>)}
+        {displayedSpecies.map(item=><button type="button" key={item.id} aria-pressed={speciesId===item.id} disabled={!item.active}
+          className={speciesId===item.id?'selected':''} onClick={()=>void selectSpecies(item)}>{item.displayName}</button>)}
+        <button type="button" className="custom-species-button" onClick={()=>setShowCustomSpecies(true)}>其他</button>
       </div>:<>
         <div className="quality-grid" role="group" aria-label="鱼仔品质">
           {FISH_MEAL_QUALITIES.map(item=><button type="button" key={item.id} aria-pressed={quality===item.id}
@@ -327,22 +374,19 @@ export function WeighingEntryPage({
           <button type="button" aria-pressed={entryMode==='total'} className={entryMode==='total'?'selected':''} onClick={()=>setEntryMode('total')}>总重量</button>
         </div>
       </>}
-      {productType==='fish_head'&&requireUnitPrice&&<button type="button" className="custom-species-button" onClick={()=>setShowCustomSpecies(true)}>＋自定义鱼名</button>}
-      <p className="current-selection">已选择：<strong>{productType==='fish_head'?activeSpecies.find(item=>item.id===speciesId)?.displayName:FISH_MEAL_QUALITIES.find(item=>item.id===quality)?.name}</strong></p>
-      <form className={`weighing-input-bar ${requireUnitPrice?'priced-input-bar':''}`} onSubmit={confirmEntry}>
-        {requireUnitPrice&&<label><span>单价（RM/kg）</span><input aria-label="单价（RM/kg）" inputMode="decimal" disabled={locked}
-          value={unitPrice} onChange={event=>setUnitPrice(event.target.value)}/></label>}
+      <p className="current-selection">已选择：<strong>{productType==='fish_head'?displayedSpecies.find(item=>item.id===speciesId)?.displayName:FISH_MEAL_QUALITIES.find(item=>item.id===quality)?.name}</strong></p>
+      <form className="weighing-input-bar" onSubmit={confirmEntry}>
         <label><span>重量（kg）</span><input ref={weightRef} aria-label="重量（kg）" inputMode="decimal" enterKeyHint="done"
           disabled={locked} value={weight} onChange={event=>setWeight(event.target.value)}
           onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void confirmEntry()}}}/></label>
-        <button className="weighing-confirm" disabled={busy||locked||!vesselId}>确认</button>
       </form>
+      <DecimalKeypad value={weight} onChange={setWeight} onConfirm={()=>void confirmEntry()} disabled={busy||locked||!vesselId}/>
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
       {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
       {message&&<p className="weighing-message" role="status">{message}</p>}
       <div className="recent-entry">
-        <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg{latest.unitPriceCentsPerKg?` · ${formatRm(latest.unitPriceCentsPerKg)} · ${formatRm(latest.amountCents??0)}`:''}</span></>:<span>尚无记录</span>}</div>
+        <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg</span></>:<span>尚无记录</span>}</div>
         <button type="button" className="undo-entry" disabled={!latestIndividual||locked} onClick={()=>void undoLatest()}>撤回</button>
       </div>
       <div className="weighing-compact-summary">
@@ -350,6 +394,7 @@ export function WeighingEntryPage({
         <span>{pending>0?`尚未同步 ${pending} 笔`:'全部已同步'}</span>
         {pending>0&&<button type="button" onClick={()=>void syncNow()}>重新同步</button>}
       </div>
+      <section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={entries}/></section>
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
@@ -362,9 +407,9 @@ export function WeighingEntryPage({
         <b>{formatWeightKg(item.weightGrams)} kg</b><small>{entryTime(item.recordedAtClient)}</small>
         <em>{item.voided?'已作废':item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
       </button>)}</div>
-      <details><summary>查看分类汇总</summary><CategorySummary entries={entries}/>{requireUnitPrice&&<PricedSummary groups={pricedSummary}/>}</details>
     </section>
     {!locked&&activeEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
+    {session?.status==='completed'&&<Link className="primary-action settlement-link" to={`/weighing/${session.id}/review`}>去结单</Link>}
     {showComplete&&session&&<CompleteDialog session={session} pending={pending} close={()=>setShowComplete(false)} confirm={()=>void complete()}/>}
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
       save={after=>updateEntry(editing,after)} voidEntry={reason=>queueVoid(editing,reason)}/>}
@@ -372,14 +417,12 @@ export function WeighingEntryPage({
   </main>
 }
 
-function CustomSpeciesDialog({close,save}:{close:()=>void;save:(value:{displayName:string;unitPrice:string;save:boolean})=>Promise<void>}){
-  const [displayName,setDisplayName]=useState(''),[unitPrice,setUnitPrice]=useState(''),[persist,setPersist]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false)
-  async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError('');try{await save({displayName,unitPrice,save:persist})}catch(problem){setError(problem instanceof Error?problem.message:'无法保存自定义鱼名。')}finally{setBusy(false)}}
+function CustomSpeciesDialog({close,save}:{close:()=>void;save:(value:{displayName:string;save:boolean})=>Promise<void>}){
+  const [displayName,setDisplayName]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+  async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError('');try{await save({displayName,save:true})}catch(problem){setError(problem instanceof Error?problem.message:'无法保存其他鱼名。')}finally{setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>自定义鱼名</h2><form className="master-form" onSubmit={submit}>
     <label>鱼名<input aria-label="自定义鱼名" value={displayName} maxLength={80} onChange={event=>setDisplayName(event.target.value)}/></label>
-    <label>单价（RM/kg）<input aria-label="自定义单价（RM/kg）" inputMode="decimal" value={unitPrice} onChange={event=>setUnitPrice(event.target.value)}/></label>
-    <label><input aria-label="保存为正式鱼名" type="checkbox" checked={persist} onChange={event=>setPersist(event.target.checked)}/>保存为正式鱼名</label>
-    {error&&<p className="error" role="alert">{error}</p>}<button className="primary-action" disabled={busy}>用于当前单</button><button type="button" onClick={close}>取消</button>
+    {error&&<p className="error" role="alert">{error}</p>}<button className="primary-action" disabled={busy}>建立并选择</button><button type="button" onClick={close}>取消</button>
   </form></section></div>
 }
 
@@ -388,15 +431,6 @@ function entryTime(value:string){
   return Number.isNaN(date.getTime())?'—':new Intl.DateTimeFormat('zh-CN',{
     timeZone:'Asia/Kuala_Lumpur',hour:'2-digit',minute:'2-digit',hour12:false,
   }).format(date)
-}
-
-function formatRm(cents:number){return `RM ${(cents/100).toFixed(2)}`}
-
-function PricedSummary({groups}:{groups:ReturnType<typeof summarizePricedWeighingEntries>}){
-  if(!groups.length)return null
-  const totals=groups.reduce((sum,item)=>({weight:sum.weight+item.totalWeightGrams,amount:sum.amount+item.totalAmountCents,baskets:sum.baskets+item.basketCount}),{weight:0,amount:0,baskets:0})
-  return <div className="priced-summary" aria-label="采购汇总"><h3>采购汇总</h3><ul>{groups.map(item=><li key={item.key}><strong>{item.displayName}</strong><span>{item.basketCount} 篮 · {formatWeightKg(item.totalWeightGrams)} kg · {formatRm(item.unitPriceCentsPerKg)} · {formatRm(item.totalAmountCents)}</span></li>)}</ul>
-    <p>共 {totals.baskets} 篮 · {formatWeightKg(totals.weight)} kg · {formatRm(totals.amount)}</p></div>
 }
 
 function CategorySummary({entries}:{entries:WeighingEntry[]}){
@@ -427,7 +461,6 @@ function CompleteDialog({session,pending,close,confirm}:{session:WeighingSession
 function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:WeighingEntry;species:FishSpeciesRecord[];locked:boolean;
   close:()=>void;save:(after:WeighingEntry)=>Promise<void>;voidEntry:(reason:string)=>Promise<void>}){
   const [weight,setWeight]=useState(formatWeightKg(entry.weightGrams))
-  const [unitPrice,setUnitPrice]=useState(entry.unitPriceCentsPerKg==null?'':(entry.unitPriceCentsPerKg/100).toFixed(2))
   const [speciesId,setSpeciesId]=useState(entry.fishSpeciesId??'')
   const [quality,setQuality]=useState<FishMealQuality>(entry.fishMealQuality??'bucket')
   const [reason,setReason]=useState('')
@@ -439,7 +472,7 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
         productType:entry.productType,fishSpeciesId:entry.productType==='fish_head'?speciesId:null,
         fishSpecies:entry.productType==='fish_head'?selected:null,fishMealQuality:entry.productType==='fish_meal'?quality:null,
         entryMode:entry.entryMode,sequenceNo:entry.sequenceNo,weightGrams:grams,
-        unitPriceCentsPerKg:entry.unitPriceCentsPerKg==null?null:rmInputToCentsPerKg(unitPrice),remark:entry.remark,
+        unitPriceCentsPerKg:entry.unitPriceCentsPerKg,remark:entry.remark,
         weighingDate:entry.weighingDate,monthKey:entry.monthKey,vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot,
         recordedAtClient:entry.recordedAtClient,recordedAt:entry.recordedAt,recordedBy:entry.recordedBy})
       await save({...rebuilt,revision:entry.revision+1,syncStatus:'syncing'})
@@ -453,7 +486,6 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
         <label>鱼仔品质<select value={quality} disabled={locked||entry.voided} onChange={event=>setQuality(event.target.value as FishMealQuality)}>
           <option value="bucket">桶鱼仔</option><option value="bag">包鱼仔</option></select></label>}
       <label>重量（kg）<input value={weight} disabled={locked||entry.voided} onChange={event=>setWeight(event.target.value)}/></label>
-      {entry.unitPriceCentsPerKg!=null&&<label>单价（RM/kg）<input aria-label="修改单价（RM/kg）" inputMode="decimal" value={unitPrice} disabled={locked||entry.voided} onChange={event=>setUnitPrice(event.target.value)}/></label>}
       {!locked&&!entry.voided&&<button className="primary-action">保存修改</button>}
     </form>
     {!locked&&!entry.voided&&<div className="void-entry-panel"><label>作废原因<input value={reason} onChange={event=>setReason(event.target.value)}/></label>

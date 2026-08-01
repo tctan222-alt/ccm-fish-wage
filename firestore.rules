@@ -505,7 +505,7 @@ service cloud.firestore {
 
     function validWeighingSession(data) {
       return data.keys().hasOnly([
-          'sessionCode', 'weighingDate', 'monthKey', 'externalSlipNo',
+          'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'externalSlipNo',
           'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot', 'status',
           'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams',
           'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
@@ -530,6 +530,8 @@ service cloud.firestore {
         && data.weighingDate is string
         && ((data.weighingDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.monthKey == data.weighingDate[0:7])
           || (data.weighingDate.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$') && data.monthKey == data.weighingDate[3:10]))
+        && (!('dateSortKey' in data) || (data.dateSortKey is int && data.dateSortKey == int(data.weighingDate[6:10] + data.weighingDate[3:5] + data.weighingDate[0:2])))
+        && (!('monthSortKey' in data) || (data.monthSortKey is int && data.monthSortKey == int(data.monthKey[3:7] + data.monthKey[0:2])))
         && data.externalSlipNo is string && data.externalSlipNo.size() <= 100
         && data.vesselId is string && data.vesselId.size() > 0
         && data.vesselCodeSnapshot is string && data.vesselCodeSnapshot.size() > 0
@@ -562,7 +564,7 @@ service cloud.firestore {
 
     function validWeighingEntry(data) {
       return data.keys().hasOnly([
-          'clientEntryId', 'sessionId', 'weighingDate', 'monthKey', 'vesselId', 'vesselCodeSnapshot', 'productType', 'fishSpeciesId',
+          'clientEntryId', 'sessionId', 'weighingDate', 'businessDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'vesselId', 'vesselCodeSnapshot', 'productType', 'fishSpeciesId',
           'fishSpeciesCodeSnapshot', 'fishSpeciesNameSnapshot', 'fishMealQuality',
           'displayNameSnapshot', 'entryMode', 'sequenceNo', 'weightGrams', 'unitPriceCentsPerKg', 'amountCents', 'remark',
           'recordedAtClient', 'recordedAt', 'recordedBy', 'voided', 'voidReason',
@@ -580,6 +582,9 @@ service cloud.firestore {
         && (!('weighingDate' in data) || (data.weighingDate is string
           && ((data.weighingDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.monthKey == data.weighingDate[0:7])
             || (data.weighingDate.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$') && data.monthKey == data.weighingDate[3:10]))
+          && (!('businessDate' in data) || data.businessDate == data.weighingDate)
+          && (!('dateSortKey' in data) || (data.dateSortKey is int && data.dateSortKey == int(data.weighingDate[6:10] + data.weighingDate[3:5] + data.weighingDate[0:2])))
+          && (!('monthSortKey' in data) || (data.monthSortKey is int && data.monthSortKey == int(data.monthKey[3:7] + data.monthKey[0:2])))
           && data.vesselId is string && data.vesselId.size() > 0
           && data.vesselCodeSnapshot is string && data.vesselCodeSnapshot.size() > 0))
         && data.productType in ['fish_head', 'fish_meal']

@@ -46,6 +46,8 @@ describe('现场称重记录规则', () => {
   })
   it('把最多三位小数的公斤输入准确保存为整数克', () => {
     expect(kgInputToGrams('12.345', 'individual')).toBe(12_345)
+    expect(kgInputToGrams('.5', 'individual')).toBe(500)
+    expect(kgInputToGrams('80,125', 'individual')).toBe(80_125)
     expect(() => kgInputToGrams('12.3456', 'individual')).toThrow('最多三位小数')
     expect(() => kgInputToGrams('300.001', 'individual')).toThrow('每篮重量')
   })
