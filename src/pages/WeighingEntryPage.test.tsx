@@ -205,7 +205,7 @@ describe('iPhone 现场称重单页',()=>{
       speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={createMemoryWeighingStore(shared)} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
-    expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978')
+    await waitFor(()=>expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978'))
     expect(screen.getByRole('alert')).toHaveTextContent('正在显示本机默认资料')
   })
 
