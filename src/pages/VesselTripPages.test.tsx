@@ -32,7 +32,9 @@ describe('Vessel Trip pages',()=>{
       <Route path="/vessel-trips/:tripId" element={<p>Saved trip</p>}/>
     </Routes></MemoryRouter>)
     const user=userEvent.setup()
-    await user.selectOptions(await screen.findByLabelText('Vessel'),'v978')
+    const vesselField=await screen.findByLabelText('Vessel')
+    await screen.findByRole('option',{name:/978/})
+    await user.selectOptions(vesselField,'v978')
     await user.type(screen.getByLabelText('Departure date'),'2026-07-01')
     await user.type(screen.getByLabelText('Return date'),'2026-07-13')
     await user.click(screen.getByRole('button',{name:'Create Vessel Trip'}))
