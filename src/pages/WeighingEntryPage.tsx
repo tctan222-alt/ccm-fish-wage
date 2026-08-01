@@ -73,10 +73,13 @@ interface Props {
 function visibleVessels(items:Vessel[]){
   const byCode=new Map(items.map(item=>[item.vesselCode,item]))
   const defaults:Vessel[]=DEFAULT_VESSELS.map(item=>({...item}))
-  return defaults.flatMap(item=>{
+  const standard=defaults.flatMap(item=>{
     const saved=byCode.get(item.vesselCode)
     return saved?(saved.active?[saved]:[]):[item]
   }).filter(item=>item.active)
+  const defaultCodes=new Set(defaults.map(item=>item.vesselCode))
+  const custom=items.filter(item=>item.active&&!defaultCodes.has(item.vesselCode)).sort((a,b)=>(a.order??Number.MAX_SAFE_INTEGER)-(b.order??Number.MAX_SAFE_INTEGER)||a.vesselCode.localeCompare(b.vesselCode))
+  return [...standard,...custom]
 }
 
 function visibleFishSpecies(items:FishSpeciesRecord[]){
@@ -94,7 +97,7 @@ export function WeighingEntryPage({
   vesselInitializer=initializeDefaultVessels,speciesInitializer=initializeDefaultFishSpecies,
 }:Props){
   const {sessionId}=useParams()
-  const [vessels,setVessels]=useState<Vessel[]>([])
+  const [vessels,setVessels]=useState<Vessel[]>(()=>visibleVessels(DEFAULT_VESSELS))
   const [species,setSpecies]=useState<FishSpeciesRecord[]>([])
   const [vesselId,setVesselId]=useState('')
   const [date,setDate]=useState(today())
@@ -181,27 +184,27 @@ export function WeighingEntryPage({
   },[sessionId,bundleLoader,store])
 
   useEffect(()=>{
-    if(sessionId||!vesselId||!store)return
+    if(sessionId||!vesselId||!store){if(!sessionId)setContextLoading(false);return}
     let cancelled=false
     const request=++contextRequest.current
     const isCurrent=()=>!cancelled&&request===contextRequest.current
     void (async()=>{
       const key=weighingDraftKey(productType,date,vesselId)
-      setSession(null);setEntries([]);setPending(0);setExternalSlipNo('')
-      const localId=await store.getMeta(key)
-      if(!isCurrent())return
-      let local:WeighingSession|undefined,localEntries:WeighingEntry[]=[],pendingCount=0
-      if(localId){
-        local=await store.getSession(localId)
-        if(!isCurrent())return
-        if(local){
-          localEntries=await store.getEntries(local.id)
-          pendingCount=(await store.getPending()).filter(item=>item.sessionId===local!.id).length
-          if(!isCurrent())return
-          setSession(local);setEntries(localEntries);setExternalSlipNo(local.externalSlipNo);setPending(pendingCount)
-        }
-      }
+      let local:WeighingSession|undefined,localEntries:WeighingEntry[]=[],pendingCount=0,localId:string|undefined
       try{
+        setSession(null);setEntries([]);setPending(0);setExternalSlipNo('')
+        localId=await store.getMeta(key)
+        if(!isCurrent())return
+        if(localId){
+          local=await store.getSession(localId)
+          if(!isCurrent())return
+          if(local){
+            localEntries=await store.getEntries(local.id)
+            pendingCount=(await store.getPending()).filter(item=>item.sessionId===local!.id).length
+            if(!isCurrent())return
+            setSession(local);setEntries(localEntries);setExternalSlipNo(local.externalSlipNo);setPending(pendingCount)
+          }
+        }
         const open=localId?await bundleLoader(localId):await openSessionLoader(vesselId,date,productType)
         const remote=open??(!localId?await closedSessionLoader(vesselId,date,productType):null)
         if(!isCurrent())return
@@ -263,9 +266,6 @@ export function WeighingEntryPage({
 
   async function selectVessel(nextId:string){
     setContextLoading(true);setVesselId(nextId);setWeight('');setError('')
-    if(vessels.some(item=>item.id===nextId&&item.createdBy))return
-    try{const initialized=await vesselInitializer();setVessels(visibleVessels(initialized))}
-    catch{setError('默认船号建立失败，请连接网络后重试。')}
   }
 
   async function confirmEntry(event?:FormEvent){

@@ -15,6 +15,21 @@ export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
   const dirty=whenDirty??detectedDirty
   const historyIndex=useRef<number|null>(null)
   const revertingPop=useRef(false)
+  const revertToLocationKey=useRef<string|null>(null)
+  const previousLocationKey=useRef(location.key)
+  useEffect(()=>{
+    if(revertingPop.current){
+      if(revertToLocationKey.current===location.key){
+        revertingPop.current=false
+        revertToLocationKey.current=null
+        previousLocationKey.current=location.key
+      }
+      return
+    }
+    if(previousLocationKey.current===location.key)return
+    previousLocationKey.current=location.key
+    if(whenDirty===undefined)setDetectedDirty(false)
+  },[location.key,whenDirty])
   useEffect(()=>{
     const index=typeof window.history.state?.idx==='number'?window.history.state.idx:null
     if(index!==null)historyIndex.current=index
@@ -45,11 +60,11 @@ export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
     }
     const guardPopState=(event:PopStateEvent)=>{
       const nextIndex=typeof event.state?.idx==='number'?event.state.idx:null
-      if(revertingPop.current){revertingPop.current=false;historyIndex.current=nextIndex;return}
+      if(revertingPop.current){historyIndex.current=nextIndex;return}
       if(!dirty||nextIndex===null||historyIndex.current===null){historyIndex.current=nextIndex;return}
       if(window.confirm('还有未保存的资料，确定离开吗？')){setDetectedDirty(false);historyIndex.current=nextIndex;return}
       const delta=historyIndex.current-nextIndex
-      if(delta!==0){revertingPop.current=true;window.history.go(delta)}
+      if(delta!==0){revertingPop.current=true;revertToLocationKey.current=previousLocationKey.current;window.history.go(delta)}
     }
     document.addEventListener('input',markDirty,true)
     document.addEventListener('change',markDirty,true)

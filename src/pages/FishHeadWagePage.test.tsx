@@ -1,5 +1,5 @@
 import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { Link,MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { FishHeadWagePage } from './FishHeadWagePage'
 
@@ -37,6 +37,18 @@ describe('fish head worker session flow',()=>{
     expect(screen.queryByRole('link',{name:/Vessel Trips/i})).not.toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/现场称重/i})).not.toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/Purchases & Receiving/i})).not.toBeInTheDocument()
+  })
+
+  it('returns to the department and can render again after re-entry',async()=>{
+    render(<MemoryRouter initialEntries={['/fish-head-wages']}><Routes>
+      <Route path="/fish-head-wages" element={<FishHeadWagePage workerLoader={async()=>workers}/>}/>
+      <Route path="/fish-department" element={<><h1>鱼头鱼仔部</h1><Link to="/fish-head-wages">切鱼头工钱</Link></>}/>
+    </Routes></MemoryRouter>)
+    expect(await screen.findByRole('heading',{name:'切鱼头工钱'})).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link',{name:'← 返回'}))
+    expect(await screen.findByRole('heading',{name:'鱼头鱼仔部'})).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link',{name:'切鱼头工钱'}))
+    expect(await screen.findByRole('heading',{name:'切鱼头工钱'})).toBeInTheDocument()
   })
 
   it('shows active workers and excludes inactive workers from wage entry',async()=>{
