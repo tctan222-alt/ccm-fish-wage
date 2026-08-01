@@ -141,8 +141,9 @@ service cloud.firestore {
 
     function validIceWorkRecord(data) {
       return data.workDate is string && validBusinessDate(data.workDate)
-        && data.monthKey is string && data.monthKey.matches('^[0-9]{2}/[0-9]{4}$')
-        && data.dateSortKey is int && data.monthSortKey is int
+        && data.monthKey is string && data.monthKey.matches('^[0-9]{2}/[0-9]{4}$') && data.monthKey == data.workDate[3:10]
+        && data.dateSortKey is int && data.dateSortKey == int(data.workDate[6:10] + data.workDate[3:5] + data.workDate[0:2])
+        && data.monthSortKey is int && data.monthSortKey == int(data.monthKey[3:7] + data.monthKey[0:2])
         && data.vesselId is string && data.vesselCodeSnapshot is string && data.vesselNameSnapshot is string
         && data.factoryIncomingWeightGrams is int && data.factoryIncomingWeightGrams >= 0 && data.factoryIncomingWeightGrams <= 300000 && data.factoryIncomingWeightGrams % 1000 == 0
         && data.iceBoxHalfUnits is int && data.iceBoxHalfUnits >= 0

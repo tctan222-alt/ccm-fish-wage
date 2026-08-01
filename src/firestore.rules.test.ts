@@ -40,6 +40,14 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     await assertFails(setDoc(doc(db, 'iceWorkRecords', record.id), { ...record, lastActionId: 'missing-action', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))
   })
 
+  it('rejects an ice-work record whose month key disagrees with its work date', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), record = { ...createIceWorkRecord({ id: 'ice-wrong-month', workDate: '31/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'u1' }), monthKey: '06/2026', monthSortKey: 202606, lastActionId: 'create-wrong-month', updatedBy: 'u1' }
+    const recordRef = doc(db, 'iceWorkRecords', record.id), actionRef = doc(recordRef, 'actions', record.lastActionId), batch = writeBatch(db)
+    batch.set(recordRef, { ...record, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
+    batch.set(actionRef, { type: 'create', recordId: record.id, reason: null, performedBy: 'u1', performedAt: serverTimestamp(), beforeSnapshot: null, afterSnapshot: record, revision: 1, clientOperationId: record.lastActionId })
+    await assertFails(batch.commit())
+  })
+
   it('rejects direct tampering with a confirmed ice-work amount', async () => {
     const db = environment.authenticatedContext('u1').firestore(), record = createIceWorkRecord({ id: 'ice-confirmed', workDate: '31/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'u1', factoryIncomingWeightGrams: 1_000 }), ref = doc(db, 'iceWorkRecords', record.id)
     await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'iceWorkRecords', record.id), { ...record, status: 'confirmed', revision: 2, lastActionId: 'legacy-confirmed', updatedBy: 'u1', confirmedBy: 'u1', confirmedAt: serverTimestamp(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))

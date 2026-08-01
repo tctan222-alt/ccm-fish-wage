@@ -1,14 +1,27 @@
 import { collection, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { auth, db, firebaseConfigured } from '../firebase'
 import { businessDateFromLegacy } from '../lib/businessDate'
-import { confirmIceWorkRecord, createIceWorkAction, createIceWorkRecord, iceWorkSettlementId, reopenIceWorkRecord, softVoidIceWorkRecord, type IceWorkAction, type IceWorkMonthlySettlement, type IceWorkRecord } from '../lib/iceWork'
+import { confirmIceWorkRecord, createIceWorkAction, createIceWorkRecord, iceWorkSettlementId, reopenIceWorkRecord, softVoidIceWorkRecord, type IceWorkAction, type IceWorkMonthlySettlement, type IceWorkRecord, type LegacyIceWorkValues } from '../lib/iceWork'
 
 function requireUser() { if (!firebaseConfigured) throw new Error('Firebase 尚未设定。'); if (!auth.currentUser) throw new Error('请先登录。'); return auth.currentUser }
 const operationId = (): string => globalThis.crypto?.randomUUID?.() ?? `operation-${Date.now()}-${Math.random().toString(36).slice(2)}`
-const recordFrom = (id: string, data: Record<string, unknown>): IceWorkRecord => {
+const legacyNumber = (value: unknown): number | null => typeof value === 'number' ? value : null
+const legacyStatus = (value: unknown): IceWorkRecord['status'] => value === 'confirmed' || value === 'reopened' || value === 'voided' ? value : 'draft'
+export const iceWorkRecordFromStored = (id: string, data: Record<string, unknown>): IceWorkRecord => {
   if ('recordTotalCents' in data) return { ...data, id } as IceWorkRecord
   const workDate = businessDateFromLegacy(String(data.workDate ?? ''))
-  return createIceWorkRecord({ id, workDate, vesselId: String(data.vesselId ?? ''), vesselCodeSnapshot: String(data.vesselCodeSnapshot ?? ''), vesselNameSnapshot: String(data.vesselCodeSnapshot ?? ''), createdBy: String(data.createdBy ?? ''), notes: String(data.notes ?? '') })
+  const legacyValues: LegacyIceWorkValues = {
+    factoryWoodTubQuantity: legacyNumber(data.factoryWoodTubQuantity), iceBoxQuantity: legacyNumber(data.iceBoxQuantity), hawkerSaleQuantity: legacyNumber(data.hawkerSaleQuantity),
+    oilWorkQuantity: legacyNumber(data.oilWorkQuantity), oilWorkRateCents: legacyNumber(data.oilWorkRateCents), oilWorkAmountCents: legacyNumber(data.oilWorkAmountCents),
+    headmanFeeCents: legacyNumber(data.headmanFeeCents), clerkFeeCents: legacyNumber(data.clerkFeeCents), monthEndSettlement: typeof data.monthEndSettlement === 'boolean' ? data.monthEndSettlement : null,
+  }
+  return {
+    ...createIceWorkRecord({ id, workDate, vesselId: String(data.vesselId ?? ''), vesselCodeSnapshot: String(data.vesselCodeSnapshot ?? ''), vesselNameSnapshot: String(data.vesselCodeSnapshot ?? ''), createdBy: String(data.createdBy ?? ''), notes: String(data.notes ?? '') }),
+    status: legacyStatus(data.status), revision: Number.isInteger(data.revision) ? Number(data.revision) : 1, updatedBy: typeof data.updatedBy === 'string' ? data.updatedBy : undefined,
+    updatedAt: data.updatedAt, voided: data.voided === true, voidReason: typeof data.voidReason === 'string' ? data.voidReason : null,
+    voidedBy: typeof data.voidedBy === 'string' ? data.voidedBy : null, voidedAt: data.voidedAt, createdAt: data.createdAt,
+    legacy: true, legacyValues,
+  }
 }
 
 export async function loadIceWorkRecords(vesselId: string, monthKey: string) {
@@ -18,8 +31,8 @@ export async function loadIceWorkRecords(vesselId: string, monthKey: string) {
     getDocs(query(collection(db, 'iceWorkRecords'), where('vesselId', '==', vesselId), where('monthKey', '==', monthKey))),
     legacyMonthKey ? getDocs(query(collection(db, 'iceWorkRecords'), where('vesselId', '==', vesselId), where('monthKey', '==', legacyMonthKey))) : Promise.resolve(null),
   ])
-  const documents = new Map<string, ReturnType<typeof recordFrom>>()
-  snapshots.flatMap(snapshot => snapshot?.docs ?? []).forEach(item => documents.set(item.id, recordFrom(item.id, item.data())))
+  const documents = new Map<string, ReturnType<typeof iceWorkRecordFromStored>>()
+  snapshots.flatMap(snapshot => snapshot?.docs ?? []).forEach(item => documents.set(item.id, iceWorkRecordFromStored(item.id, item.data())))
   return [...documents.values()].sort((a, b) => b.dateSortKey - a.dateSortKey || b.id.localeCompare(a.id))
 }
 export async function loadIceWorkSettlement(vesselId: string, monthKey: string) { const item = await getDoc(doc(db, 'iceWorkMonthlySettlements', iceWorkSettlementId(vesselId, monthKey))); return item.exists() ? { ...item.data(), id: item.id } as IceWorkMonthlySettlement : null }

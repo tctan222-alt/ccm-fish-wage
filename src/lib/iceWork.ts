@@ -4,6 +4,12 @@ export type IceWorkStatus = 'draft' | 'confirmed' | 'reopened' | 'voided'
 export type IceWorkActionType = 'create' | 'update' | 'confirm' | 'reopen' | 'void'
 export type IceWorkSettlementActionType = 'create' | 'confirm' | 'reopen' | 'recalculate' | 'void'
 
+export interface LegacyIceWorkValues {
+  factoryWoodTubQuantity: number | null; iceBoxQuantity: number | null; hawkerSaleQuantity: number | null
+  oilWorkQuantity: number | null; oilWorkRateCents: number | null; oilWorkAmountCents: number | null
+  headmanFeeCents: number | null; clerkFeeCents: number | null; monthEndSettlement: boolean | null
+}
+
 export const FACTORY_INCOMING_RATE_CENTS_PER_KG = 10
 export const ICE_BOX_RATE_CENTS_PER_FULL_BOX = 3_000
 export const ICE_BOX_RATE_CENTS_PER_HALF_UNIT = 1_500
@@ -28,6 +34,7 @@ export interface IceWorkRecord {
   lastActionId?: string
   confirmedBy?: string | null; confirmedAt?: unknown | null; reopenedBy?: string | null; reopenedAt?: unknown | null; reopenReason?: string | null
   voided: boolean; voidReason: string | null; voidedBy: string | null; voidedAt?: unknown | null
+  legacy?: boolean; legacyValues?: LegacyIceWorkValues
 }
 
 export interface IceWorkMonthlySettlement {
@@ -145,7 +152,7 @@ export function softVoidIceWorkRecord(record: IceWorkRecord, reason: string, use
 }
 
 export function summarizeIceWorkMonth(records: IceWorkRecord[]) {
-  const included = records.filter(record => record.status === 'confirmed' && !record.voided)
+  const included = records.filter(record => record.status === 'confirmed' && !record.voided && !record.legacy)
   const total = <K extends keyof IceWorkRecord>(key: K) => included.reduce((sum, item) => sum + Number(item[key] ?? 0), 0)
   const factoryIncomingAmountCents = total('factoryIncomingAmountCents'), iceBoxAmountCents = total('iceBoxAmountCents')
   const dieselAmountCents = total('dieselAmountCents'), hawkerSaleAmountCents = total('hawkerSaleAmountCents')

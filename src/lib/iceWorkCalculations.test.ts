@@ -39,4 +39,9 @@ describe('冰工计算和月结', () => {
       id: 'v978_202607', headmanFeeCents: 50_000, clerkFeeCents: 25_000, finalTotalCents: 75_010,
     })
   })
+
+  it('does not pretend a legacy record has a recalculated amount in the monthly preview', () => {
+    const legacy = { ...createIceWorkRecord({ id: 'legacy', workDate: '01/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'admin' }), status: 'confirmed' as const, legacy: true }
+    expect(summarizeIceWorkMonth([legacy])).toMatchObject({ validRecordCount: 0, recordsTotalCents: 0 })
+  })
 })
