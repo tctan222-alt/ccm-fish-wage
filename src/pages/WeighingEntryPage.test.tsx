@@ -1,7 +1,7 @@
 import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
-import { applyEntryCreated,DEFAULT_FISH_SPECIES,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
+import { applyEntryCreated,DEFAULT_FISH_SPECIES,newWeighingSession,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
@@ -59,13 +59,95 @@ describe('iPhone 现场称重单页',()=>{
     expect(screen.getAllByText('金线').length).toBeGreaterThan(1)
     expect(screen.getAllByText('80 kg').length).toBeGreaterThan(0)
     expect(screen.getByText('1 篮')).toBeInTheDocument()
-    expect((await store.getEntries('session-v978-20260730'))).toHaveLength(1)
+    expect((await store.getEntries('session-v978-20260730'))).toEqual([expect.objectContaining({receiptNoSnapshot:'FH-978-30072026-01'})])
+  })
+
+  it('切换船号会切换当天同产品的草稿单，不会混入或改写另一艘船的记录',async()=>{
+    const store=createMemoryWeighingStore()
+    let sessionNo=0,entryNo=0
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?`session-${++sessionNo}`:`entry-${++entryNo}`}/></MemoryRouter>)
+
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg')
+
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).not.toHaveTextContent('80 kg'))
+    await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(async()=>expect(await store.getEntries('session-2')).toHaveLength(1))
+
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg'))
+    expect(screen.getByRole('region',{name:'现场汇总'})).not.toHaveTextContent('60 kg')
+    const firstSession=await store.getSession('session-1')
+    expect(firstSession).toMatchObject({vesselId:'v978',vesselCodeSnapshot:'978',productType:'fish_head'})
+    expect((await store.getEntries('session-1'))[0]).toMatchObject({vesselId:'v978',vesselCodeSnapshot:'978'})
+  })
+
+  it('鱼仔也按船号、日期和产品类型独立恢复草稿汇总',async()=>{
+    const store=createMemoryWeighingStore()
+    let sessionNo=0,entryNo=0
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?`meal-session-${++sessionNo}`:`meal-entry-${++entryNo}`}/></MemoryRouter>)
+
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'10'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
+    expect(screen.getByRole('region',{name:'现场汇总'})).not.toHaveTextContent('10 kg')
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'20'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(async()=>expect(await store.getEntries('meal-session-2')).toHaveLength(1))
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('10 kg'))
+    expect(await store.getSession('meal-session-1')).toMatchObject({productType:'fish_meal',vesselId:'v978',sessionCode:'FM-978-30072026-01'})
+  })
+
+  it('已结单的当前船单会明确锁定现场录入，而不会静默新建或混入草稿',async()=>{
+    const settled={...newWeighingSession({id:'settled-978',productType:'fish_head',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'978',weighingDate:'2026-07-30'}),status:'processed' as const}
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      closedSessionLoader={async()=>({session:settled,entries:[]})} offlineStore={createMemoryWeighingStore()} remoteSync={remoteSync()}
+      today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}/></MemoryRouter>)
+    expect(await screen.findByText('这张单已结单。本版暂未支持同船同日新建第二张单，请在后台处理。')).toBeInTheDocument()
+    expect(screen.getByLabelText('重量（kg）')).toBeDisabled()
+    expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
+  })
+
+  it('延迟的旧草稿加载不会覆盖刚确认保存的第一篮',async()=>{
+    const store=createMemoryWeighingStore()
+    let release:(value:null)=>void=()=>{}
+    const delayed=new Promise<null>(resolve=>{release=resolve})
+    const loader=vi.fn(()=>delayed)
+    render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES}
+      openSessionLoader={loader} offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'race-session':`${kind}-race`}/></MemoryRouter>)
+    const weight=await screen.findByLabelText('重量（kg）')
+    await waitFor(()=>expect(loader).toHaveBeenCalledOnce())
+    fireEvent.change(weight,{target:{value:'80'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    release(null)
+    await waitFor(async()=>expect(await store.getEntries('race-session')).toHaveLength(1))
+    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg')
   })
 
   it('支持 Enter 确认，并让鱼仔总重保留品质及 remark 而不增加篮数',async()=>{
     const {store}=setup()
     await screen.findByLabelText('重量（kg）')
     fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
+    await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button',{name:'包鱼仔'}))
     fireEvent.click(screen.getByRole('button',{name:'总重量'}))
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'3568'}})

@@ -29,6 +29,7 @@ export interface FishSpeciesRecord {
 export interface WeighingSession {
   id:string
   sessionCode:string
+  productType?:WeighingProductType
   weighingDate:string
   monthKey:string
   dateSortKey?:number
@@ -69,6 +70,8 @@ export interface WeighingEntry {
   id:string
   clientEntryId:string
   sessionId:string
+  /** New records retain the originating field-slip number; legacy rows may not have one. */
+  receiptNoSnapshot?:string
   weighingDate?:string
   businessDate?:string
   monthKey?:string
@@ -106,6 +109,7 @@ export interface BuildWeighingEntryInput {
   id:string
   clientEntryId?:string
   sessionId:string
+  receiptNoSnapshot?:string
   weighingDate?:string
   monthKey?:string
   vesselId?:string
@@ -217,6 +221,7 @@ export function buildWeighingEntry(input:BuildWeighingEntryInput):WeighingEntry 
     id:input.id,
     clientEntryId:input.clientEntryId??input.id,
     sessionId:input.sessionId,
+    ...(input.receiptNoSnapshot?{receiptNoSnapshot:input.receiptNoSnapshot}:{}),
     ...(input.weighingDate?(()=>{const businessDate=businessDateFromLegacy(input.weighingDate),monthKey=input.monthKey??monthKeyFromBusinessDate(businessDate);return {
       weighingDate:businessDate,businessDate,monthKey,dateSortKey:sortKeyFromBusinessDate(businessDate),monthSortKey:monthSortKeyFromMonthKey(monthKey),
       vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''
@@ -351,6 +356,7 @@ export function buildReceiptLinesFromWeighing(sessionId:string,entries:WeighingE
 
 export function newWeighingSession(input:{
   id:string
+  productType:WeighingProductType
   vesselId:string
   vesselCodeSnapshot:string
   vesselNameSnapshot:string
@@ -363,7 +369,8 @@ export function newWeighingSession(input:{
   const monthKey=monthKeyFromBusinessDate(weighingDate)
   return {
     id:input.id,
-    sessionCode:`${input.vesselCodeSnapshot}-${weighingDate.replaceAll('/','')}-${String(sequence).padStart(2,'0')}`,
+    sessionCode:`${input.productType==='fish_head'?'FH':'FM'}-${input.vesselCodeSnapshot}-${weighingDate.replaceAll('/','')}-${String(sequence).padStart(2,'0')}`,
+    productType:input.productType,
     weighingDate,
     monthKey,
     dateSortKey:sortKeyFromBusinessDate(weighingDate),
@@ -388,6 +395,10 @@ export function newWeighingSession(input:{
     revision:1,
     voidReason:null,
   }
+}
+
+export function weighingDraftKey(productType:WeighingProductType,weighingDate:string,vesselId:string){
+  return `current:${productType}:${businessDateFromLegacy(weighingDate)}:${vesselId}`
 }
 
 function entryAggregate(entry:WeighingEntry,multiplier=1) {

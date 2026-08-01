@@ -99,20 +99,35 @@ describe('现场称重电脑端复核',()=>{
     expect(screen.queryByRole('button',{name:'生成草稿采购单'})).not.toBeInTheDocument()
     expect(screen.getByText('已处理，原始称重记录继续永久保留。')).toBeInTheDocument()
   })
+
+  it('后台修改本单是受控动作，并保留修改原因而不是现场切换船号',async()=>{
+    const updater=vi.fn().mockResolvedValue({...session,productType:'fish_head' as const,sessionCode:'FH-978-30072026-01'})
+    renderReview(undefined,{...session,productType:'fish_head',sessionCode:'FH-978-30072026-01'},updater)
+    const user=userEvent.setup()
+    await user.click(await screen.findByRole('button',{name:'后台修改本单'}))
+    await user.clear(screen.getByLabelText('修改原因'))
+    await user.type(screen.getByLabelText('修改原因'),'修正手写单号')
+    await user.click(screen.getByRole('button',{name:'保存后台修正'}))
+    await waitFor(()=>expect(updater).toHaveBeenCalledOnce())
+    expect(updater.mock.calls[0][0]).toMatchObject({sessionId:'ws1',sessionCode:'FH-978-30072026-01',reason:'修正手写单号',vessel:{id:'v978'}})
+  })
 })
 
 function renderReview(
   processor=vi.fn().mockResolvedValue({receiptId:'r1',receiptCode:'RC-12345678',alreadyProcessed:false}),
   current=session,
+  sessionUpdater=vi.fn().mockResolvedValue(current),
 ){
   render(<MemoryRouter initialEntries={['/weighing/ws1/review']}><Routes>
     <Route path="/weighing/:sessionId/review" element={<WeighingReviewPage
       bundleLoader={async()=>({session:current,entries,actions:[{id:'a1',type:'entry_void',entryId:'e5',reason:'重复',
         performedAt:null,beforeSnapshot:{revision:1,voided:false},afterSnapshot:{revision:2,voided:true}}]})}
       supplierLoader={async()=>[supplier]}
+      vesselLoader={async()=>[{id:'v978',vesselCode:'978',displayName:'船 978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:1,notes:''}]}
       processor={processor}
       reopener={vi.fn().mockResolvedValue({...current,status:'weighing'})}
       voider={vi.fn().mockResolvedValue({...current,status:'voided'})}
+      sessionUpdater={sessionUpdater}
     />}/>
   </Routes></MemoryRouter>)
 }

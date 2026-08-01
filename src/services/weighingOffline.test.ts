@@ -9,6 +9,7 @@ import {
 
 const session=()=>newWeighingSession({
   id:'session-1',
+  productType:'fish_head',
   vesselId:'v978',
   vesselCodeSnapshot:'978',
   vesselNameSnapshot:'978',

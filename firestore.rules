@@ -505,7 +505,7 @@ service cloud.firestore {
 
     function validWeighingSession(data) {
       return data.keys().hasOnly([
-          'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'externalSlipNo',
+          'sessionCode', 'productType', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'externalSlipNo',
           'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot', 'status',
           'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams',
           'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
@@ -527,6 +527,7 @@ service cloud.firestore {
           'voidedBy', 'voidedAt', 'lastActionId'
         ])
         && data.sessionCode is string && data.sessionCode.size() >= 5 && data.sessionCode.size() <= 80
+        && (!('productType' in data) || data.productType in ['fish_head', 'fish_meal'])
         && data.weighingDate is string
         && ((data.weighingDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.monthKey == data.weighingDate[0:7])
           || (data.weighingDate.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$') && data.monthKey == data.weighingDate[3:10]))
@@ -564,7 +565,7 @@ service cloud.firestore {
 
     function validWeighingEntry(data) {
       return data.keys().hasOnly([
-          'clientEntryId', 'sessionId', 'weighingDate', 'businessDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'vesselId', 'vesselCodeSnapshot', 'productType', 'fishSpeciesId',
+          'clientEntryId', 'sessionId', 'receiptNoSnapshot', 'weighingDate', 'businessDate', 'monthKey', 'dateSortKey', 'monthSortKey', 'vesselId', 'vesselCodeSnapshot', 'productType', 'fishSpeciesId',
           'fishSpeciesCodeSnapshot', 'fishSpeciesNameSnapshot', 'fishMealQuality',
           'displayNameSnapshot', 'entryMode', 'sequenceNo', 'weightGrams', 'unitPriceCentsPerKg', 'amountCents', 'remark',
           'recordedAtClient', 'recordedAt', 'recordedBy', 'voided', 'voidReason',
@@ -579,6 +580,7 @@ service cloud.firestore {
         ])
         && data.clientEntryId is string && data.clientEntryId.size() > 0
         && data.sessionId is string && data.sessionId.size() > 0
+        && (!('receiptNoSnapshot' in data) || (data.receiptNoSnapshot is string && data.receiptNoSnapshot.size() >= 5 && data.receiptNoSnapshot.size() <= 80))
         && (!('weighingDate' in data) || (data.weighingDate is string
           && ((data.weighingDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$') && data.monthKey == data.weighingDate[0:7])
             || (data.weighingDate.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$') && data.monthKey == data.weighingDate[3:10]))
@@ -638,7 +640,7 @@ service cloud.firestore {
           'type', 'sessionId', 'entryId', 'reason', 'performedBy', 'performedAt',
           'beforeSnapshot', 'afterSnapshot', 'clientOperationId'
         ])
-        && data.type in ['create', 'entry_create', 'entry_update', 'entry_void', 'complete', 'reopen', 'session_void', 'process', 'sync_conflict']
+        && data.type in ['create', 'entry_create', 'entry_update', 'entry_void', 'complete', 'reopen', 'session_void', 'session_update', 'process', 'sync_conflict']
         && data.sessionId is string
         && (data.entryId == null || data.entryId is string)
         && (data.reason == null || (data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100))
@@ -701,6 +703,21 @@ service cloud.firestore {
           'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'processedBy',
           'processedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
         ])
+        && request.resource.data.revision == resource.data.revision + 1
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
+    }
+
+    function validWeighingControlledMetadataUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey',
+          'externalSlipNo', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
+          'notes', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
+        ])
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.productType == resource.data.productType
         && request.resource.data.revision == resource.data.revision + 1
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
@@ -1334,6 +1351,7 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn() && validWeighingSession(request.resource.data)
         && request.resource.data.status == 'weighing'
+        && request.resource.data.productType in ['fish_head', 'fish_meal']
         && request.resource.data.revision == 2
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time
@@ -1355,6 +1373,10 @@ service cloud.firestore {
             sessionId,
             getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
           )).data.sessionId == sessionId
+        && getAfter(weighingEntryPath(
+            sessionId,
+            getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+          )).data.productType == request.resource.data.productType
         && request.resource.data.fishHeadBasketCount
           == (getAfter(weighingEntryPath(
               sessionId,
@@ -1414,6 +1436,36 @@ service cloud.firestore {
               sessionId,
               getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
             )).data.entryMode == 'individual' ? 1 : 0);
+      allow update: if signedIn() && validWeighingSession(request.resource.data)
+        && validWeighingControlledMetadataUpdate()
+        && resource.data.status in ['weighing', 'completed']
+        && validLinkedWeighingAction(sessionId, 'session_update')
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId == null
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.sessionCode == resource.data.sessionCode
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.weighingDate == resource.data.weighingDate
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.monthKey == resource.data.monthKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.dateSortKey == resource.data.dateSortKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.monthSortKey == resource.data.monthSortKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselId == resource.data.vesselId
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselNameSnapshot == resource.data.vesselNameSnapshot
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.externalSlipNo == resource.data.externalSlipNo
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.notes == resource.data.notes
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.sessionCode == request.resource.data.sessionCode
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.weighingDate == request.resource.data.weighingDate
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.monthKey == request.resource.data.monthKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.dateSortKey == request.resource.data.dateSortKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.monthSortKey == request.resource.data.monthSortKey
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselId == request.resource.data.vesselId
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselCodeSnapshot == request.resource.data.vesselCodeSnapshot
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselNameSnapshot == request.resource.data.vesselNameSnapshot
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.externalSlipNo == request.resource.data.externalSlipNo
+        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.notes == request.resource.data.notes
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode
+          == request.resource.data.vesselCodeSnapshot
+        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.displayName
+          == request.resource.data.vesselNameSnapshot;
       allow update: if signedIn() && validWeighingSession(request.resource.data)
         && validWeighingIdentityUnchanged()
         && (
@@ -1521,12 +1573,18 @@ service cloud.firestore {
               && request.resource.data.vesselId == getAfter(weighingSessionPath(sessionId)).data.vesselId
               && request.resource.data.vesselCodeSnapshot == getAfter(weighingSessionPath(sessionId)).data.vesselCodeSnapshot
             ))
+            && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
+              || request.resource.data.productType == getAfter(weighingSessionPath(sessionId)).data.productType)
+            && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
+              || request.resource.data.receiptNoSnapshot == getAfter(weighingSessionPath(sessionId)).data.sessionCode)
             && getAfter(weighingSessionPath(sessionId)).data.lastActionId == request.resource.data.lastActionId
           && validLinkedWeighingAction(sessionId, 'entry_create')
           && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId == entryId;
         allow update: if signedIn() && validWeighingEntry(request.resource.data)
           && request.resource.data.clientEntryId == resource.data.clientEntryId
           && request.resource.data.sessionId == resource.data.sessionId
+          && ((!('receiptNoSnapshot' in resource.data) && !('receiptNoSnapshot' in request.resource.data))
+            || request.resource.data.receiptNoSnapshot == resource.data.receiptNoSnapshot)
           && request.resource.data.entryMode == resource.data.entryMode
           && request.resource.data.sequenceNo == resource.data.sequenceNo
           && request.resource.data.recordedAtClient == resource.data.recordedAtClient

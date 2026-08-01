@@ -1,6 +1,7 @@
-import { useEffect,useMemo,useState } from 'react'
+import { useEffect,useMemo,useState,type FormEvent } from 'react'
 import { Link,useParams } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
+import type { Vessel } from '../lib/purchasing'
 import { rmInputToCentsPerKg } from '../lib/purchasing'
 import {
   buildReceiptLinesFromWeighing,formatMalaysiaDate,formatWeightKg,groupWeighingEntries,
@@ -8,30 +9,34 @@ import {
 } from '../lib/weighing'
 import { loadActiveSuppliers } from '../services/businessPartners'
 import {
-  loadWeighingBundle,processWeighingSessionToReceipt,reopenWeighingSession,voidWeighingSession,
+  loadWeighingBundle,processWeighingSessionToReceipt,reopenWeighingSession,updateWeighingSessionDetails,voidWeighingSession,
   type WeighingBundle,
 } from '../services/weighing'
+import { loadVessels } from '../services/purchaseMasterData'
 
 type Processor=typeof processWeighingSessionToReceipt
 
 export function WeighingReviewPage({
   bundleLoader=loadWeighingBundle,supplierLoader=loadActiveSuppliers,processor=processWeighingSessionToReceipt,
-  reopener=reopenWeighingSession,voider=voidWeighingSession,
+  reopener=reopenWeighingSession,voider=voidWeighingSession,vesselLoader=loadVessels,sessionUpdater=updateWeighingSessionDetails,
 }:{
   bundleLoader?:(id:string)=>Promise<WeighingBundle>
   supplierLoader?:()=>Promise<BusinessPartner[]>
   processor?:Processor
   reopener?:(id:string,reason:string)=>Promise<WeighingSession>
   voider?:(id:string,reason:string)=>Promise<WeighingSession>
+  vesselLoader?:()=>Promise<Vessel[]>
+  sessionUpdater?:typeof updateWeighingSessionDetails
 }){
   const {sessionId=''}=useParams()
   const [bundle,setBundle]=useState<WeighingBundle|null>(null),[suppliers,setSuppliers]=useState<BusinessPartner[]>([])
   const [supplierId,setSupplierId]=useState(''),[prices,setPrices]=useState<Record<string,string>>({})
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const [created,setCreated]=useState<{receiptId:string;receiptCode:string}|null>(null)
-  useEffect(()=>{Promise.all([bundleLoader(sessionId),supplierLoader()]).then(([loaded,partners])=>{
-    setBundle(loaded);setSuppliers(partners)
-  }).catch(()=>setError('无法载入现场称重单。'))},[sessionId,bundleLoader,supplierLoader])
+  const [vessels,setVessels]=useState<Vessel[]>([]),[editingSession,setEditingSession]=useState(false)
+  useEffect(()=>{Promise.all([bundleLoader(sessionId),supplierLoader(),vesselLoader()]).then(([loaded,partners,loadedVessels])=>{
+    setBundle(loaded);setSuppliers(partners);setVessels(loadedVessels.filter(item=>item.active))
+  }).catch(()=>setError('无法载入现场称重单。'))},[sessionId,bundleLoader,supplierLoader,vesselLoader])
   const groups=useMemo(()=>groupWeighingEntries(bundle?.entries??[]),[bundle])
   if(!bundle)return <main><p className={error?'error':'notice'} role={error?'alert':undefined}>{error||'正在载入现场称重单…'}</p></main>
   const {session,entries}=bundle
@@ -59,6 +64,11 @@ export function WeighingReviewPage({
       setMessage(kind==='reopen'?'现场单已重开。':'现场单已作废。')
     }catch(problem){setError(problem instanceof Error?problem.message:'操作失败。')}
     finally{setBusy(false)}
+  }
+  async function saveSession(input:{sessionCode:string;weighingDate:string;vessel:Vessel;externalSlipNo:string;notes:string;reason:string}){
+    try{setBusy(true);setError('');const next=await sessionUpdater({sessionId:session.id,...input})
+      setBundle(current=>current?{...current,session:next}:current);setEditingSession(false);setMessage('后台修正已保存，并保留审计记录。')
+    }catch(problem){setError(problem instanceof Error?problem.message:'无法保存后台修正。')}finally{setBusy(false)}
   }
   return <main className="weighing-review-page"><header><p className="eyebrow">CCM Fishery</p><h1>称重复核</h1>
     <Link className="page-link" to="/weighing">← 现场称重单</Link></header>
@@ -102,7 +112,29 @@ export function WeighingReviewPage({
       <button type="button" disabled={busy} onClick={()=>void changeStatus('reopen')}>重开称重</button>
       <button className="danger-action" type="button" disabled={busy} onClick={()=>void changeStatus('void')}>作废现场单</button>
     </section>}
+    {session.status!=='processed'&&session.status!=='voided'&&<section className="weighing-review-actions">
+      <button type="button" disabled={busy} onClick={()=>setEditingSession(true)}>后台修改本单</button>
+      {session.status==='weighing'&&<Link className="page-link" to={`/weighing/${session.id}`}>修改原始篮记录</Link>}
+    </section>}
+    {editingSession&&<SessionEditDialog session={session} vessels={vessels} busy={busy} close={()=>setEditingSession(false)} save={saveSession}/>}
   </main>
+}
+
+function SessionEditDialog({session,vessels,busy,close,save}:{session:WeighingSession;vessels:Vessel[];busy:boolean;close:()=>void;save:(input:{sessionCode:string;weighingDate:string;vessel:Vessel;externalSlipNo:string;notes:string;reason:string})=>Promise<void>}){
+  const [sessionCode,setSessionCode]=useState(session.sessionCode),[weighingDate,setWeighingDate]=useState(session.weighingDate)
+  const [vesselId,setVesselId]=useState(session.vesselId),[externalSlipNo,setExternalSlipNo]=useState(session.externalSlipNo),[notes,setNotes]=useState(session.notes),[reason,setReason]=useState('后台资料修正')
+  const vessel=vessels.find(item=>item.id===vesselId)
+  function submit(event:FormEvent){event.preventDefault();if(vessel)void save({sessionCode,weighingDate,vessel,externalSlipNo,notes,reason})}
+  return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true" aria-label="后台修改本单"><h2>后台修改本单</h2>
+    <p>这是受控后台动作，不等同于现场页面切换船号；所有修改都会保留审计记录。</p><form className="master-form" onSubmit={submit}>
+      <label>现场单号<input aria-label="现场单号" value={sessionCode} maxLength={80} onChange={event=>setSessionCode(event.target.value)}/></label>
+      <label>日期<input aria-label="日期" value={weighingDate} onChange={event=>setWeighingDate(event.target.value)}/></label>
+      <label>船号<select aria-label="后台船号" value={vesselId} onChange={event=>setVesselId(event.target.value)}>{vessels.map(item=><option value={item.id} key={item.id}>{item.vesselCode}</option>)}</select></label>
+      <label>手写单号<input aria-label="手写单号" value={externalSlipNo} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
+      <label>备注<textarea aria-label="后台备注" value={notes} onChange={event=>setNotes(event.target.value)}/></label>
+      <label>修改原因<input aria-label="修改原因" value={reason} minLength={3} maxLength={100} onChange={event=>setReason(event.target.value)}/></label>
+      <button className="primary-action" disabled={busy||!vessel}>保存后台修正</button><button type="button" disabled={busy} onClick={close}>取消</button>
+    </form></section></div>
 }
 
 function RawEntry({entry}:{entry:WeighingEntry}){
