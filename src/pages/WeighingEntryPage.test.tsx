@@ -1,7 +1,7 @@
 import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
-import { applyEntryCreated,DEFAULT_FISH_SPECIES,type WeighingEntry,type WeighingSession } from '../lib/weighing'
+import { applyEntryCreated,DEFAULT_FISH_SPECIES,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
@@ -31,15 +31,15 @@ describe('iPhone 现场称重单页',()=>{
   it('在同一页显示中文船号、日期、产品、16 个鱼名、kg 和确认',async()=>{
     setup()
     expect(await screen.findByRole('heading',{name:'现场称重'})).toBeInTheDocument()
-    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
-    for(const vessel of vessels)expect(screen.getByRole('button',{name:vessel.vesselCode})).toBeInTheDocument()
+    expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978')
+    for(const vessel of vessels)expect(screen.getByRole('option',{name:vessel.vesselCode})).toBeInTheDocument()
     expect(screen.getByText('30/07/2026')).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'鱼头'})).toHaveAttribute('aria-pressed','true')
     const species=screen.getByRole('group',{name:'鱼名'})
-    expect(within(species).getAllByRole('button')).toHaveLength(16)
+    expect(within(species).getAllByRole('button')).toHaveLength(17)
     expect(within(species).getByRole('button',{name:'金线'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByLabelText('重量（kg）')).toBeInTheDocument()
-    expect(screen.getByRole('button',{name:'确认'})).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'确认加入'})).toBeInTheDocument()
     expect(screen.getByLabelText('route')).toHaveTextContent('/weighing/new')
     expect(document.body).not.toHaveTextContent('fish_head')
     expect(document.body).not.toHaveTextContent('jin_xian')
@@ -49,7 +49,7 @@ describe('iPhone 现场称重单页',()=>{
     const {store}=setup()
     const weight=await screen.findByLabelText('重量（kg）')
     fireEvent.change(weight,{target:{value:'80'}})
-    fireEvent.click(screen.getByRole('button',{name:'确认'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     expect(await screen.findByText('已保存')).toBeInTheDocument()
     expect(weight).toHaveValue('')
@@ -87,7 +87,7 @@ describe('iPhone 现场称重单页',()=>{
     }))
     const {store}=setup(sync)
     fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'70'}})
-    const confirm=screen.getByRole('button',{name:'确认'})
+    const confirm=screen.getByRole('button',{name:'确认加入'})
     fireEvent.click(confirm);fireEvent.click(confirm)
     expect(confirm).toBeDisabled()
     await waitFor(async()=>expect(await store.getEntries('session-v978-20260730')).toHaveLength(1))
@@ -100,13 +100,13 @@ describe('iPhone 现场称重单页',()=>{
   it('完成称重后锁定普通输入',async()=>{
     setup()
     fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'60'}})
-    fireEvent.click(screen.getByRole('button',{name:'确认'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')
     fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
     fireEvent.click(screen.getByRole('button',{name:'确认完成'}))
     await waitFor(()=>expect(screen.getByText('已完成，等待同步')).toBeInTheDocument())
     expect(screen.getByLabelText('重量（kg）')).toBeDisabled()
-    expect(screen.getByRole('button',{name:'确认'})).toBeDisabled()
+    expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
   })
 
   it('曾在线载入后，离线重开仍可使用缓存的船号和鱼名继续录入',async()=>{
@@ -122,55 +122,121 @@ describe('iPhone 现场称重单页',()=>{
       speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null}
       offlineStore={createMemoryWeighingStore(shared)} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
-    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByText('目前离线，已使用本机船号和鱼名资料。')).toBeInTheDocument()
+    expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978')
+    expect(screen.getByRole('alert')).toHaveTextContent('正在显示本机默认资料')
   })
 
-  it('鱼头采购不显示鱼名下拉或 key-in，并可把自定义鱼名和单价保存到当前单',async()=>{
+  it('空鱼名主资料首次确认会等待默认鱼名建立，再保存每篮记录',async()=>{
     const store=createMemoryWeighingStore()
-    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" requireUnitPrice pageTitle="鱼头购入"
+    let finishInitialization:(items:FishSpeciesRecord[])=>void=()=>{}
+    const initialized=new Promise<FishSpeciesRecord[]>(resolve=>{finishInitialization=resolve})
+    const speciesInitializer=vi.fn(()=>initialized)
+    render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>[]}
+      speciesInitializer={speciesInitializer} openSessionLoader={async()=>null} offlineStore={store} remoteSync={remoteSync()}
+      today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
+
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80.125'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(()=>expect(speciesInitializer).toHaveBeenCalledTimes(2))
+    finishInitialization(DEFAULT_FISH_SPECIES)
+
+    await screen.findByText('已保存')
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({
+      fishSpeciesId:'jin_xian',displayNameSnapshot:'金线',weightGrams:80125,
+    })
+  })
+
+  it('鱼头采购不显示鱼名下拉、key-in 或现场价钱，并可把自定义鱼名保存到当前单',async()=>{
+    const store=createMemoryWeighingStore()
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
       vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
-      idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
+      speciesCreator={async item=>item} idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
     expect(await screen.findByRole('heading',{name:'鱼头购入'})).toBeInTheDocument()
     expect(screen.queryByRole('group',{name:'产品类型'})).not.toBeInTheDocument()
     expect(screen.queryByRole('combobox',{name:'鱼名'})).not.toBeInTheDocument()
-    expect(within(screen.getByRole('group',{name:'鱼名'})).getAllByRole('button')).toHaveLength(16)
-    fireEvent.click(screen.getByRole('button',{name:'＋自定义鱼名'}))
+    expect(within(screen.getByRole('group',{name:'鱼名'})).getAllByRole('button')).toHaveLength(17)
+    fireEvent.click(screen.getByRole('button',{name:'其他'}))
     fireEvent.change(screen.getByLabelText('自定义鱼名'),{target:{value:'特别鱼'}})
-    fireEvent.change(screen.getByLabelText('自定义单价（RM/kg）'),{target:{value:'12.34'}})
-    fireEvent.click(screen.getByRole('button',{name:'用于当前单'}))
+    fireEvent.click(screen.getByRole('button',{name:'建立并选择'}))
     expect(await screen.findByRole('button',{name:'特别鱼'})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByLabelText('单价（RM/kg）')).toHaveValue('12.34')
+    expect(screen.queryByText(/单价|金额|RM/)).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'2.5'}})
-    fireEvent.click(screen.getByRole('button',{name:'确认'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')
-    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'30/07/2026',monthKey:'07/2026',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500,unitPriceCentsPerKg:1234,amountCents:3085})
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'30/07/2026',monthKey:'07/2026',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500})
+    expect((await store.getEntries('session-v978-20260730'))[0]).not.toHaveProperty('unitPriceCentsPerKg')
   })
 
-  it('keeps fish-meal bucket and bag prices separate and does not invent baskets for total weight',async()=>{
+  it('鱼仔逐篮和总重不保存价钱，也不会为总重制造虚假篮数',async()=>{
     const store=createMemoryWeighingStore()
-    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" requireUnitPrice pageTitle="鱼仔购入"
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
       vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-${Math.random()}`}/></MemoryRouter>)
     await screen.findByRole('heading',{name:'鱼仔购入'})
-    fireEvent.change(screen.getByLabelText('单价（RM/kg）'),{target:{value:'1.20'}})
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'10'}})
-    fireEvent.click(screen.getByRole('button',{name:'确认'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')
     fireEvent.click(screen.getByRole('button',{name:'包鱼仔'}))
     fireEvent.click(screen.getByRole('button',{name:'总重量'}))
-    fireEvent.change(screen.getByLabelText('单价（RM/kg）'),{target:{value:'1.50'}})
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'48'}})
     fireEvent.change(screen.getByLabelText('备注'),{target:{value:'总共48包'}})
-    fireEvent.click(screen.getByRole('button',{name:'确认'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('session-v978-20260730')).toHaveLength(2))
     expect(await store.getEntries('session-v978-20260730')).toEqual(expect.arrayContaining([
-      expect.objectContaining({fishMealQuality:'bucket',entryMode:'individual',sequenceNo:1,unitPriceCentsPerKg:120,amountCents:1200}),
-      expect.objectContaining({fishMealQuality:'bag',entryMode:'total',sequenceNo:null,weightGrams:48000,unitPriceCentsPerKg:150,amountCents:7200,remark:'总共48包'}),
+      expect.objectContaining({fishMealQuality:'bucket',entryMode:'individual',sequenceNo:1}),
+      expect.objectContaining({fishMealQuality:'bag',entryMode:'total',sequenceNo:null,weightGrams:48000,remark:'总共48包'}),
     ]))
     expect(screen.getByText('1 篮')).toBeInTheDocument()
+  })
+
+  it('在鱼头重量下显示十进制 keypad，并以相同确认逻辑保存 grams',async()=>{
+    const {store}=setup()
+    await screen.findByLabelText('重量（kg）')
+    for(const label of ['8','0','.','5'])fireEvent.click(screen.getByRole('button',{name:label}))
+    expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
+    fireEvent.click(screen.getByRole('button',{name:'.'}))
+    expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weightGrams:80500})
+    expect(screen.getByLabelText('重量（kg）')).toHaveValue('')
+  })
+
+  it('鱼仔逐篮和总重量都保留同一组十进制 keypad',async()=>{
+    setup()
+    await screen.findByLabelText('重量（kg）')
+    fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
+    const keypad=screen.getByRole('group',{name:'重量数字键盘'})
+    for(const label of ['0','1','2','3','4','5','6','7','8','9','.','⌫','清空','确认加入']){
+      expect(within(keypad).getByRole('button',{name:label})).toBeInTheDocument()
+    }
+    fireEvent.click(screen.getByRole('button',{name:'总重量'}))
+    expect(screen.getByRole('group',{name:'重量数字键盘'})).toBeInTheDocument()
+  })
+
+  it('非法重量保留在输入框并显示中文错误',async()=>{
+    setup()
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80.1234'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('最多三位小数')
+    expect(weight).toHaveValue('80.1234')
+  })
+
+  it('现场汇总只显示鱼名、重量和篮数，不显示价钱或金额',async()=>{
+    setup()
+    fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'80.125'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    const summary=screen.getByRole('region',{name:'现场汇总'})
+    expect(summary).toHaveTextContent('金线')
+    expect(summary).toHaveTextContent('80.125 kg')
+    expect(summary).toHaveTextContent('1 篮')
+    expect(summary).not.toHaveTextContent(/RM|单价|金额/)
   })
 })
 

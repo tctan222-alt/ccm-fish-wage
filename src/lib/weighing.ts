@@ -70,7 +70,10 @@ export interface WeighingEntry {
   clientEntryId:string
   sessionId:string
   weighingDate?:string
+  businessDate?:string
   monthKey?:string
+  dateSortKey?:number
+  monthSortKey?:number
   vesselId?:string
   vesselCodeSnapshot?:string
   productType:WeighingProductType
@@ -167,11 +170,12 @@ export const MAX_INDIVIDUAL_WEIGHT_GRAMS = 300_000
 export const MAX_TOTAL_WEIGHT_GRAMS = 100_000_000
 
 export function kgInputToGrams(input:string, mode:WeighingEntryMode) {
-  const clean=input.trim()
-  if(!/^\d{1,6}(?:\.\d{1,3})?$/.test(clean)){
+  const clean=input.trim().replace(',','.')
+  const normalized=clean.startsWith('.')?`0${clean}`:clean
+  if(!/^\d{1,6}(?:\.\d{1,3})?$/.test(normalized)){
     throw new Error('请输入有效公斤重量，最多三位小数。')
   }
-  const [whole,fraction='']=clean.split('.')
+  const [whole,fraction='']=normalized.split('.')
   const grams=Number(whole)*1000+Number(fraction.padEnd(3,'0'))
   if(grams<=0)throw new Error('重量必须大于 0 kg。')
   if(mode==='individual'&&grams>MAX_INDIVIDUAL_WEIGHT_GRAMS){
@@ -213,7 +217,10 @@ export function buildWeighingEntry(input:BuildWeighingEntryInput):WeighingEntry 
     id:input.id,
     clientEntryId:input.clientEntryId??input.id,
     sessionId:input.sessionId,
-    ...(input.weighingDate?(()=>{const weighingDate=businessDateFromLegacy(input.weighingDate);return {weighingDate,monthKey:input.monthKey??monthKeyFromBusinessDate(weighingDate),vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''}})():{}),
+    ...(input.weighingDate?(()=>{const businessDate=businessDateFromLegacy(input.weighingDate),monthKey=input.monthKey??monthKeyFromBusinessDate(businessDate);return {
+      weighingDate:businessDate,businessDate,monthKey,dateSortKey:sortKeyFromBusinessDate(businessDate),monthSortKey:monthSortKeyFromMonthKey(monthKey),
+      vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''
+    }})():{}),
     productType:input.productType,
     fishSpeciesId:species?.id??null,
     fishSpeciesCodeSnapshot:species?.speciesCode??null,

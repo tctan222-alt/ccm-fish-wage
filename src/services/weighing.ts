@@ -49,6 +49,7 @@ function fishSpeciesFrom(id:string,data:DocumentData):FishSpeciesRecord {
 function sessionFrom(id:string,data:DocumentData):WeighingSession {
   return {
     id,sessionCode:String(data.sessionCode),weighingDate:String(data.weighingDate),monthKey:String(data.monthKey),
+    dateSortKey:data.dateSortKey===undefined?undefined:Number(data.dateSortKey),monthSortKey:data.monthSortKey===undefined?undefined:Number(data.monthSortKey),
     externalSlipNo:String(data.externalSlipNo??''),vesselId:String(data.vesselId),
     vesselCodeSnapshot:String(data.vesselCodeSnapshot),vesselNameSnapshot:String(data.vesselNameSnapshot),
     status:data.status as WeighingSession['status'],lastSequenceNo:Number(data.lastSequenceNo),
@@ -69,7 +70,8 @@ function sessionFrom(id:string,data:DocumentData):WeighingSession {
 function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
   return {
     id,clientEntryId:String(data.clientEntryId),sessionId,weighingDate:data.weighingDate?String(data.weighingDate):undefined,
-    monthKey:data.monthKey?String(data.monthKey):undefined,vesselId:data.vesselId?String(data.vesselId):undefined,
+    businessDate:data.businessDate?String(data.businessDate):undefined,monthKey:data.monthKey?String(data.monthKey):undefined,
+    dateSortKey:data.dateSortKey===undefined?undefined:Number(data.dateSortKey),monthSortKey:data.monthSortKey===undefined?undefined:Number(data.monthSortKey),vesselId:data.vesselId?String(data.vesselId):undefined,
     vesselCodeSnapshot:data.vesselCodeSnapshot?String(data.vesselCodeSnapshot):undefined,productType:data.productType as WeighingEntry['productType'],
     fishSpeciesId:data.fishSpeciesId?String(data.fishSpeciesId):null,
     fishSpeciesCodeSnapshot:data.fishSpeciesCodeSnapshot?String(data.fishSpeciesCodeSnapshot):null,
@@ -89,12 +91,15 @@ function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
 function storedEntry(entry:WeighingEntry,userId:string,timestamp:unknown,lastActionId:string,isCreate:boolean){
   return {
     clientEntryId:entry.clientEntryId,sessionId:entry.sessionId,
-    ...(entry.weighingDate?{weighingDate:entry.weighingDate,monthKey:entry.monthKey,vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot}:{}),
+    ...(entry.weighingDate?{weighingDate:entry.weighingDate,businessDate:entry.businessDate??entry.weighingDate,monthKey:entry.monthKey,
+      ...(entry.dateSortKey!=null&&entry.monthSortKey!=null?{dateSortKey:entry.dateSortKey,monthSortKey:entry.monthSortKey}:{}),
+      vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot}:{}),
     productType:entry.productType,fishSpeciesId:entry.fishSpeciesId,
     fishSpeciesCodeSnapshot:entry.fishSpeciesCodeSnapshot,fishSpeciesNameSnapshot:entry.fishSpeciesNameSnapshot,
     fishMealQuality:entry.fishMealQuality,displayNameSnapshot:entry.displayNameSnapshot,entryMode:entry.entryMode,
-    sequenceNo:entry.sequenceNo,weightGrams:entry.weightGrams,
-    unitPriceCentsPerKg:entry.unitPriceCentsPerKg??null,amountCents:entry.amountCents??null,remark:entry.remark,voided:entry.voided,
+      sequenceNo:entry.sequenceNo,weightGrams:entry.weightGrams,
+      ...(entry.unitPriceCentsPerKg!=null&&entry.amountCents!=null?{unitPriceCentsPerKg:entry.unitPriceCentsPerKg,amountCents:entry.amountCents}:{}),
+      remark:entry.remark,voided:entry.voided,
     voidReason:entry.voidReason,voidedBy:entry.voided?userId:null,voidedAt:entry.voided?timestamp:null,
     revision:entry.revision,recordedAtClient:entry.recordedAtClient,recordedAt:isCreate?timestamp:entry.recordedAt,
     recordedBy:entry.recordedBy,updatedAt:timestamp,updatedBy:userId,lastActionId,
@@ -104,6 +109,7 @@ function storedEntry(entry:WeighingEntry,userId:string,timestamp:unknown,lastAct
 function storedSession(session:WeighingSession,userId:string,timestamp:unknown,lastActionId:string,isCreate:boolean){
   return {
     sessionCode:session.sessionCode,weighingDate:session.weighingDate,monthKey:session.monthKey,
+    ...(session.dateSortKey!=null&&session.monthSortKey!=null?{dateSortKey:session.dateSortKey,monthSortKey:session.monthSortKey}:{}),
     externalSlipNo:session.externalSlipNo,vesselId:session.vesselId,vesselCodeSnapshot:session.vesselCodeSnapshot,
     vesselNameSnapshot:session.vesselNameSnapshot,status:session.status,lastSequenceNo:session.lastSequenceNo,
     fishHeadBasketCount:session.fishHeadBasketCount,fishHeadWeightGrams:session.fishHeadWeightGrams,
