@@ -5,10 +5,9 @@ import { applyEntryCreated,DEFAULT_FISH_SPECIES,type WeighingEntry,type Weighing
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
-const vessels=[
-  {id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,notes:''},
-  {id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,notes:''},
-]
+const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesselCode,order)=>(
+  {id:`v${vesselCode}`,vesselCode,displayName:vesselCode,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order,notes:''}
+))
 
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 
@@ -32,7 +31,8 @@ describe('iPhone 现场称重单页',()=>{
   it('在同一页显示中文船号、日期、产品、16 个鱼名、kg 和确认',async()=>{
     setup()
     expect(await screen.findByRole('heading',{name:'现场称重'})).toBeInTheDocument()
-    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
+    for(const vessel of vessels)expect(screen.getByRole('button',{name:vessel.vesselCode})).toBeInTheDocument()
     expect(screen.getByText('30/07/2026')).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'鱼头'})).toHaveAttribute('aria-pressed','true')
     const species=screen.getByRole('group',{name:'鱼名'})
@@ -122,7 +122,7 @@ describe('iPhone 现场称重单页',()=>{
       speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null}
       offlineStore={createMemoryWeighingStore(shared)} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
-    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByRole('button',{name:'978'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByText('目前离线，已使用本机船号和鱼名资料。')).toBeInTheDocument()
   })
 
@@ -145,7 +145,7 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'2.5'}})
     fireEvent.click(screen.getByRole('button',{name:'确认'}))
     await screen.findByText('已保存')
-    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'2026-07-30',monthKey:'2026-07',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500,unitPriceCentsPerKg:1234,amountCents:3085})
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({weighingDate:'30/07/2026',monthKey:'07/2026',vesselId:'v978',vesselCodeSnapshot:'978',displayNameSnapshot:'特别鱼',weightGrams:2500,unitPriceCentsPerKg:1234,amountCents:3085})
   })
 
   it('keeps fish-meal bucket and bag prices separate and does not invent baskets for total weight',async()=>{

@@ -1,3 +1,5 @@
+import { businessDateFromLegacy, monthKeyFromBusinessDate, monthSortKeyFromMonthKey, sortKeyFromBusinessDate } from './businessDate'
+
 export type WeighingProductType = 'fish_head' | 'fish_meal'
 export type FishMealQuality = 'bucket' | 'bag'
 export type WeighingEntryMode = 'individual' | 'total'
@@ -29,6 +31,8 @@ export interface WeighingSession {
   sessionCode:string
   weighingDate:string
   monthKey:string
+  dateSortKey?:number
+  monthSortKey?:number
   externalSlipNo:string
   vesselId:string
   vesselCodeSnapshot:string
@@ -209,7 +213,7 @@ export function buildWeighingEntry(input:BuildWeighingEntryInput):WeighingEntry 
     id:input.id,
     clientEntryId:input.clientEntryId??input.id,
     sessionId:input.sessionId,
-    ...(input.weighingDate?{weighingDate:input.weighingDate,monthKey:input.monthKey??input.weighingDate.slice(0,7),vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''}:{}),
+    ...(input.weighingDate?(()=>{const weighingDate=businessDateFromLegacy(input.weighingDate);return {weighingDate,monthKey:input.monthKey??monthKeyFromBusinessDate(weighingDate),vesselId:input.vesselId??'',vesselCodeSnapshot:input.vesselCodeSnapshot??''}})():{}),
     productType:input.productType,
     fishSpeciesId:species?.id??null,
     fishSpeciesCodeSnapshot:species?.speciesCode??null,
@@ -277,8 +281,7 @@ export function completeWeighingSession(session:WeighingSession):WeighingSession
 }
 
 export function formatMalaysiaDate(dateKey:string) {
-  const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey)
-  return match?`${match[3]}/${match[2]}/${match[1]}`:dateKey
+  try{return businessDateFromLegacy(dateKey)}catch{return dateKey}
 }
 
 export function formatWeightKg(weightGrams:number) {
@@ -349,11 +352,15 @@ export function newWeighingSession(input:{
   sequence?:number
 }):WeighingSession {
   const sequence=input.sequence??1
+  const weighingDate=businessDateFromLegacy(input.weighingDate)
+  const monthKey=monthKeyFromBusinessDate(weighingDate)
   return {
     id:input.id,
-    sessionCode:`${input.vesselCodeSnapshot}-${input.weighingDate.replaceAll('-','')}-${String(sequence).padStart(2,'0')}`,
-    weighingDate:input.weighingDate,
-    monthKey:input.weighingDate.slice(0,7),
+    sessionCode:`${input.vesselCodeSnapshot}-${weighingDate.replaceAll('/','')}-${String(sequence).padStart(2,'0')}`,
+    weighingDate,
+    monthKey,
+    dateSortKey:sortKeyFromBusinessDate(weighingDate),
+    monthSortKey:monthSortKeyFromMonthKey(monthKey),
     externalSlipNo:(input.externalSlipNo??'').trim(),
     vesselId:input.vesselId,
     vesselCodeSnapshot:input.vesselCodeSnapshot,

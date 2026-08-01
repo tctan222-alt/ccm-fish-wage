@@ -29,6 +29,7 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then(module => 
 const FishDepartmentPage = lazy(() => import('./pages/FishDepartmentPage').then(module => ({ default: module.FishDepartmentPage })))
 const IceDepartmentPage = lazy(() => import('./pages/IceDepartmentPage').then(module => ({ default: module.IceDepartmentPage })))
 const IceVesselPage = lazy(() => import('./pages/IceVesselPage').then(module => ({ default: module.IceVesselPage })))
+const IceMonthlySettlementPage = lazy(() => import('./pages/IceMonthlySettlementPage').then(module => ({ default: module.IceMonthlySettlementPage })))
 const CcmAdminPage = lazy(() => import('./pages/CcmAdminPage').then(module => ({ default: module.CcmAdminPage })))
 const PurchaseWeighingPage = lazy(() => import('./pages/PurchaseWeighingPage').then(module => ({ default: module.PurchaseWeighingPage })))
 
@@ -55,6 +56,7 @@ function AuthenticatedApp() {
         <Route path="/daily" element={<TodaySummaryPage />} />
         <Route path="/ice-department" element={<IceDepartmentPage />} />
         <Route path="/ice-department/:vesselId" element={<IceVesselPage />} />
+        <Route path="/ice-department/:vesselId/monthly" element={<IceMonthlySettlementPage />} />
         <Route path="/ccm-admin" element={<CcmAdminPage />} />
         <Route path="/today" element={<TodaySummaryPage />} />
         <Route path="/monthly" element={<MonthlySummaryPage />} />

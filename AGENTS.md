@@ -39,6 +39,7 @@ Do not ask about ordinary technical choices. If code, tests, deployment, or Git 
 - Typecheck, tests, and build must all pass before deployment.
 - Deploy Firebase Hosting only when frontend changes are made.
 - When Firestore Rules change, deploy both `firestore:rules` and `hosting`.
+- Never deploy an unreviewed feature branch to formal production. Formal Firebase deployment must be built from reviewed and merged `main`; use only local Emulator or Hosting Preview for unmerged branches.
 - Do not commit `node_modules`, `dist`, `.firebase`, `*.tsbuildinfo`, or temporary scripts.
 - After completion, automatically commit and push to `main`.
 

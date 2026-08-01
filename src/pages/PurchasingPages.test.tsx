@@ -1,4 +1,4 @@
-import { cleanup,render,screen,waitFor } from '@testing-library/react'
+import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
@@ -81,6 +81,7 @@ describe('purchase receiving pages',()=>{
     const printer=vi.fn()
     render(<MemoryRouter><PurchaseMonthlyPage receiptLoader={async()=>[receipt(),receipt({id:'draft',status:'draft'})]}
       supplierLoader={async()=>[{...supplier,active:false}]} printer={printer}/></MemoryRouter>)
+    fireEvent.change(screen.getByLabelText('Month'),{target:{value:'2026-07'}})
     expect(await screen.findByText('RC-12345678')).toBeInTheDocument()
     expect(screen.getByText('Confirmed').parentElement).toHaveTextContent('1')
     await userEvent.click(screen.getByRole('button',{name:'Print Supplier Statement'}))

@@ -3,8 +3,8 @@ import {
 } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
 import {
-  buildDefaultCategoryCreates,normalizeCategoryInput,normalizeVesselInput,
-  validateCategoryInput,validateVesselInput,type PurchaseCategory,type PurchaseCategoryInput,
+  buildDefaultCategoryCreates,buildDefaultVesselCreates,buildDefaultVesselOrderRepairs,normalizeCategoryInput,normalizeVesselInput,
+  validateCategoryInput,validateVesselInput,activeVessels,type PurchaseCategory,type PurchaseCategoryInput,
   type Vessel,type VesselInput,
 } from '../lib/purchasing'
 
@@ -20,7 +20,7 @@ function category(id:string,data:Record<string,unknown>):PurchaseCategory{
 }
 function vessel(id:string,data:Record<string,unknown>):Vessel{
   return {id,vesselCode:String(data.vesselCode??''),displayName:String(data.displayName??''),defaultSupplierId:String(data.defaultSupplierId??''),
-    defaultSupplierNameSnapshot:String(data.defaultSupplierNameSnapshot??''),active:data.active===true,notes:String(data.notes??''),
+    defaultSupplierNameSnapshot:String(data.defaultSupplierNameSnapshot??''),active:data.active===true,order:Number(data.order??Number.MAX_SAFE_INTEGER),notes:String(data.notes??''),
     createdBy:String(data.createdBy??''),createdAt:data.createdAt,updatedBy:String(data.updatedBy??''),updatedAt:data.updatedAt,
     inactiveBy:typeof data.inactiveBy==='string'?data.inactiveBy:null,inactiveAt:data.inactiveAt??null}
 }
@@ -30,7 +30,24 @@ export async function loadPurchaseCategories(){
 }
 export async function loadVessels(){
   const snap=await getDocs(collection(db,'vessels'))
-  return snap.docs.map(item=>vessel(item.id,item.data())).sort((a,b)=>a.vesselCode.localeCompare(b.vesselCode))
+  const { activeVessels }=await import('../lib/purchasing')
+  const rows=snap.docs.map(item=>vessel(item.id,item.data()))
+  return [...activeVessels(rows),...rows.filter(item=>!item.active).sort((a,b)=>a.vesselCode.localeCompare(b.vesselCode))]
+}
+export async function loadActiveVessels(){ return activeVessels(await loadVessels()) }
+export async function initializeDefaultVessels(){
+  const uid=user().uid,existing=await loadVessels(),missing=buildDefaultVesselCreates(existing),orderRepairs=buildDefaultVesselOrderRepairs(existing)
+  if(!missing.length&&!orderRepairs.length)return activeVessels(existing)
+  await runTransaction(db,async transaction=>{
+    const refs=missing.map(item=>doc(db,'vessels',item.vesselCode))
+    const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)))
+    missing.forEach((item,index)=>{if(!snapshots[index].exists())transaction.set(refs[index],{
+      vesselCode:item.vesselCode,displayName:item.displayName,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:item.order,notes:'',
+      createdBy:uid,createdAt:serverTimestamp(),updatedBy:uid,updatedAt:serverTimestamp(),inactiveBy:null,inactiveAt:null,
+    })})
+    orderRepairs.forEach(item=>transaction.update(doc(db,'vessels',item.id),{order:item.order,updatedBy:uid,updatedAt:serverTimestamp()}))
+  })
+  return loadActiveVessels()
 }
 export async function initializeDefaultPurchaseCategories(){
   const uid=user().uid

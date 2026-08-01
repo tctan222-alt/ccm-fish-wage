@@ -2,6 +2,7 @@ import { useCallback,useEffect,useMemo,useRef,useState,type FormEvent } from 're
 import { Link,useParams } from 'react-router-dom'
 import { auth } from '../firebase'
 import { rmInputToCentsPerKg, type Vessel } from '../lib/purchasing'
+import { malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
   activeFishSpecies,
@@ -22,7 +23,7 @@ import {
   type WeighingProductType,
   type WeighingSession,
 } from '../lib/weighing'
-import { loadVessels } from '../services/purchaseMasterData'
+import { loadActiveVessels } from '../services/purchaseMasterData'
 import {
   createIndexedDbWeighingStore,
   flushWeighingQueue,
@@ -39,7 +40,7 @@ import {
 } from '../services/weighing'
 
 const defaultStore=typeof indexedDB==='undefined'?undefined:createIndexedDbWeighingStore()
-const malaysiaToday=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
+const malaysiaToday=()=>malaysiaBusinessDate()
 const isoNow=()=>new Date().toISOString()
 const makeId=(kind:'session'|'entry'|'operation')=>`${kind}-${globalThis.crypto?.randomUUID?.()??`${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 function parseCachedRows<T>(value:string|undefined):T[]|undefined{
@@ -64,7 +65,7 @@ interface Props {
 }
 
 export function WeighingEntryPage({
-  vesselLoader=loadVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
+  vesselLoader=loadActiveVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
   bundleLoader=loadWeighingBundle,offlineStore=defaultStore,remoteSync=syncWeighingOperation,
   today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,requireUnitPrice=false,pageTitle='现场称重',speciesCreator=saveFishSpecies,
 }:Props){
@@ -87,6 +88,7 @@ export function WeighingEntryPage({
   const [busy,setBusy]=useState(false)
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
+  const [referenceAttempt,setReferenceAttempt]=useState(0)
   const [showComplete,setShowComplete]=useState(false)
   const [editing,setEditing]=useState<WeighingEntry|null>(null)
   const [showCustomSpecies,setShowCustomSpecies]=useState(false)
@@ -132,7 +134,7 @@ export function WeighingEntryPage({
       }
     })()
     return()=>{cancelled=true}
-  },[vesselLoader,speciesLoader,store])
+  },[vesselLoader,speciesLoader,store,referenceAttempt])
 
   useEffect(()=>{
     if(sessionId){
@@ -300,9 +302,9 @@ export function WeighingEntryPage({
     <header className="weighing-header"><div><p className="eyebrow">CCM Fishery</p><h1>{pageTitle}</h1></div>
       <Link to="/weighing">查看现场单</Link></header>
     <section className="weighing-setup">
-      <label>船号<select aria-label="船号" value={vesselId} disabled={Boolean(session)} onChange={event=>setVesselId(event.target.value)}>
-        {vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-      <label>日期<input aria-label="日期" type="date" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
+      <div className="vessel-choice"><span>船号</span>{vessels.length===0&&!error?<p className="notice" role="status">正在读取船号和鱼名资料…</p>:<div className="vessel-button-grid" role="group" aria-label="船号">
+        {vessels.map(item=><button type="button" key={item.id} disabled={Boolean(session)} aria-pressed={vesselId===item.id} className={vesselId===item.id?'selected':''} onClick={()=>setVesselId(item.id)}>{item.vesselCode}</button>)}</div>}</div>
+      <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
 
@@ -337,7 +339,7 @@ export function WeighingEntryPage({
       </form>
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
-      {error&&<p className="error" role="alert">{error}</p>}
+      {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
       {message&&<p className="weighing-message" role="status">{message}</p>}
       <div className="recent-entry">
         <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg{latest.unitPriceCentsPerKg?` · ${formatRm(latest.unitPriceCentsPerKg)} · ${formatRm(latest.amountCents??0)}`:''}</span></>:<span>尚无记录</span>}</div>
@@ -446,8 +448,8 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>查看记录</h2>
     <p>修订版本：{entry.revision}{entry.voided&&` · 已作废：${entry.voidReason}`}</p>
     <form className="master-form" onSubmit={submit}>
-      {entry.productType==='fish_head'?<label>鱼名<select value={speciesId} disabled={locked||entry.voided} onChange={event=>setSpeciesId(event.target.value)}>
-        {species.map(item=><option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>:
+      {entry.productType==='fish_head'?<fieldset><legend>鱼名</legend><div className="species-grid">
+        {species.map(item=><button type="button" key={item.id} className={speciesId===item.id?'selected':''} disabled={locked||entry.voided} onClick={()=>setSpeciesId(item.id)}>{item.displayName}</button>)}</div></fieldset>:
         <label>鱼仔品质<select value={quality} disabled={locked||entry.voided} onChange={event=>setQuality(event.target.value as FishMealQuality)}>
           <option value="bucket">桶鱼仔</option><option value="bag">包鱼仔</option></select></label>}
       <label>重量（kg）<input value={weight} disabled={locked||entry.voided} onChange={event=>setWeight(event.target.value)}/></label>

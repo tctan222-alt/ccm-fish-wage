@@ -7,6 +7,7 @@ import {
   assertPaymentCanVoid,
   assertPurchaseReceiptLineLimits,
   buildDefaultCategoryCreates,
+  buildDefaultVesselOrderRepairs,
   buildPaymentGroup,
   calculateReceiptTotals,
   confirmReceipt,
@@ -167,6 +168,21 @@ describe('purchase receiving domain',()=>{
     const vessels=[{id:'v1',vesselCode:'2031',displayName:'Boat',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:false,notes:''}]
     expect(duplicateVesselCode(' 2031 ',vessels)).toBe(true)
     expect(activeVessels(vessels)).toEqual([])
+  })
+
+  it('uses the master-data order for active vessel selectors',()=>{
+    const vessels=[
+      {id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:20,notes:''},
+      {id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:5,notes:''},
+    ]
+    expect(activeVessels(vessels).map(item=>item.vesselCode)).toEqual(['833','978'])
+  })
+
+  it('repairs only missing legacy orders for default vessels',()=>{
+    expect(buildDefaultVesselOrderRepairs([
+      {id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:Number.MAX_SAFE_INTEGER,notes:''},
+      {id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:9,notes:''},
+    ])).toEqual([{id:'v978',order:0}])
   })
 
   it('builds one full-balance payment per selected receipt under one group',()=>{

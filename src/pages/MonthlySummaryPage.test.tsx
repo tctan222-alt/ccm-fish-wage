@@ -97,6 +97,7 @@ describe('monthly summary',()=>{
     setup()
 
     expect(await screen.findByRole('heading',{name:'Monthly Summary'})).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Wage month'),{target:{value:'2026-07'}})
     expect(await screen.findByText('July 2026')).toBeInTheDocument()
 
     const grandTotal=screen.getByRole('region',{name:'Monthly totals'})

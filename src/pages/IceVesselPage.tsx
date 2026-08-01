@@ -1,49 +1,28 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import type { Vessel } from '../lib/purchasing'
-import { createIceWorkRecord, summarizeIceMonthEndFees, type IceWorkRecord } from '../lib/iceWork'
+import { createIceWorkRecord, parseIceBoxHalfUnits, parseLitersToMilliliters, parseWholeKilogramsToGrams, type IceWorkRecord } from '../lib/iceWork'
+import { malaysiaBusinessDate, monthKeyFromBusinessDate } from '../lib/businessDate'
 import { loadVessels } from '../services/purchaseMasterData'
-import { loadIceWorkRecords, saveIceWorkRecord, voidIceWorkRecord } from '../services/iceWork'
+import { confirmIceWorkRecordInStore, loadIceWorkRecords, saveIceWorkRecord, voidIceWorkRecord } from '../services/iceWork'
 
-const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
 const makeId=()=>`ice_${globalThis.crypto?.randomUUID?.().replaceAll('-','')??Date.now().toString(36)}`
-const number=(value:string)=>value.trim()===''?0:Number(value)
+const money=(cents:number)=>`RM ${(cents/100).toFixed(2)}`
+type Values={factory:string;boxes:string;diesel:string;hawker:string;directIce:string;bags:string}
+const empty:Values={factory:'',boxes:'',diesel:'',hawker:'',directIce:'',bags:''}
+interface Props { vesselLoader?:()=>Promise<Vessel[]>; recordLoader?:(vesselId:string,monthKey:string)=>Promise<IceWorkRecord[]>; saver?:(record:IceWorkRecord)=>Promise<IceWorkRecord>; confirmer?:(record:IceWorkRecord)=>Promise<IceWorkRecord>; voider?:(record:IceWorkRecord,reason:string)=>Promise<IceWorkRecord>; today?:()=>string }
 
-interface Props { vesselLoader?:()=>Promise<Vessel[]>; recordLoader?:(vesselId:string,monthKey:string)=>Promise<IceWorkRecord[]>; saver?:(record:IceWorkRecord)=>Promise<IceWorkRecord>; voider?:(record:IceWorkRecord,reason:string)=>Promise<IceWorkRecord>; today?:()=>string }
-
-export function IceVesselPage({vesselLoader=loadVessels,recordLoader=loadIceWorkRecords,saver=saveIceWorkRecord,voider=voidIceWorkRecord,today:todayValue=today}:Props) {
-  const { vesselId = '' }=useParams()
-  const [vessels,setVessels]=useState<Vessel[]>([]),[records,setRecords]=useState<IceWorkRecord[]>([]),[workDate,setWorkDate]=useState(todayValue()),[notes,setNotes]=useState(''),[factory,setFactory]=useState(''),[iceBoxes,setIceBoxes]=useState(''),[hawker,setHawker]=useState(''),[oil,setOil]=useState(''),[monthEnd,setMonthEnd]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('')
-  const vessel=useMemo(()=>vessels.find(item=>item.id===vesselId||item.vesselCode===vesselId),[vessels,vesselId])
-  const monthKey=workDate.slice(0,7)
-  useEffect(()=>{void vesselLoader().then(rows=>setVessels(rows.filter(item=>item.active))).catch(()=>setError('无法载入船号。'))},[vesselLoader])
-  useEffect(()=>{if(vessel)void recordLoader(vessel.id,monthKey).then(setRecords).catch(()=>setError('无法载入冰工月度记录。'))},[vessel,monthKey,recordLoader])
-  const fees=summarizeIceMonthEndFees(records)
-  async function submit(event:FormEvent){event.preventDefault();if(!vessel)return
-    const quantities=[factory,iceBoxes,hawker,oil].map(number)
-    if(quantities.some(value=>!Number.isFinite(value)||value<0)){setError('数量必须是 0 或正数。');return}
-    setBusy(true);setError('')
-    try{
-      const saved=await saver(createIceWorkRecord({id:makeId(),workDate,vesselId:vessel.id,vesselCodeSnapshot:vessel.vesselCode,createdBy:'',factoryWoodTubQuantity:quantities[0],iceBoxQuantity:quantities[1],hawkerSaleQuantity:quantities[2],oilWorkQuantity:quantities[3],notes,monthEndSettlement:monthEnd}))
-      setRecords(current=>[saved,...current]);setFactory('');setIceBoxes('');setHawker('');setOil('');setNotes('');setMonthEnd(false);window.dispatchEvent(new Event('ccm:form-saved'))
-    }catch(problem){setError(problem instanceof Error?problem.message:'无法保存冰工记录。')}finally{setBusy(false)}
-  }
-  async function voidRecord(record:IceWorkRecord){const reason=window.prompt('作废原因')?.trim();if(!reason)return;try{const next=await voider(record,reason);setRecords(current=>current.map(item=>item.id===next.id?next:item))}catch(problem){setError(problem instanceof Error?problem.message:'无法作废记录。')}}
-  return <main><header><p className="eyebrow">CCM Fishery</p><h1>冰工船 {vessel?.vesselCode??vesselId}</h1></header>
-    {!vessel?<p className="notice">未找到 Active Vessels 中的此船号；请先在船号资料维护。</p>:<>
-      <form className="master-form ice-work-form" onSubmit={submit}><h2>新增记录</h2><label>日期<input aria-label="日期" type="date" value={workDate} onChange={event=>setWorkDate(event.target.value)}/></label>
-        <label>工厂木桶数量<input aria-label="工厂木桶数量" inputMode="decimal" value={factory} onChange={event=>setFactory(event.target.value)}/></label>
-        <label>冰箱数量<input aria-label="冰箱数量" inputMode="decimal" value={iceBoxes} onChange={event=>setIceBoxes(event.target.value)}/></label>
-        <label>小贩出售数量<input aria-label="小贩出售数量" inputMode="decimal" value={hawker} onChange={event=>setHawker(event.target.value)}/></label>
-        <label>油工数量<input aria-label="油工数量" inputMode="decimal" value={oil} onChange={event=>setOil(event.target.value)}/></label>
-        <p className="notice">0.02 的币值和计量单位尚待确认，系统不会自动计算油工金额。</p>
-        <label><input aria-label="本月尾结算计入一次" type="checkbox" checked={monthEnd} disabled={fees.recordId!==null} onChange={event=>setMonthEnd(event.target.checked)}/>本月尾结算计入一次（船头费默认 RM 500、书记费默认 RM 250）</label>
-        {fees.recordId!==null&&<p className="notice">本月已有月尾结算记录，船头费和书记费不会重复计入。</p>}
-        <label>备注<textarea value={notes} maxLength={500} onChange={event=>setNotes(event.target.value)}/></label>{error&&<p className="error" role="alert">{error}</p>}<button className="primary-action" disabled={busy}>保存记录</button>
-      </form>
-      <section className="master-card-list"><h2>{monthKey} 月度记录</h2><p>月尾已计入：船头费 RM {(fees.headmanFeeCents/100).toFixed(2)}；书记费 RM {(fees.clerkFeeCents/100).toFixed(2)}</p>
-        {records.map(record=><article className="master-card" key={record.id}><strong>{record.workDate}</strong><span>{record.voided?'已作废':'已记录'}</span><p>工厂木桶：{record.factoryWoodTubQuantity} · 冰箱：{record.iceBoxQuantity} · 小贩出售：{record.hawkerSaleQuantity} · 油工：{record.oilWorkQuantity}</p>{record.notes&&<p>{record.notes}</p>}{!record.voided&&<button type="button" className="danger-action" onClick={()=>void voidRecord(record)}>作废</button>}</article>)}
-      </section>
-    </>}
-  </main>
+export function IceVesselPage({vesselLoader=loadVessels,recordLoader=loadIceWorkRecords,saver=saveIceWorkRecord,confirmer=confirmIceWorkRecordInStore,voider=voidIceWorkRecord,today=malaysiaBusinessDate}:Props){
+  const {vesselId=''}=useParams();const [vessels,setVessels]=useState<Vessel[]>([]);const [records,setRecords]=useState<IceWorkRecord[]>([]);const [workDate,setWorkDate]=useState(today());const [values,setValues]=useState<Values>(empty);const [notes,setNotes]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [pendingConfirmation,setPendingConfirmation]=useState<string|null>(null)
+  const vessel=useMemo(()=>vessels.find(item=>item.id===vesselId||item.vesselCode===vesselId),[vessels,vesselId]);const monthKey=useMemo(()=>{try{return monthKeyFromBusinessDate(workDate)}catch{return ''}},[workDate])
+  useEffect(()=>{void vesselLoader().then(setVessels).catch(()=>setError('无法载入船号。'))},[vesselLoader]);useEffect(()=>{if(vessel&&monthKey)void recordLoader(vessel.id,monthKey).then(setRecords).catch(()=>setError('无法载入冰工记录。'))},[vessel,monthKey,recordLoader])
+  const preview=useMemo(()=>{if(!vessel||!monthKey)return null;try{return createIceWorkRecord({id:'preview',workDate,vesselId:vessel.id,vesselCodeSnapshot:vessel.vesselCode,vesselNameSnapshot:vessel.displayName,createdBy:'',factoryIncomingWeightGrams:parseWholeKilogramsToGrams(values.factory),iceBoxHalfUnits:parseIceBoxHalfUnits(values.boxes),dieselVolumeMilliliters:parseLitersToMilliliters(values.diesel),hawkerSaleWeightGrams:parseWholeKilogramsToGrams(values.hawker),directIceBarCount:values.directIce.trim()?Number(values.directIce):0,plasticBagCount:values.bags.trim()?Number(values.bags):0,notes})}catch{return null}},[vessel,monthKey,workDate,values,notes])
+  const set=(key:keyof Values,value:string)=>setValues(current=>({...current,[key]:value}))
+  async function submit(event:FormEvent,confirm:boolean){event.preventDefault();if(!vessel||!preview||pendingConfirmation)return;setBusy(true);setError('');try{const saved=await saver({...preview,id:makeId()});let final=saved;if(confirm){try{final=await confirmer(saved)}catch(problem){setRecords(current=>[saved,...current]);setPendingConfirmation(saved.id);throw problem}}setRecords(current=>[final,...current]);setValues(empty);setNotes('');window.dispatchEvent(new Event('ccm:form-saved'))}catch(problem){setError(problem instanceof Error?problem.message:'无法保存冰工记录。')}finally{setBusy(false)}}
+  async function confirmRecord(record:IceWorkRecord){setBusy(true);setError('');try{const updated=await confirmer(record);setRecords(current=>current.map(item=>item.id===updated.id?updated:item));setPendingConfirmation(current=>current===record.id?null:current)}catch(problem){setError(problem instanceof Error?problem.message:'无法确认冰工记录。')}finally{setBusy(false)}}
+  async function voidRecord(record:IceWorkRecord){const reason=window.prompt('请输入作废原因')?.trim();if(!reason)return;try{const updated=await voider(record,reason);setRecords(current=>current.map(item=>item.id===updated.id?updated:item))}catch(problem){setError(problem instanceof Error?problem.message:'无法作废记录。')}}
+  return <main><header><p className="eyebrow">CCM Fishery</p><h1>冰工船 {vessel?.vesselCode??vesselId}</h1><Link className="page-link" to="/ice-department">← 返回冰工部门</Link></header>{!vessel?<p className="notice">未找到该船号。</p>:<><form className="master-form ice-work-form" onSubmit={event=>void submit(event,false)}><h2>新增冰工记录</h2><label>日期（DD/MM/YYYY）<input aria-label="日期" placeholder="DD/MM/YYYY" value={workDate} onChange={event=>setWorkDate(event.target.value)}/></label>
+    <IceInput label="木斑什进厂重量（kg）" value={values.factory} update={value=>set('factory',value)} rate="RM 0.10/kg" amount={preview?.factoryIncomingAmountCents}/><IceInput label="冰箱子数量（箱）" value={values.boxes} update={value=>set('boxes',value)} rate="RM 30.00/箱；可输入半箱" amount={preview?.iceBoxAmountCents}/><IceInput label="柴油数量（公升）" value={values.diesel} update={value=>set('diesel',value)} rate="RM 0.02/L" amount={preview?.dieselAmountCents}/><IceInput label="卖给小贩重量（kg）" value={values.hawker} update={value=>set('hawker',value)} rate="RM 0.30/kg" amount={preview?.hawkerSaleAmountCents}/><IceInput label="直接买冰（条）" value={values.directIce} update={value=>set('directIce',value)} rate="RM 13.50/条" amount={preview?.directIceAmountCents}/><IceInput label="塑料袋（个）" value={values.bags} update={value=>set('bags',value)} rate="RM 1.40/个" amount={preview?.plasticBagAmountCents}/><label>备注<textarea value={notes} onChange={event=>setNotes(event.target.value)}/></label>{preview&&<section className="notice"><p>冰工工钱小计：{money(preview.workFeeSubtotalCents)}</p><p>材料费小计：{money(preview.materialSubtotalCents)}</p><strong>本次合计：{money(preview.recordTotalCents)}</strong></section>}{error&&<p className="error" role="alert">{error}</p>}{pendingConfirmation&&<p className="notice">请先确认刚才保存的草稿，再建立新的记录。</p>}<div className="master-actions"><button className="primary-action" disabled={busy||!preview||!!pendingConfirmation}>保存草稿</button><button type="button" className="activate-action" disabled={busy||!preview||!!pendingConfirmation} onClick={event=>void submit(event as unknown as FormEvent,true)}>确认新记录</button></div></form>
+    <section className="master-card-list"><h2>{monthKey} 记录</h2><Link className="page-link" to={`/ice-department/${vessel.id}/monthly?month=${encodeURIComponent(monthKey)}`}>月度结算</Link>{records.map(record=><article className="master-card" key={record.id}><strong>{record.workDate}</strong><span>{record.status==='confirmed'?'已确认':record.status==='voided'?'已作废':'草稿'}</span>{record.legacy?<><p>历史记录（只读，未换算为新公式）</p><p>木斑什进厂：{record.legacyValues?.factoryWoodTubQuantity??'—'} · 冰箱子：{record.legacyValues?.iceBoxQuantity??'—'} · 小贩：{record.legacyValues?.hawkerSaleQuantity??'—'}</p><p>油工数量：{record.legacyValues?.oilWorkQuantity??'—'} · 油工金额：{record.legacyValues?.oilWorkAmountCents===null||record.legacyValues?.oilWorkAmountCents===undefined?'—':money(record.legacyValues.oilWorkAmountCents)} · 船头费：{record.legacyValues?.headmanFeeCents===null||record.legacyValues?.headmanFeeCents===undefined?'—':money(record.legacyValues.headmanFeeCents)} · 书记费：{record.legacyValues?.clerkFeeCents===null||record.legacyValues?.clerkFeeCents===undefined?'—':money(record.legacyValues.clerkFeeCents)}</p></>:<><p>工钱 {money(record.workFeeSubtotalCents)} · 材料 {money(record.materialSubtotalCents)} · 合计 {money(record.recordTotalCents)}</p>{record.status==='draft'&&<button type="button" disabled={busy} onClick={()=>void confirmRecord(record)}>确认记录</button>}{record.status!=='voided'&&<button type="button" className="danger-action" onClick={()=>void voidRecord(record)}>作废</button>}</>}</article>)}</section></>}</main>
 }
+function IceInput({label,value,update,rate,amount}:{label:string;value:string;update:(value:string)=>void;rate:string;amount?:number}){return <label>{label}<small>{rate} {amount===undefined?'':`· ${money(amount)}`}</small><input aria-label={label} inputMode="decimal" value={value} onChange={event=>update(event.target.value)}/></label>}
