@@ -264,8 +264,16 @@ export function WeighingEntryPage({
     }
     let grams:number
     try{grams=kgInputToGrams(weight,entryMode)}catch(problem){setError(problem instanceof Error?problem.message:'重量格式不正确。');return}
-    const selectedSpecies=displayedSpecies.find(item=>item.id===speciesId)
-    if(productType==='fish_head'&&!selectedSpecies){setError('请选择鱼名。');return}
+    let speciesForEntry=displayedSpecies.find(item=>item.id===speciesId)
+    if(productType==='fish_head'&&!speciesForEntry){setError('请选择鱼名。');return}
+    if(productType==='fish_head'&&speciesForEntry&&!species.some(item=>item.id===speciesForEntry!.id)){
+      try{
+        const initialized=await speciesInitializer(species)
+        const resolved=initialized.find(item=>item.speciesCode===speciesForEntry!.speciesCode)
+        if(!resolved||!resolved.active){setError('无法建立默认鱼名，请连接网络后重试。');return}
+        speciesForEntry=resolved;setSpecies(initialized);setSpeciesId(resolved.id)
+      }catch{setError('无法建立默认鱼名，请连接网络后重试。');return}
+    }
     const recordedAtClient=now(),base=session??newWeighingSession({
       id:idFactory('session'),vesselId:vesselForEntry.id,vesselCodeSnapshot:vesselForEntry.vesselCode,
       vesselNameSnapshot:vesselForEntry.displayName,weighingDate:date,externalSlipNo,
@@ -275,7 +283,7 @@ export function WeighingEntryPage({
     try{
       entry=buildWeighingEntry({id:entryId,clientEntryId:entryId,sessionId:base.id,productType,
         weighingDate:base.weighingDate,monthKey:base.monthKey,vesselId:base.vesselId,vesselCodeSnapshot:base.vesselCodeSnapshot,
-        fishSpeciesId:productType==='fish_head'?speciesId:null,fishSpecies:productType==='fish_head'?selectedSpecies:null,
+        fishSpeciesId:productType==='fish_head'?speciesForEntry!.id:null,fishSpecies:productType==='fish_head'?speciesForEntry:null,
         fishMealQuality:productType==='fish_meal'?quality:null,entryMode,
         sequenceNo:entryMode==='individual'?base.lastSequenceNo+1:null,weightGrams:grams,remark,
         recordedAtClient,recordedAt:recordedAtClient,recordedBy:auth.currentUser?.uid??'local-user'})

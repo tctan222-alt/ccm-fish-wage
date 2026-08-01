@@ -1,7 +1,7 @@
 import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
-import { applyEntryCreated,DEFAULT_FISH_SPECIES,type WeighingEntry,type WeighingSession } from '../lib/weighing'
+import { applyEntryCreated,DEFAULT_FISH_SPECIES,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
@@ -124,6 +124,28 @@ describe('iPhone 现场称重单页',()=>{
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
     expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978')
     expect(screen.getByRole('alert')).toHaveTextContent('正在显示本机默认资料')
+  })
+
+  it('空鱼名主资料首次确认会等待默认鱼名建立，再保存每篮记录',async()=>{
+    const store=createMemoryWeighingStore()
+    let finishInitialization:(items:FishSpeciesRecord[])=>void=()=>{}
+    const initialized=new Promise<FishSpeciesRecord[]>(resolve=>{finishInitialization=resolve})
+    const speciesInitializer=vi.fn(()=>initialized)
+    render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>[]}
+      speciesInitializer={speciesInitializer} openSessionLoader={async()=>null} offlineStore={store} remoteSync={remoteSync()}
+      today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
+
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80.125'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(()=>expect(speciesInitializer).toHaveBeenCalledTimes(2))
+    finishInitialization(DEFAULT_FISH_SPECIES)
+
+    await screen.findByText('已保存')
+    expect((await store.getEntries('session-v978-20260730'))[0]).toMatchObject({
+      fishSpeciesId:'jin_xian',displayNameSnapshot:'金线',weightGrams:80125,
+    })
   })
 
   it('鱼头采购不显示鱼名下拉、key-in 或现场价钱，并可把自定义鱼名保存到当前单',async()=>{
