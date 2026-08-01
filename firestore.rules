@@ -701,7 +701,7 @@ service cloud.firestore {
           'fishMealBagBasketCount', 'fishMealBagWeightGrams', 'fishMealTotalWeightGrams',
           'totalWeightGrams', 'processedReceiptId', 'processedReceiptCode', 'revision',
           'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'processedBy',
-          'processedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
+          'processedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId', 'externalSlipNo'
         ])
         && request.resource.data.revision == resource.data.revision + 1
         && request.resource.data.createdBy == resource.data.createdBy
@@ -1576,6 +1576,7 @@ service cloud.firestore {
             && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
               || request.resource.data.productType == getAfter(weighingSessionPath(sessionId)).data.productType)
             && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
+              || !('receiptNoSnapshot' in request.resource.data)
               || request.resource.data.receiptNoSnapshot == getAfter(weighingSessionPath(sessionId)).data.sessionCode)
             && getAfter(weighingSessionPath(sessionId)).data.lastActionId == request.resource.data.lastActionId
           && validLinkedWeighingAction(sessionId, 'entry_create')
