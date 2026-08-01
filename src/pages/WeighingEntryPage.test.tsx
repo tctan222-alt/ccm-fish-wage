@@ -29,6 +29,19 @@ function setup(sync=remoteSync()){
 }
 
 describe('iPhone 现场称重单页',()=>{
+  it('主资料读取仍在等待时也立即显示可操作的默认船号',async()=>{
+    const never=()=>new Promise<typeof vessels>(()=>{})
+    render(<MemoryRouter><WeighingEntryPage
+      vesselLoader={never} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      closedSessionLoader={async()=>null} offlineStore={createMemoryWeighingStore()} remoteSync={remoteSync()}
+      today={()=> '2026-07-30'}/></MemoryRouter>)
+    const vesselField=screen.getByRole('combobox',{name:'船号'})
+    expect(vesselField).toHaveValue('')
+    expect(screen.getByRole('option',{name:'978'})).toBeInTheDocument()
+    fireEvent.change(vesselField,{target:{value:'833'}})
+    expect(vesselField).toHaveValue('833')
+  })
+
   it('在同一页显示中文船号、日期、产品、16 个鱼名、kg 和确认',async()=>{
     setup()
     expect(await screen.findByRole('heading',{name:'现场称重'})).toBeInTheDocument()
