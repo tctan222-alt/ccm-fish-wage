@@ -13,9 +13,11 @@ import {
   type FishSpeciesRecord,
   type WeighingEntry,
   type WeighingSession,
+  type WeighingProductType,
 } from '../lib/weighing'
 import { assertPurchaseReceiptLineLimits,calculateReceiptTotals,makeReceiptCode,type PurchaseReceiptLine } from '../lib/purchasing'
 import type { BusinessPartner } from '../lib/masterData'
+import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import type { PendingWeighingOperation } from './weighingOffline'
 
 export interface WeighingBundle {
@@ -26,7 +28,7 @@ export interface WeighingBundle {
 
 export interface WeighingAction {
   id:string
-  type:'create'|'entry_create'|'entry_update'|'entry_void'|'complete'|'reopen'|'process'|'session_void'|'sync_conflict'
+  type:'create'|'entry_create'|'entry_update'|'entry_void'|'complete'|'reopen'|'process'|'session_void'|'session_update'|'sync_conflict'
   entryId:string|null
   reason:string|null
   performedAt:unknown
@@ -48,7 +50,7 @@ function fishSpeciesFrom(id:string,data:DocumentData):FishSpeciesRecord {
 
 function sessionFrom(id:string,data:DocumentData):WeighingSession {
   return {
-    id,sessionCode:String(data.sessionCode),weighingDate:String(data.weighingDate),monthKey:String(data.monthKey),
+    id,sessionCode:String(data.sessionCode),productType:data.productType==='fish_head'||data.productType==='fish_meal'?data.productType:undefined,weighingDate:String(data.weighingDate),monthKey:String(data.monthKey),
     dateSortKey:data.dateSortKey===undefined?undefined:Number(data.dateSortKey),monthSortKey:data.monthSortKey===undefined?undefined:Number(data.monthSortKey),
     externalSlipNo:String(data.externalSlipNo??''),vesselId:String(data.vesselId),
     vesselCodeSnapshot:String(data.vesselCodeSnapshot),vesselNameSnapshot:String(data.vesselNameSnapshot),
@@ -69,7 +71,7 @@ function sessionFrom(id:string,data:DocumentData):WeighingSession {
 
 function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
   return {
-    id,clientEntryId:String(data.clientEntryId),sessionId,weighingDate:data.weighingDate?String(data.weighingDate):undefined,
+    id,clientEntryId:String(data.clientEntryId),sessionId,receiptNoSnapshot:data.receiptNoSnapshot?String(data.receiptNoSnapshot):undefined,weighingDate:data.weighingDate?String(data.weighingDate):undefined,
     businessDate:data.businessDate?String(data.businessDate):undefined,monthKey:data.monthKey?String(data.monthKey):undefined,
     dateSortKey:data.dateSortKey===undefined?undefined:Number(data.dateSortKey),monthSortKey:data.monthSortKey===undefined?undefined:Number(data.monthSortKey),vesselId:data.vesselId?String(data.vesselId):undefined,
     vesselCodeSnapshot:data.vesselCodeSnapshot?String(data.vesselCodeSnapshot):undefined,productType:data.productType as WeighingEntry['productType'],
@@ -91,6 +93,7 @@ function entryFrom(id:string,sessionId:string,data:DocumentData):WeighingEntry {
 function storedEntry(entry:WeighingEntry,userId:string,timestamp:unknown,lastActionId:string,isCreate:boolean){
   return {
     clientEntryId:entry.clientEntryId,sessionId:entry.sessionId,
+    ...(entry.receiptNoSnapshot?{receiptNoSnapshot:entry.receiptNoSnapshot}:{}),
     ...(entry.weighingDate?{weighingDate:entry.weighingDate,businessDate:entry.businessDate??entry.weighingDate,monthKey:entry.monthKey,
       ...(entry.dateSortKey!=null&&entry.monthSortKey!=null?{dateSortKey:entry.dateSortKey,monthSortKey:entry.monthSortKey}:{}),
       vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot}:{}),
@@ -108,7 +111,7 @@ function storedEntry(entry:WeighingEntry,userId:string,timestamp:unknown,lastAct
 
 function storedSession(session:WeighingSession,userId:string,timestamp:unknown,lastActionId:string,isCreate:boolean){
   return {
-    sessionCode:session.sessionCode,weighingDate:session.weighingDate,monthKey:session.monthKey,
+    sessionCode:session.sessionCode,...(session.productType?{productType:session.productType}:{}),weighingDate:session.weighingDate,monthKey:session.monthKey,
     ...(session.dateSortKey!=null&&session.monthSortKey!=null?{dateSortKey:session.dateSortKey,monthSortKey:session.monthSortKey}:{}),
     externalSlipNo:session.externalSlipNo,vesselId:session.vesselId,vesselCodeSnapshot:session.vesselCodeSnapshot,
     vesselNameSnapshot:session.vesselNameSnapshot,status:session.status,lastSequenceNo:session.lastSequenceNo,
@@ -174,10 +177,19 @@ export async function loadWeighingBundle(sessionId:string):Promise<WeighingBundl
       afterSnapshot:item.data().afterSnapshot} as WeighingAction))}
 }
 
-export async function findOpenWeighingSession(vesselId:string,weighingDate:string){
+export async function findOpenWeighingSession(vesselId:string,weighingDate:string,productType:WeighingProductType){
   const sessions=await loadWeighingSessions()
-  const open=sessions.find(item=>item.vesselId===vesselId&&item.weighingDate===weighingDate&&item.status==='weighing')
+  const open=sessions.find(item=>item.vesselId===vesselId&&item.weighingDate===weighingDate
+    &&item.productType===productType&&item.status==='weighing')
   return open?loadWeighingBundle(open.id):null
+}
+
+/** A completed or processed sheet must never be silently replaced by a new field draft. */
+export async function findClosedWeighingSession(vesselId:string,weighingDate:string,productType:WeighingProductType){
+  const sessions=await loadWeighingSessions()
+  const closed=sessions.find(item=>item.vesselId===vesselId&&item.weighingDate===weighingDate
+    &&item.productType===productType&&item.status!=='weighing')
+  return closed?loadWeighingBundle(closed.id):null
 }
 
 export async function syncWeighingOperation(operation:PendingWeighingOperation){
@@ -270,6 +282,46 @@ export async function reopenWeighingSession(sessionId:string,reason:string){
     transaction.set(actionRef,{type:'reopen',sessionId,entryId:null,reason:clean,performedBy:user.uid,performedAt:timestamp,
       beforeSnapshot:{status:current.status,revision:current.revision},afterSnapshot:{status:next.status,revision:next.revision},
       clientOperationId:actionRef.id})
+    return next
+  })
+}
+
+/** Controlled back-office correction. Field vessel switching never calls this path. */
+export async function updateWeighingSessionDetails(input:{
+  sessionId:string
+  sessionCode:string
+  weighingDate:string
+  vessel:{id:string;vesselCode:string;displayName:string}
+  externalSlipNo:string
+  notes:string
+  reason:string
+}){
+  const code=input.sessionCode.trim(),reason=input.reason.trim(),notes=input.notes.trim()
+  if(code.length<5||code.length>80)throw new Error('现场单号必须为 5 至 80 个字符。')
+  if(reason.length<3||reason.length>100)throw new Error('修改原因必须为 3 至 100 个字符。')
+  if(notes.length>500)throw new Error('备注不得超过 500 个字符。')
+  const user=requireUser(),sessionRef=doc(db,'weighingSessions',input.sessionId),actionRef=doc(collection(sessionRef,'actions')),timestamp=serverTimestamp()
+  return runTransaction(db,async transaction=>{
+    const [snapshot,vesselSnapshot]=await Promise.all([transaction.get(sessionRef),transaction.get(doc(db,'vessels',input.vessel.id))])
+    if(!snapshot.exists())throw new Error('找不到现场称重单。')
+    const current=sessionFrom(input.sessionId,snapshot.data())
+    if(!current.productType)throw new Error('旧格式现场单只能查看；请先在后台建立调整单。')
+    if(current.status==='processed')throw new Error('已结单的现场单必须先建立调整单，不能直接修改。')
+    if(current.status==='voided')throw new Error('已作废的现场单不能修改。')
+    if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('单号前缀必须与产品类型一致。')
+    if(!vesselSnapshot.exists()||vesselSnapshot.data().active!==true)throw new Error('船号已停用或不存在。')
+    const weighingDate=businessDateFromLegacy(input.weighingDate),monthKey=monthKeyFromBusinessDate(weighingDate)
+    const next={...current,sessionCode:code,weighingDate,monthKey,dateSortKey:sortKeyFromBusinessDate(weighingDate),monthSortKey:monthSortKeyFromMonthKey(monthKey),
+      vesselId:input.vessel.id,vesselCodeSnapshot:input.vessel.vesselCode,vesselNameSnapshot:input.vessel.displayName,
+      externalSlipNo:input.externalSlipNo.trim(),notes,revision:current.revision+1,lastActionId:actionRef.id}
+    transaction.set(sessionRef,storedSession(next,user.uid,timestamp,actionRef.id,false),{merge:false})
+    transaction.set(actionRef,{type:'session_update',sessionId:current.id,entryId:null,reason,performedBy:user.uid,performedAt:timestamp,
+      beforeSnapshot:{sessionCode:current.sessionCode,weighingDate:current.weighingDate,monthKey:current.monthKey,dateSortKey:current.dateSortKey??null,monthSortKey:current.monthSortKey??null,
+        vesselId:current.vesselId,vesselCodeSnapshot:current.vesselCodeSnapshot,vesselNameSnapshot:current.vesselNameSnapshot,
+        externalSlipNo:current.externalSlipNo,notes:current.notes,revision:current.revision},
+      afterSnapshot:{sessionCode:next.sessionCode,weighingDate:next.weighingDate,monthKey:next.monthKey,dateSortKey:next.dateSortKey??null,monthSortKey:next.monthSortKey??null,
+        vesselId:next.vesselId,vesselCodeSnapshot:next.vesselCodeSnapshot,vesselNameSnapshot:next.vesselNameSnapshot,
+        externalSlipNo:next.externalSlipNo,notes:next.notes,revision:next.revision},clientOperationId:actionRef.id})
     return next
   })
 }

@@ -6,6 +6,8 @@ import {
   buildReceiptLinesFromWeighing,
   formatMalaysiaDate,
   kgInputToGrams,
+  newWeighingSession,
+  weighingDraftKey,
   summarizeWeighingEntries,
   type WeighingEntry,
   type WeighingSession,
@@ -24,6 +26,16 @@ describe('现场称重产品选择', () => {
 })
 
 describe('现场称重记录规则', () => {
+  it('鱼头和鱼仔以产品、日期和船号建立独立草稿单号',()=>{
+    const base={id:'session',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'978',weighingDate:'30/07/2026'}
+    const fishHead=newWeighingSession({...base,productType:'fish_head'})
+    const fishMeal=newWeighingSession({...base,id:'meal-session',productType:'fish_meal'})
+    expect(fishHead).toMatchObject({productType:'fish_head',sessionCode:'FH-978-30072026-01'})
+    expect(fishMeal).toMatchObject({productType:'fish_meal',sessionCode:'FM-978-30072026-01'})
+    expect(fishHead.sessionCode).not.toBe(fishMeal.sessionCode)
+    expect(weighingDraftKey('fish_head','30/07/2026','v978')).not.toBe(weighingDraftKey('fish_meal','30/07/2026','v978'))
+  })
+
   it('鱼头购入逐篮保留整数分单价与 half-up 金额快照', () => {
     const priced = buildWeighingEntry({
       id:'priced-1',sessionId:'session-1',productType:'fish_head',fishSpeciesId:'jin_xian',fishMealQuality:null,

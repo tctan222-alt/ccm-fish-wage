@@ -15,6 +15,7 @@ import {
   formatWeightKg,
   kgInputToGrams,
   newWeighingSession,
+  weighingDraftKey,
   softVoidWeighingEntry,
   summarizeWeighingEntries,
   type FishMealQuality,
@@ -33,6 +34,7 @@ import {
 } from '../services/weighingOffline'
 import {
   findOpenWeighingSession,
+  findClosedWeighingSession,
   loadFishSpecies,
   initializeDefaultFishSpecies,
   loadWeighingBundle,
@@ -53,7 +55,8 @@ function parseCachedRows<T>(value:string|undefined):T[]|undefined{
 interface Props {
   vesselLoader?:()=>Promise<Vessel[]>
   speciesLoader?:()=>Promise<FishSpeciesRecord[]>
-  openSessionLoader?:(vesselId:string,date:string)=>Promise<WeighingBundle|null>
+  openSessionLoader?:(vesselId:string,date:string,productType:WeighingProductType)=>Promise<WeighingBundle|null>
+  closedSessionLoader?:(vesselId:string,date:string,productType:WeighingProductType)=>Promise<WeighingBundle|null>
   bundleLoader?:(sessionId:string)=>Promise<WeighingBundle>
   offlineStore?:WeighingOfflineStore
   remoteSync?:(operation:PendingWeighingOperation)=>Promise<{session?:WeighingSession;entry?:WeighingEntry}>
@@ -85,6 +88,7 @@ function visibleFishSpecies(items:FishSpeciesRecord[]){
 
 export function WeighingEntryPage({
   vesselLoader=loadVessels,speciesLoader=loadFishSpecies,openSessionLoader=findOpenWeighingSession,
+  closedSessionLoader=findClosedWeighingSession,
   bundleLoader=loadWeighingBundle,offlineStore=defaultStore,remoteSync=syncWeighingOperation,
   today=malaysiaToday,now=isoNow,idFactory=makeId,fixedProductType,pageTitle='现场称重',speciesCreator=saveFishSpecies,
   vesselInitializer=initializeDefaultVessels,speciesInitializer=initializeDefaultFishSpecies,
@@ -111,8 +115,10 @@ export function WeighingEntryPage({
   const [showComplete,setShowComplete]=useState(false)
   const [editing,setEditing]=useState<WeighingEntry|null>(null)
   const [showCustomSpecies,setShowCustomSpecies]=useState(false)
+  const [contextLoading,setContextLoading]=useState(false)
   const weightRef=useRef<HTMLInputElement>(null)
   const saveLock=useRef(false)
+  const contextRequest=useRef(0)
 
   const store=offlineStore
   const activeSpecies=useMemo(()=>activeFishSpecies(species),[species])
@@ -157,7 +163,7 @@ export function WeighingEntryPage({
       }
     })()
     return()=>{cancelled=true}
-  },[vesselLoader,speciesLoader,store,referenceAttempt,speciesInitializer])
+  },[vesselLoader,speciesLoader,store,referenceAttempt,vesselInitializer,speciesInitializer])
 
   useEffect(()=>{
     if(sessionId){
@@ -165,10 +171,11 @@ export function WeighingEntryPage({
         if(store){
           await store.putSession(bundle.session)
           for(const entry of bundle.entries)await store.putEntry(entry)
-          await store.putMeta(`current:${bundle.session.vesselId}:${bundle.session.weighingDate}`,bundle.session.id)
+          await store.putMeta(weighingDraftKey(bundle.session.productType??'fish_head',bundle.session.weighingDate,bundle.session.vesselId),bundle.session.id)
         }
         setSession(bundle.session);setEntries(bundle.entries);setVesselId(bundle.session.vesselId)
         setDate(bundle.session.weighingDate);setExternalSlipNo(bundle.session.externalSlipNo)
+        if(bundle.session.productType)setProductType(bundle.session.productType)
       }).catch(()=>setError('无法载入现场称重单。'))
     }
   },[sessionId,bundleLoader,store])
@@ -176,20 +183,29 @@ export function WeighingEntryPage({
   useEffect(()=>{
     if(sessionId||!vesselId||!store)return
     let cancelled=false
+    const request=++contextRequest.current
+    const isCurrent=()=>!cancelled&&request===contextRequest.current
     void (async()=>{
-      const key=`current:${vesselId}:${date}`,localId=await store.getMeta(key)
+      const key=weighingDraftKey(productType,date,vesselId)
+      setSession(null);setEntries([]);setPending(0);setExternalSlipNo('')
+      const localId=await store.getMeta(key)
+      if(!isCurrent())return
       let local:WeighingSession|undefined,localEntries:WeighingEntry[]=[],pendingCount=0
       if(localId){
         local=await store.getSession(localId)
-        if(local&&!cancelled){
+        if(!isCurrent())return
+        if(local){
           localEntries=await store.getEntries(local.id)
           pendingCount=(await store.getPending()).filter(item=>item.sessionId===local!.id).length
+          if(!isCurrent())return
           setSession(local);setEntries(localEntries);setExternalSlipNo(local.externalSlipNo);setPending(pendingCount)
         }
       }
       try{
-        const remote=localId?await bundleLoader(localId):await openSessionLoader(vesselId,date)
-        if(remote&&!cancelled){
+        const open=localId?await bundleLoader(localId):await openSessionLoader(vesselId,date,productType)
+        const remote=open??(!localId?await closedSessionLoader(vesselId,date,productType):null)
+        if(!isCurrent())return
+        if(remote){
           const serverLocked=remote.session.status!=='weighing'
           const useRemote=pendingCount===0||serverLocked
           const merged=serverLocked&&pendingCount>0
@@ -200,11 +216,13 @@ export function WeighingEntryPage({
           for(const entry of merged)await store.putEntry(entry)
           await store.putMeta(key,remote.session.id)
           if(useRemote)setMessage(`已核对原现场单 ${remote.session.sessionCode}`)
-        }else if(!cancelled&&!local){setSession(null);setEntries([]);setPending(0)}
-      }catch{if(!cancelled)setMessage(local?'目前离线，已载入本机现场单。':'目前离线，可继续建立本机现场单。')}
+          if(useRemote&&remote.session.status==='processed')setMessage('这张单已结单。本版暂未支持同船同日新建第二张单，请在后台处理。')
+        }else if(!local){setSession(null);setEntries([]);setPending(0)}
+      }catch{if(isCurrent())setMessage(local?'目前离线，已载入本机现场单。':'目前离线，可继续建立本机现场单。')}
+      finally{if(isCurrent())setContextLoading(false)}
     })()
     return()=>{cancelled=true}
-  },[sessionId,vesselId,date,store,openSessionLoader,bundleLoader])
+  },[sessionId,vesselId,date,productType,store,openSessionLoader,closedSessionLoader,bundleLoader])
 
   const refreshLocal=useCallback(async(currentSessionId:string)=>{
     if(!store)return
@@ -218,10 +236,10 @@ export function WeighingEntryPage({
   const syncNow=useCallback(async()=>{
     if(!store)return
     const result=await flushWeighingQueue(store,{sync:remoteSync})
-    const currentId=session?.id??await store.getMeta(`current:${vesselId}:${date}`)
+    const currentId=await store.getMeta(weighingDraftKey(productType,date,vesselId))
     if(currentId)await refreshLocal(currentId)
     if(result.failed)setMessage(`${result.lastError} 尚未同步 ${result.pending} 笔`)
-  },[store,remoteSync,session?.id,vesselId,date,refreshLocal])
+  },[store,remoteSync,productType,vesselId,date,refreshLocal])
 
   useEffect(()=>{
     const retry=()=>{void syncNow()}
@@ -231,7 +249,7 @@ export function WeighingEntryPage({
   },[syncNow])
 
   function switchProduct(next:WeighingProductType){
-    setProductType(next);setEntryMode('individual');setWeight('');setRemark('');setError('')
+    setContextLoading(true);setProductType(next);setEntryMode('individual');setWeight('');setRemark('');setError('')
     queueMicrotask(()=>weightRef.current?.focus())
   }
 
@@ -244,7 +262,7 @@ export function WeighingEntryPage({
   }
 
   async function selectVessel(nextId:string){
-    setVesselId(nextId);setError('')
+    setContextLoading(true);setVesselId(nextId);setWeight('');setError('')
     if(vessels.some(item=>item.id===nextId&&item.createdBy))return
     try{const initialized=await vesselInitializer();setVessels(visibleVessels(initialized))}
     catch{setError('默认船号建立失败，请连接网络后重试。')}
@@ -252,7 +270,7 @@ export function WeighingEntryPage({
 
   async function confirmEntry(event?:FormEvent){
     event?.preventDefault()
-    if(saveLock.current||busy||locked||!store||!selectedVessel)return
+    if(saveLock.current||busy||contextLoading||locked||!store||!selectedVessel)return
     let vesselForEntry=selectedVessel
     if(vesselForEntry.id===vesselForEntry.vesselCode&&!vesselForEntry.createdBy){
       try{
@@ -275,13 +293,14 @@ export function WeighingEntryPage({
       }catch{setError('无法建立默认鱼名，请连接网络后重试。');return}
     }
     const recordedAtClient=now(),base=session??newWeighingSession({
-      id:idFactory('session'),vesselId:vesselForEntry.id,vesselCodeSnapshot:vesselForEntry.vesselCode,
+      id:idFactory('session'),productType,vesselId:vesselForEntry.id,vesselCodeSnapshot:vesselForEntry.vesselCode,
       vesselNameSnapshot:vesselForEntry.displayName,weighingDate:date,externalSlipNo,
     })
     const entryId=idFactory('entry')
     let entry:WeighingEntry
     try{
       entry=buildWeighingEntry({id:entryId,clientEntryId:entryId,sessionId:base.id,productType,
+        receiptNoSnapshot:base.sessionCode,
         weighingDate:base.weighingDate,monthKey:base.monthKey,vesselId:base.vesselId,vesselCodeSnapshot:base.vesselCodeSnapshot,
         fishSpeciesId:productType==='fish_head'?speciesForEntry!.id:null,fishSpecies:productType==='fish_head'?speciesForEntry:null,
         fishMealQuality:productType==='fish_meal'?quality:null,entryMode,
@@ -291,10 +310,13 @@ export function WeighingEntryPage({
     const next=applyEntryCreated(base,entry),operationId=`entry_create_${entry.clientEntryId}`
     saveLock.current=true;setBusy(true);setError('')
     try{
+      // A virtual default vessel can finish initializing while this first basket is
+      // being saved. Its stale context loader must not overwrite this new draft.
+      contextRequest.current+=1
       await store.commitOperation({session:next,entry:{...entry,syncStatus:'syncing'},
         operation:{id:operationId,type:'entry_create',sessionId:base.id,entryId:entry.id,
           createdAtClient:recordedAtClient,payload:{session:base,entry}},
-        meta:{[`current:${vesselForEntry.id}:${date}`]:base.id,lastVesselId:vesselForEntry.id}})
+        meta:{[weighingDraftKey(productType,date,vesselForEntry.id)]:base.id,lastVesselId:vesselForEntry.id}})
       setSession(next);setEntries(current=>[{...entry,syncStatus:'syncing'},...current]);setPending(current=>current+1)
       setWeight('');if(entryMode==='total')setRemark('')
       setMessage('已保存');window.dispatchEvent(new Event('ccm:form-saved'));navigator.vibrate?.(40);queueMicrotask(()=>weightRef.current?.focus())
@@ -356,9 +378,9 @@ export function WeighingEntryPage({
     <header className="weighing-header"><div><p className="eyebrow">CCM Fishery</p><h1>{pageTitle}</h1></div>
       <Link to="/weighing">查看现场单</Link></header>
     <section className="weighing-setup">
-      <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} disabled={Boolean(session)} onChange={event=>void selectVessel(event.target.value)}>
+      <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} onChange={event=>void selectVessel(event.target.value)}>
         <option value="">请选择船号</option>{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-      <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(session)} onChange={event=>setDate(event.target.value)}/><small>{formatMalaysiaDate(date)}</small></label>
+      <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} onChange={event=>{setContextLoading(true);setDate(event.target.value)}}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
 
@@ -383,12 +405,13 @@ export function WeighingEntryPage({
         </div>
       </>}
       <p className="current-selection">已选择：<strong>{productType==='fish_head'?displayedSpecies.find(item=>item.id===speciesId)?.displayName:FISH_MEAL_QUALITIES.find(item=>item.id===quality)?.name}</strong></p>
+      <p className="session-code">{productType==='fish_head'?'鱼头单号':'鱼仔单号'}：<strong>{session?.sessionCode??'保存首笔重量后建立'}</strong></p>
       <form className="weighing-input-bar" onSubmit={confirmEntry}>
         <label><span>重量（kg）</span><input ref={weightRef} aria-label="重量（kg）" inputMode="decimal" enterKeyHint="done"
-          disabled={locked} value={weight} onChange={event=>setWeight(event.target.value)}
+          disabled={locked||contextLoading} value={weight} onChange={event=>setWeight(event.target.value)}
           onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();void confirmEntry()}}}/></label>
       </form>
-      <DecimalKeypad value={weight} onChange={setWeight} onConfirm={()=>void confirmEntry()} disabled={busy||locked||!vesselId}/>
+      <DecimalKeypad value={weight} onChange={setWeight} onConfirm={()=>void confirmEntry()} disabled={busy||contextLoading||locked||!vesselId}/>
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
       {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
@@ -406,7 +429,7 @@ export function WeighingEntryPage({
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
-      session?.status==='processed'?'已处理，不能重新输入。':'现场单已作废。'}</p>}
+      session?.status==='processed'?'已结单，现场录入已锁定。':'现场单已作废。'}</p>}
 
     <section className="weighing-history"><h2>完整历史记录</h2>
       <div className="weighing-entry-list">{entries.map(item=><button type="button" key={item.id}
