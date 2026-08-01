@@ -47,6 +47,18 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     await assertFails(deleteDoc(ref))
   })
 
+  it('rejects changing financial values while confirming an ice-work record', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const original = createIceWorkRecord({ id: 'ice-confirm-tamper', workDate: '31/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'u1', factoryIncomingWeightGrams: 1_000 })
+    const changed = createIceWorkRecord({ ...original, id: original.id, factoryIncomingWeightGrams: 2_000 })
+    const recordRef = doc(db, 'iceWorkRecords', original.id), actionRef = doc(recordRef, 'actions', 'confirm-tamper')
+    await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'iceWorkRecords', original.id), { ...original, lastActionId: 'create-tamper', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))
+    const batch = writeBatch(db)
+    batch.update(recordRef, { ...changed, status: 'confirmed', revision: 2, lastActionId: 'confirm-tamper', confirmedBy: 'u1', confirmedAt: serverTimestamp(), updatedBy: 'u1', updatedAt: serverTimestamp() })
+    batch.set(actionRef, { type: 'confirm', recordId: original.id, reason: null, performedBy: 'u1', performedAt: serverTimestamp(), beforeSnapshot: { ...original, lastActionId: 'create-tamper' }, afterSnapshot: { ...changed, status: 'confirmed', revision: 2, lastActionId: 'confirm-tamper' }, revision: 2, clientOperationId: 'confirm-tamper' })
+    await assertFails(batch.commit())
+  })
+
   it('rejects every client write to monthly settlements and their actions', async () => {
     const db = environment.authenticatedContext('u1').firestore(), settlement = createIceWorkSettlement({ vesselId: 'v978', vesselCodeSnapshot: '978', monthKey: '07/2026', createdBy: 'u1', records: [] })
     const settlementRef = doc(db, 'iceWorkMonthlySettlements', settlement.id), actionRef = doc(settlementRef, 'actions', 'settlement-create-1'), batch = writeBatch(db)

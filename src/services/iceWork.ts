@@ -12,8 +12,15 @@ const recordFrom = (id: string, data: Record<string, unknown>): IceWorkRecord =>
 }
 
 export async function loadIceWorkRecords(vesselId: string, monthKey: string) {
-  const snapshot = await getDocs(query(collection(db, 'iceWorkRecords'), where('vesselId', '==', vesselId), where('monthKey', '==', monthKey)))
-  return snapshot.docs.map(item => recordFrom(item.id, item.data())).sort((a, b) => b.dateSortKey - a.dateSortKey || b.id.localeCompare(a.id))
+  const [month, year] = monthKey.split('/')
+  const legacyMonthKey = year && month ? `${year}-${month}` : ''
+  const snapshots = await Promise.all([
+    getDocs(query(collection(db, 'iceWorkRecords'), where('vesselId', '==', vesselId), where('monthKey', '==', monthKey))),
+    legacyMonthKey ? getDocs(query(collection(db, 'iceWorkRecords'), where('vesselId', '==', vesselId), where('monthKey', '==', legacyMonthKey))) : Promise.resolve(null),
+  ])
+  const documents = new Map<string, ReturnType<typeof recordFrom>>()
+  snapshots.flatMap(snapshot => snapshot?.docs ?? []).forEach(item => documents.set(item.id, recordFrom(item.id, item.data())))
+  return [...documents.values()].sort((a, b) => b.dateSortKey - a.dateSortKey || b.id.localeCompare(a.id))
 }
 export async function loadIceWorkSettlement(vesselId: string, monthKey: string) { const item = await getDoc(doc(db, 'iceWorkMonthlySettlements', iceWorkSettlementId(vesselId, monthKey))); return item.exists() ? { ...item.data(), id: item.id } as IceWorkMonthlySettlement : null }
 

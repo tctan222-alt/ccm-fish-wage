@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createIceWorkRecord, createIceWorkSettlement, parseIceBoxHalfUnits, summarizeIceWorkMonth } from './iceWork'
+import { createIceWorkRecord, createIceWorkSettlement, parseIceBoxHalfUnits, parseWholeKilogramsToGrams, summarizeIceWorkMonth } from './iceWork'
 
 describe('冰工计算和月结', () => {
   it('uses grams, milliliters, half units and cents to calculate a work record', () => {
@@ -21,6 +21,13 @@ describe('冰工计算和月结', () => {
     expect(parseIceBoxHalfUnits('2.5')).toBe(5)
     expect(() => parseIceBoxHalfUnits('1.25')).toThrow('冰箱子数量')
     expect(createIceWorkRecord({ id: 'half', workDate: '01/07/2026', vesselId: 'v', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'admin', dieselVolumeMilliliters: 500 }).dieselAmountCents).toBe(1)
+  })
+
+  it('accepts only whole 1–300 kg values for new ice-work weight fields', () => {
+    expect(parseWholeKilogramsToGrams('125')).toBe(125_000)
+    expect(parseWholeKilogramsToGrams('')).toBe(0)
+    expect(() => parseWholeKilogramsToGrams('125.5')).toThrow()
+    expect(() => parseWholeKilogramsToGrams('301')).toThrow()
   })
 
   it('adds RM500 and RM250 exactly once per vessel monthly settlement', () => {

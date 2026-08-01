@@ -31,8 +31,9 @@ async function chooseWorkerAndEnter74Kg(){
 describe('fish head worker session flow',()=>{
   it('keeps the wage page limited to wage entry and wage summaries',async()=>{
     setup()
-    expect(await screen.findByRole('link',{name:/Today \/ Daily Summary/i})).toBeInTheDocument()
-    expect(screen.getByRole('link',{name:/Monthly Summary/i})).toBeInTheDocument()
+    expect(await screen.findByRole('link',{name:'工钱录入'})).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'工钱 Summary'})).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'← 返回'})).toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/Vessel Trips/i})).not.toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/现场称重/i})).not.toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/Purchases & Receiving/i})).not.toBeInTheDocument()
@@ -50,10 +51,10 @@ describe('fish head worker session flow',()=>{
     const batchSaver=setup()
     await chooseWorkerAndEnter74Kg()
 
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'Added: Ah Mei, 74kg × RM0.12 = RM8.88',
+      '已加入：Ah Mei，74kg × RM0.12 = RM8.88',
     )
     expect(batchSaver).not.toHaveBeenCalled()
     expect(screen.getByText('74kg × RM0.12')).toBeInTheDocument()
@@ -62,20 +63,20 @@ describe('fish head worker session flow',()=>{
     expect(screen.getByRole('button',{name:'Ah Mei'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByRole('button',{name:'Ali'})).toBeDisabled()
     expect(screen.getByRole('button',{name:/RM0\.12/})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByLabelText(/current basket weight/i)).toHaveTextContent('0 kg')
+    expect(screen.getByLabelText('当前篮重')).toHaveTextContent('0 kg')
   })
 
   it('saves all current worker entries as one batch and resets for the next worker',async()=>{
     const batchSaver=setup()
     await chooseWorkerAndEnter74Kg()
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     fireEvent.click(screen.getByRole('button',{name:'7'}))
     fireEvent.click(screen.getByRole('button',{name:'1'}))
     fireEvent.click(screen.getByRole('button',{name:/RM0\.15/}))
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
-    fireEvent.click(screen.getByRole('button',{name:/confirm worker total/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认并保存工人合计'}))
 
     await waitFor(()=>expect(batchSaver).toHaveBeenCalledOnce())
     const payload=batchSaver.mock.calls[0][0]
@@ -83,7 +84,7 @@ describe('fish head worker session flow',()=>{
     expect(payload[0]).toMatchObject({workerName:'Ah Mei',weightKg:74,rateRm:'0.12',wageRm:'8.88'})
     expect(payload[1]).toMatchObject({workerName:'Ah Mei',weightKg:71,rateRm:'0.15',wageRm:'10.65'})
     expect(await screen.findByRole('status')).toHaveTextContent(
-      'Saved Ah Mei: 2 baskets, 145kg, RM19.53',
+      '已保存 Ah Mei：2 篮，145kg，RM19.53',
     )
     expect(screen.queryByText('74kg × RM0.12')).not.toBeInTheDocument()
     expect(screen.getByRole('button',{name:'Ali'})).not.toBeDisabled()
@@ -92,31 +93,31 @@ describe('fish head worker session flow',()=>{
   it('removes a wrong entry before the worker total is saved',async()=>{
     setup()
     await chooseWorkerAndEnter74Kg()
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     const list=screen.getByRole('list')
-    fireEvent.click(within(list).getByRole('button',{name:'Remove entry 1'}))
+    fireEvent.click(within(list).getByRole('button',{name:'移除第 1 篮'}))
 
     expect(screen.queryByText('74kg × RM0.12')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button',{name:/confirm worker total/i})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'确认并保存工人合计'})).not.toBeInTheDocument()
   })
 
   it('warns before adding a rapid duplicate entry',async()=>{
     let time=1_000_000
     setup(undefined,()=>time)
     await chooseWorkerAndEnter74Kg()
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     time+=4000
     fireEvent.click(screen.getByRole('button',{name:'7'}))
     fireEvent.click(screen.getByRole('button',{name:'4'}))
-    fireEvent.click(screen.getByRole('button',{name:/confirm entry/i}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     const warning=await screen.findByRole('alert')
-    expect(warning).toHaveTextContent('Possible duplicate entry.')
+    expect(warning).toHaveTextContent('可能重复加入。')
     expect(screen.getAllByText('74kg × RM0.12')).toHaveLength(1)
 
-    fireEvent.click(screen.getByRole('button',{name:/add anyway/i}))
+    fireEvent.click(screen.getByRole('button',{name:'仍然加入'}))
     expect(screen.getAllByText('74kg × RM0.12')).toHaveLength(2)
   })
 })

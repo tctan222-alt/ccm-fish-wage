@@ -65,6 +65,15 @@ export function parseKgToGrams(value: string): number {
   return Number(whole) * 1_000 + Number(fraction.padEnd(3, '0'))
 }
 
+export function parseWholeKilogramsToGrams(value: string): number {
+  const clean = value.trim()
+  if (clean === '') return 0
+  if (!/^\d+$/.test(clean)) throw new Error('重量必须为整公斤。')
+  const kilograms = Number(clean)
+  if (kilograms < 1 || kilograms > 300) throw new Error('重量必须为 1 至 300 公斤。')
+  return kilograms * 1_000
+}
+
 export function parseLitersToMilliliters(value: string): number { return parseKgToGrams(value) }
 
 export function parseIceBoxHalfUnits(value: string): number {
