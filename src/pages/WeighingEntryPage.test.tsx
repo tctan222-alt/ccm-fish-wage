@@ -18,6 +18,7 @@ function setup(sync=remoteSync()){
     vesselLoader={async()=>vessels}
     speciesLoader={async()=>DEFAULT_FISH_SPECIES}
     openSessionLoader={async()=>null}
+    closedSessionLoader={async()=>null}
     offlineStore={store}
     remoteSync={sync}
     today={()=> '2026-07-30'}
@@ -66,7 +67,7 @@ describe('iPhone 现场称重单页',()=>{
     const store=createMemoryWeighingStore()
     let sessionNo=0,entryNo=0
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
-      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?`session-${++sessionNo}`:`entry-${++entryNo}`}/></MemoryRouter>)
 
@@ -95,7 +96,7 @@ describe('iPhone 现场称重单页',()=>{
     const store=createMemoryWeighingStore()
     let sessionNo=0,entryNo=0
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
-      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?`meal-session-${++sessionNo}`:`meal-entry-${++entryNo}`}/></MemoryRouter>)
 
@@ -131,7 +132,7 @@ describe('iPhone 现场称重单页',()=>{
     const delayed=new Promise<null>(resolve=>{release=resolve})
     const loader=vi.fn(()=>delayed)
     render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES}
-      openSessionLoader={loader} offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      openSessionLoader={loader} closedSessionLoader={async()=>null} offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'race-session':`${kind}-race`}/></MemoryRouter>)
     const weight=await screen.findByLabelText('重量（kg）')
     await waitFor(()=>expect(loader).toHaveBeenCalledOnce())
@@ -194,14 +195,14 @@ describe('iPhone 现场称重单页',()=>{
   it('曾在线载入后，离线重开仍可使用缓存的船号和鱼名继续录入',async()=>{
     const shared=new Map<string,unknown>(),firstStore=createMemoryWeighingStore(shared)
     const first=render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels}
-      speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={firstStore} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
     await waitFor(()=>expect(firstStore.getMeta('reference:vessels')).resolves.toBeTruthy())
     first.unmount()
 
     render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>{throw new Error('offline')}}
-      speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null}
+      speciesLoader={async()=>{throw new Error('offline')}} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={createMemoryWeighingStore(shared)} remoteSync={remoteSync()} today={()=> '2026-07-30'}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'金线'})).toBeInTheDocument()
     expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978')
@@ -214,7 +215,7 @@ describe('iPhone 现场称重单页',()=>{
     const initialized=new Promise<FishSpeciesRecord[]>(resolve=>{finishInitialization=resolve})
     const speciesInitializer=vi.fn(()=>initialized)
     render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>[]}
-      speciesInitializer={speciesInitializer} openSessionLoader={async()=>null} offlineStore={store} remoteSync={remoteSync()}
+      speciesInitializer={speciesInitializer} openSessionLoader={async()=>null} closedSessionLoader={async()=>null} offlineStore={store} remoteSync={remoteSync()}
       today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
 
@@ -233,7 +234,7 @@ describe('iPhone 现场称重单页',()=>{
   it('鱼头采购不显示鱼名下拉、key-in 或现场价钱，并可把自定义鱼名保存到当前单',async()=>{
     const store=createMemoryWeighingStore()
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
-      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       speciesCreator={async item=>item} idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}/></MemoryRouter>)
     expect(await screen.findByRole('heading',{name:'鱼头购入'})).toBeInTheDocument()
@@ -255,7 +256,7 @@ describe('iPhone 现场称重单页',()=>{
   it('鱼仔逐篮和总重不保存价钱，也不会为总重制造虚假篮数',async()=>{
     const store=createMemoryWeighingStore()
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
-      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null}
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-${Math.random()}`}/></MemoryRouter>)
     await screen.findByRole('heading',{name:'鱼仔购入'})
