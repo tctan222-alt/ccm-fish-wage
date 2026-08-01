@@ -73,7 +73,33 @@ describe('iPhone 现场称重单页',()=>{
     expect(screen.getAllByText('金线').length).toBeGreaterThan(1)
     expect(screen.getAllByText('80 kg').length).toBeGreaterThan(0)
     expect(screen.getByText('1 篮')).toBeInTheDocument()
-    expect((await store.getEntries('session-v978-20260730'))).toEqual([expect.objectContaining({receiptNoSnapshot:'FH-978-30072026-01'})])
+    expect((await store.getEntries('session-v978-20260730'))).toEqual([expect.not.objectContaining({receiptNoSnapshot:expect.any(String)})])
+  })
+
+  it('鱼头单号可以留空；有船号、鱼名和合法重量时仍会保存，并且不伪造正式单号快照',async()=>{
+    const {store}=setup()
+    const slip=await screen.findByLabelText('鱼头单号')
+    expect(slip).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'80.5'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+
+    await screen.findByText('已保存')
+    expect(await store.getSession('session-v978-20260730')).toMatchObject({externalSlipNo:''})
+    expect((await store.getEntries('session-v978-20260730'))[0]).not.toHaveProperty('receiptNoSnapshot')
+  })
+
+  it('切换船号后鱼头单号仍可输入，且会在下一篮保存到该草稿单',async()=>{
+    const {store}=setup()
+    await screen.findByLabelText('重量（kg）')
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    const slip=screen.getByLabelText('鱼头单号')
+    await waitFor(()=>expect(slip).not.toBeDisabled())
+    fireEvent.change(slip,{target:{value:'FH-833-A'}})
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+
+    await screen.findByText('已保存')
+    expect(await store.getSession('session-v978-20260730')).toMatchObject({vesselId:'v833',externalSlipNo:'FH-833-A'})
   })
 
   it('切换船号会切换当天同产品的草稿单，不会混入或改写另一艘船的记录',async()=>{
@@ -114,6 +140,7 @@ describe('iPhone 现场称重单页',()=>{
       idFactory={kind=>kind==='session'?`meal-session-${++sessionNo}`:`meal-entry-${++entryNo}`}/></MemoryRouter>)
 
     const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.click(screen.getByRole('button',{name:'桶鱼仔'}))
     fireEvent.change(weight,{target:{value:'10'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')
@@ -126,6 +153,45 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
     await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('10 kg'))
     expect(await store.getSession('meal-session-1')).toMatchObject({productType:'fish_meal',vesselId:'v978',sessionCode:'FM-978-30072026-01'})
+  })
+
+  it('鱼仔单号可以留空；未选桶鱼仔或包鱼仔时阻止保存，选择后会保存而不写正式单号快照',async()=>{
+    const store=createMemoryWeighingStore()
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
+      offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'meal-session-optional-slip':`${kind}-optional-slip`}/></MemoryRouter>)
+    const slip=await screen.findByLabelText('鱼仔单号')
+    expect(slip).toHaveValue('')
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'10'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('请选择桶鱼仔或包鱼仔')
+    expect(screen.getByLabelText('重量（kg）')).toHaveValue('10')
+
+    fireEvent.click(screen.getByRole('button',{name:'包鱼仔'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect(await store.getSession('meal-session-optional-slip')).toMatchObject({externalSlipNo:'',productType:'fish_meal'})
+    expect((await store.getEntries('meal-session-optional-slip'))[0]).not.toHaveProperty('receiptNoSnapshot')
+  })
+
+  it('切换船号后鱼仔单号、品质和重量键盘仍可继续使用',async()=>{
+    const store=createMemoryWeighingStore()
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
+      offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'meal-session-switch':`${kind}-meal-switch`}/></MemoryRouter>)
+    await screen.findByLabelText('重量（kg）')
+    fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    const slip=screen.getByLabelText('鱼仔单号')
+    await waitFor(()=>expect(slip).not.toBeDisabled())
+    fireEvent.change(slip,{target:{value:'FM-833-A'}})
+    fireEvent.click(screen.getByRole('button',{name:'桶鱼仔'}))
+    fireEvent.click(screen.getByRole('button',{name:'8'}))
+    expect(screen.getByLabelText('重量（kg）')).toHaveValue('8')
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect(await store.getSession('meal-session-switch')).toMatchObject({vesselId:'v833',externalSlipNo:'FM-833-A'})
   })
 
   it('已结单的当前船单会明确锁定现场录入，而不会静默新建或混入草稿',async()=>{
@@ -273,6 +339,7 @@ describe('iPhone 现场称重单页',()=>{
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-${Math.random()}`}/></MemoryRouter>)
     await screen.findByRole('heading',{name:'鱼仔购入'})
+    fireEvent.click(screen.getByRole('button',{name:'桶鱼仔'}))
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'10'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')

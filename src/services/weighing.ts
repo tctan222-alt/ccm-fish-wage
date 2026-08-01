@@ -203,13 +203,14 @@ export async function syncWeighingOperation(operation:PendingWeighingOperation){
         const currentSession=sessionSnapshot.exists()?sessionFrom(sessionRef.id,sessionSnapshot.data()):payload.session
         return {session:currentSession,entry:entryFrom(entryRef.id,sessionRef.id,entrySnapshot.data())}
       }
-      const base=sessionSnapshot.exists()?sessionFrom(sessionRef.id,sessionSnapshot.data()):payload.session
+      const current=sessionSnapshot.exists()?sessionFrom(sessionRef.id,sessionSnapshot.data()):null
+      const base=current?{...current,externalSlipNo:payload.session.externalSlipNo}:payload.session
       const next=applyEntryCreated(base,payload.entry)
       transaction.set(sessionRef,storedSession(next,user.uid,timestamp,actionId,!sessionSnapshot.exists()),{merge:false})
       transaction.set(entryRef,storedEntry(payload.entry,user.uid,timestamp,actionId,true))
       transaction.set(doc(sessionRef,'actions',actionId),{type:'entry_create',sessionId:sessionRef.id,entryId:entryRef.id,
         reason:null,performedBy:user.uid,performedAt:timestamp,beforeSnapshot:null,
-        afterSnapshot:{revision:payload.entry.revision,weightGrams:payload.entry.weightGrams,
+        afterSnapshot:{revision:payload.entry.revision,weightGrams:payload.entry.weightGrams,externalSlipNo:next.externalSlipNo,
           unitPriceCentsPerKg:payload.entry.unitPriceCentsPerKg??null,amountCents:payload.entry.amountCents??null},clientOperationId:operation.id})
       if(!sessionSnapshot.exists()){
         transaction.set(doc(sessionRef,'actions',`create_${sessionRef.id}`),{type:'create',sessionId:sessionRef.id,entryId:null,

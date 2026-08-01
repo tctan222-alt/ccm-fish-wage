@@ -106,7 +106,7 @@ export function WeighingEntryPage({
   const [entries,setEntries]=useState<WeighingEntry[]>([])
   const [productType,setProductType]=useState<WeighingProductType>(fixedProductType??'fish_head')
   const [speciesId,setSpeciesId]=useState('')
-  const [quality,setQuality]=useState<FishMealQuality>('bucket')
+  const [quality,setQuality]=useState<FishMealQuality|''>('')
   const [entryMode,setEntryMode]=useState<WeighingEntryMode>('individual')
   const [weight,setWeight]=useState('')
   const [remark,setRemark]=useState('')
@@ -292,18 +292,19 @@ export function WeighingEntryPage({
         speciesForEntry=resolved;setSpecies(initialized);setSpeciesId(resolved.id)
       }catch{setError('无法建立默认鱼名，请连接网络后重试。');return}
     }
-    const recordedAtClient=now(),base=session??newWeighingSession({
+    const recordedAtClient=now(),cleanExternalSlipNo=externalSlipNo.trim(),base=session
+      ?{...session,externalSlipNo:cleanExternalSlipNo}
+      :newWeighingSession({
       id:idFactory('session'),productType,vesselId:vesselForEntry.id,vesselCodeSnapshot:vesselForEntry.vesselCode,
-      vesselNameSnapshot:vesselForEntry.displayName,weighingDate:date,externalSlipNo,
+      vesselNameSnapshot:vesselForEntry.displayName,weighingDate:date,externalSlipNo:cleanExternalSlipNo,
     })
     const entryId=idFactory('entry')
     let entry:WeighingEntry
     try{
       entry=buildWeighingEntry({id:entryId,clientEntryId:entryId,sessionId:base.id,productType,
-        receiptNoSnapshot:base.sessionCode,
         weighingDate:base.weighingDate,monthKey:base.monthKey,vesselId:base.vesselId,vesselCodeSnapshot:base.vesselCodeSnapshot,
         fishSpeciesId:productType==='fish_head'?speciesForEntry!.id:null,fishSpecies:productType==='fish_head'?speciesForEntry:null,
-        fishMealQuality:productType==='fish_meal'?quality:null,entryMode,
+        fishMealQuality:productType==='fish_meal'?quality||null:null,entryMode,
         sequenceNo:entryMode==='individual'?base.lastSequenceNo+1:null,weightGrams:grams,remark,
         recordedAtClient,recordedAt:recordedAtClient,recordedBy:auth.currentUser?.uid??'local-user'})
     }catch(problem){setError(problem instanceof Error?problem.message:'无法建立称重记录。');return}
@@ -381,7 +382,8 @@ export function WeighingEntryPage({
       <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} onChange={event=>void selectVessel(event.target.value)}>
         <option value="">请选择船号</option>{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
       <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} onChange={event=>{setContextLoading(true);setDate(event.target.value)}}/><small>{formatMalaysiaDate(date)}</small></label>
-      <label className="slip-field">手写单号（可选）<input value={externalSlipNo} disabled={Boolean(session)} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
+      <label className="slip-field">{productType==='fish_head'?'鱼头单号（可之后补填）':'鱼仔单号（可之后补填）'}
+        <input aria-label={productType==='fish_head'?'鱼头单号':'鱼仔单号'} value={externalSlipNo} maxLength={100} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
 
     {species.length===0&&<p className="notice">正在显示 CCM 默认鱼名；选择后会安全补齐主资料。</p>}
