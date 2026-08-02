@@ -427,7 +427,7 @@ export function WeighingEntryPage({
         <span>{pending>0?`尚未同步 ${pending} 笔`:'全部已同步'}</span>
         {pending>0&&<button type="button" onClick={()=>void syncNow()}>重新同步</button>}
       </div>
-      <section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={entries}/></section>
+      {activeEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={activeEntries}/></section>}
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
@@ -467,16 +467,22 @@ function entryTime(value:string){
 }
 
 function CategorySummary({entries}:{entries:WeighingEntry[]}){
-  const groups=new Map<string,{name:string;baskets:number;individualGrams:number;totalGrams:number}>()
+  const groups=new Map<string,{key:string;name:string;baskets:number;totalRecords:number;weightGrams:number}>()
   entries.filter(item=>!item.voided).forEach(item=>{
     const key=item.productType==='fish_head'?`species:${item.fishSpeciesCodeSnapshot}`:`meal:${item.fishMealQuality}`
-    const current=groups.get(key)??{name:item.displayNameSnapshot,baskets:0,individualGrams:0,totalGrams:0}
-    if(item.entryMode==='individual'){current.baskets+=1;current.individualGrams+=item.weightGrams}
-    else current.totalGrams+=item.weightGrams
+    const current=groups.get(key)??{key,name:item.displayNameSnapshot,baskets:0,totalRecords:0,weightGrams:0}
+    if(item.entryMode==='individual')current.baskets+=1
+    else current.totalRecords+=1
+    current.weightGrams+=item.weightGrams
     groups.set(key,current)
   })
-  return <ul>{[...groups.values()].map(item=><li key={item.name}><strong>{item.name}</strong><span>{item.baskets} 篮 · 逐篮 {formatWeightKg(item.individualGrams)} kg
-    {item.totalGrams>0&&` · 总重记录 ${formatWeightKg(item.totalGrams)} kg`} · 合计 {formatWeightKg(item.individualGrams+item.totalGrams)} kg</span></li>)}</ul>
+  const fishMeal=entries[0]?.productType==='fish_meal'
+  return <table><thead><tr><th>{fishMeal?'品质':'鱼名'}</th><th>总重量</th><th>{fishMeal?'篮子数 / 总重记录':'篮子数'}</th></tr></thead>
+    <tbody>{[...groups.values()].map(item=><tr key={item.key}><th scope="row">{item.name}</th><td>{formatWeightKg(item.weightGrams)} kg</td>
+      <td>{fishMeal?[
+        item.baskets>0?`${item.baskets} 篮`:null,
+        item.totalRecords>0?`总重 ${item.totalRecords} 条`:null,
+      ].filter(Boolean).join(' / '):`${item.baskets} 篮`}</td></tr>)}</tbody></table>
 }
 
 function CompleteDialog({session,pending,close,confirm}:{session:WeighingSession;pending:number;close:()=>void;confirm:()=>void}){

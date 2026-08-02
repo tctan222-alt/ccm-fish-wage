@@ -54,6 +54,7 @@ describe('iPhone 现场称重单页',()=>{
     expect(within(species).getByRole('button',{name:'金线'})).toHaveAttribute('aria-pressed','true')
     expect(screen.getByLabelText('重量（kg）')).toBeInTheDocument()
     expect(screen.getByRole('button',{name:'确认加入'})).toBeInTheDocument()
+    expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument()
     expect(screen.getByLabelText('route')).toHaveTextContent('/weighing/new')
     expect(document.body).not.toHaveTextContent('fish_head')
     expect(document.body).not.toHaveTextContent('jin_xian')
@@ -72,7 +73,7 @@ describe('iPhone 现场称重单页',()=>{
     expect(screen.getByText('最近一篮')).toBeInTheDocument()
     expect(screen.getAllByText('金线').length).toBeGreaterThan(1)
     expect(screen.getAllByText('80 kg').length).toBeGreaterThan(0)
-    expect(screen.getByText('1 篮')).toBeInTheDocument()
+    expect(screen.getAllByText('1 篮').length).toBeGreaterThan(0)
     expect((await store.getEntries('session-v978-20260730'))).toEqual([expect.not.objectContaining({receiptNoSnapshot:expect.any(String)})])
   })
 
@@ -114,14 +115,21 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(weight,{target:{value:'80'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await screen.findByText('已保存')
-    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg')
+    const firstSummary=screen.getByRole('region',{name:'现场汇总'})
+    expect(firstSummary).toHaveTextContent('80 kg')
+    expect(within(firstSummary).getByRole('columnheader',{name:'鱼名'})).toBeInTheDocument()
+    expect(within(firstSummary).getByRole('columnheader',{name:'总重量'})).toBeInTheDocument()
+    expect(within(firstSummary).getByRole('columnheader',{name:'篮子数'})).toBeInTheDocument()
+    expect(within(firstSummary).getByRole('rowheader',{name:'金线'})).toBeInTheDocument()
+    expect(within(firstSummary).getByText('1 篮')).toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
-    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).not.toHaveTextContent('80 kg'))
+    await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
     await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('session-2')).toHaveLength(1))
+    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('60 kg')
 
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
     await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg'))
@@ -146,13 +154,55 @@ describe('iPhone 现场称重单页',()=>{
     await screen.findByText('已保存')
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
-    expect(screen.getByRole('region',{name:'现场汇总'})).not.toHaveTextContent('10 kg')
+    expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'20'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('meal-session-2')).toHaveLength(1))
+    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('20 kg')
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
     await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('10 kg'))
     expect(await store.getSession('meal-session-1')).toMatchObject({productType:'fish_meal',vesselId:'v978',sessionCode:'FM-978-30072026-01'})
+  })
+
+  it('鱼头 Summary 以鱼种代码分组，即使历史显示名相同也保留两行',async()=>{
+    const store=createMemoryWeighingStore()
+    const species=DEFAULT_FISH_SPECIES.map(item=>item.speciesCode==='lai_ge'?{...item,displayName:'金线'}:item)
+    let entryNo=0
+    render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
+      vesselLoader={async()=>vessels} speciesLoader={async()=>species} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
+      offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
+      idFactory={kind=>kind==='session'?'same-name-session':`same-name-entry-${++entryNo}`}/></MemoryRouter>)
+
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    const speciesButtons=within(screen.getByRole('group',{name:'鱼名'})).getAllByRole('button',{name:'金线'})
+    fireEvent.click(speciesButtons[1])
+    fireEvent.change(weight,{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(async()=>expect(await store.getEntries('same-name-session')).toHaveLength(2))
+
+    const summary=screen.getByRole('region',{name:'现场汇总'})
+    expect(within(summary).getAllByRole('rowheader',{name:'金线'})).toHaveLength(2)
+    expect(within(summary).getByText('80 kg')).toBeInTheDocument()
+    expect(within(summary).getByText('60 kg')).toBeInTheDocument()
+  })
+
+  it('当前船所有称重记录作废后完全隐藏鱼头 Summary',async()=>{
+    setup()
+    const weight=await screen.findByLabelText('重量（kg）')
+    fireEvent.change(weight,{target:{value:'80'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect(screen.getByRole('region',{name:'现场汇总'})).toBeInTheDocument()
+
+    const history=screen.getByRole('heading',{name:'完整历史记录'}).closest('section')!
+    fireEvent.click(within(history).getByRole('button',{name:/第 1 篮.*金线/}))
+    fireEvent.change(screen.getByLabelText('作废原因'),{target:{value:'输入错误'}})
+    fireEvent.click(screen.getByRole('button',{name:'作废'}))
+
+    await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
   })
 
   it('鱼仔单号可以留空；未选桶鱼仔或包鱼仔时阻止保存，选择后会保存而不写正式单号快照',async()=>{
@@ -353,7 +403,14 @@ describe('iPhone 现场称重单页',()=>{
       expect.objectContaining({fishMealQuality:'bucket',entryMode:'individual',sequenceNo:1}),
       expect.objectContaining({fishMealQuality:'bag',entryMode:'total',sequenceNo:null,weightGrams:48000,remark:'总共48包'}),
     ]))
-    expect(screen.getByText('1 篮')).toBeInTheDocument()
+    expect(screen.getAllByText('1 篮').length).toBeGreaterThan(0)
+    const summary=screen.getByRole('region',{name:'现场汇总'})
+    expect(within(summary).getByRole('columnheader',{name:'品质'})).toBeInTheDocument()
+    expect(within(summary).getByRole('columnheader',{name:'篮子数 / 总重记录'})).toBeInTheDocument()
+    expect(within(summary).getByRole('rowheader',{name:'桶鱼仔'})).toBeInTheDocument()
+    expect(within(summary).getByRole('rowheader',{name:'包鱼仔'})).toBeInTheDocument()
+    expect(within(summary).getByText('总重 1 条')).toBeInTheDocument()
+    expect(summary).not.toHaveTextContent('0 篮')
   })
 
   it('在鱼头重量下显示十进制 keypad，并以相同确认逻辑保存 grams',async()=>{
