@@ -179,6 +179,7 @@ describe('iPhone 现场称重单页',()=>{
     await screen.findByText('已保存')
     const speciesButtons=within(screen.getByRole('group',{name:'鱼名'})).getAllByRole('button',{name:'金线'})
     fireEvent.click(speciesButtons[1])
+    await waitFor(()=>expect(speciesButtons[1]).toHaveAttribute('aria-pressed','true'))
     fireEvent.change(weight,{target:{value:'60'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('same-name-session')).toHaveLength(2))
