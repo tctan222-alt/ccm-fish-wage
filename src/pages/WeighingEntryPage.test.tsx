@@ -1,5 +1,5 @@
 import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
-import { MemoryRouter,useLocation } from 'react-router-dom'
+import { MemoryRouter,Route,Routes,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { applyEntryCreated,DEFAULT_FISH_SPECIES,newWeighingSession,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
@@ -203,6 +203,26 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.click(screen.getByRole('button',{name:'作废'}))
 
     await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
+  })
+
+  it('编辑既有现场单时锁定上下文，避免把原单 Summary 显示到另一艘船',async()=>{
+    const loadedSession=newWeighingSession({id:'loaded-session',productType:'fish_head',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'978',weighingDate:'2026-07-30'})
+    const loadedEntry:WeighingEntry={
+      id:'loaded-entry',clientEntryId:'loaded-entry',sessionId:'loaded-session',productType:'fish_head',fishSpeciesId:'jin_xian',
+      fishSpeciesCodeSnapshot:'jin_xian',fishSpeciesNameSnapshot:'金线',fishMealQuality:null,displayNameSnapshot:'金线',entryMode:'individual',
+      sequenceNo:1,weightGrams:80_000,remark:'',recordedAtClient:'2026-07-30T12:00:00.000+08:00',recordedAt:null,recordedBy:'u1',
+      syncStatus:'synced',voided:false,voidReason:null,revision:1,
+    }
+    render(<MemoryRouter initialEntries={['/weighing/loaded-session']}><Routes><Route path="/weighing/:sessionId" element={<WeighingEntryPage
+      fixedProductType="fish_head" pageTitle="鱼头购入" vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES}
+      bundleLoader={async()=>({session:loadedSession,entries:[loadedEntry]})} offlineStore={createMemoryWeighingStore()} remoteSync={remoteSync()}
+      today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}/>} /></Routes></MemoryRouter>)
+
+    expect(await screen.findByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg')
+    expect(screen.getByRole('combobox',{name:'船号'})).toBeDisabled()
+    expect(screen.getByLabelText('日期')).toBeDisabled()
+    expect(screen.getAllByText('80 kg').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('1 篮').length).toBeGreaterThan(0)
   })
 
   it('鱼仔单号可以留空；未选桶鱼仔或包鱼仔时阻止保存，选择后会保存而不写正式单号快照',async()=>{

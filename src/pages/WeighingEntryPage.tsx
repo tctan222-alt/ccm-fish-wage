@@ -126,10 +126,12 @@ export function WeighingEntryPage({
   const store=offlineStore
   const activeSpecies=useMemo(()=>activeFishSpecies(species),[species])
   const displayedSpecies=useMemo(()=>visibleFishSpecies(species),[species])
-  const activeEntries=entries.filter(item=>!item.voided)
-  const summary=summarizeWeighingEntries(entries)
-  const latestIndividual=activeEntries.find(item=>item.entryMode==='individual')
-  const latest=activeEntries[0]
+  const contextMatchesSession=!sessionId||Boolean(session&&session.vesselId===vesselId&&session.weighingDate===date&&session.productType===productType)
+  const contextEntries=contextMatchesSession?entries:[]
+  const activeContextEntries=contextEntries.filter(item=>!item.voided)
+  const summary=summarizeWeighingEntries(contextEntries)
+  const latestIndividual=activeContextEntries.find(item=>item.entryMode==='individual')
+  const latest=activeContextEntries[0]
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const locked=Boolean(session&&session.status!=='weighing')
 
@@ -379,9 +381,9 @@ export function WeighingEntryPage({
     <header className="weighing-header"><div><p className="eyebrow">CCM Fishery</p><h1>{pageTitle}</h1></div>
       <Link to="/weighing">查看现场单</Link></header>
     <section className="weighing-setup">
-      <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} onChange={event=>void selectVessel(event.target.value)}>
+        <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} disabled={Boolean(sessionId)} onChange={event=>void selectVessel(event.target.value)}>
         <option value="">请选择船号</option>{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-      <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} onChange={event=>{setContextLoading(true);setDate(event.target.value)}}/><small>{formatMalaysiaDate(date)}</small></label>
+        <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(sessionId)} onChange={event=>{setContextLoading(true);setDate(event.target.value)}}/><small>{formatMalaysiaDate(date)}</small></label>
       <label className="slip-field">{productType==='fish_head'?'鱼头单号（可之后补填）':'鱼仔单号（可之后补填）'}
         <input aria-label={productType==='fish_head'?'鱼头单号':'鱼仔单号'} value={externalSlipNo} maxLength={100} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
     </section>
@@ -389,8 +391,8 @@ export function WeighingEntryPage({
     {species.length===0&&<p className="notice">正在显示 CCM 默认鱼名；选择后会安全补齐主资料。</p>}
     <section className="weighing-core">
       {!fixedProductType&&<div className="product-switch" role="group" aria-label="产品类型">
-        <button type="button" aria-pressed={productType==='fish_head'} className={productType==='fish_head'?'selected':''} onClick={()=>switchProduct('fish_head')}>鱼头</button>
-        <button type="button" aria-pressed={productType==='fish_meal'} className={productType==='fish_meal'?'selected':''} onClick={()=>switchProduct('fish_meal')}>鱼仔</button>
+          <button type="button" aria-pressed={productType==='fish_head'} disabled={Boolean(sessionId)} className={productType==='fish_head'?'selected':''} onClick={()=>switchProduct('fish_head')}>鱼头</button>
+          <button type="button" aria-pressed={productType==='fish_meal'} disabled={Boolean(sessionId)} className={productType==='fish_meal'?'selected':''} onClick={()=>switchProduct('fish_meal')}>鱼仔</button>
       </div>}
       {productType==='fish_head'?<div className="species-grid" role="group" aria-label="鱼名">
         {displayedSpecies.map(item=><button type="button" key={item.id} aria-pressed={speciesId===item.id} disabled={!item.active}
@@ -427,7 +429,7 @@ export function WeighingEntryPage({
         <span>{pending>0?`尚未同步 ${pending} 笔`:'全部已同步'}</span>
         {pending>0&&<button type="button" onClick={()=>void syncNow()}>重新同步</button>}
       </div>
-      {activeEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={activeEntries}/></section>}
+      {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={activeContextEntries}/></section>}
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
@@ -441,7 +443,7 @@ export function WeighingEntryPage({
         <em>{item.voided?'已作废':item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
       </button>)}</div>
     </section>
-    {!locked&&activeEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
+    {!locked&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
     {session?.status==='completed'&&<Link className="primary-action settlement-link" to={`/weighing/${session.id}/review`}>去结单</Link>}
     {showComplete&&session&&<CompleteDialog session={session} pending={pending} close={()=>setShowComplete(false)} confirm={()=>void complete()}/>}
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
