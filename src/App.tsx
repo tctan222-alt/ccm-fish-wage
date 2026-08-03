@@ -32,6 +32,7 @@ const IceVesselPage = lazy(() => import('./pages/IceVesselPage').then(module => 
 const IceMonthlySettlementPage = lazy(() => import('./pages/IceMonthlySettlementPage').then(module => ({ default: module.IceMonthlySettlementPage })))
 const CcmAdminPage = lazy(() => import('./pages/CcmAdminPage').then(module => ({ default: module.CcmAdminPage })))
 const PurchaseWeighingPage = lazy(() => import('./pages/PurchaseWeighingPage').then(module => ({ default: module.PurchaseWeighingPage })))
+const PurchaseSettlementPage = lazy(() => import('./pages/PurchaseSettlementPage').then(module => ({ default: module.PurchaseSettlementPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>正在载入 CCM Fishery…</strong></main>
@@ -52,6 +53,10 @@ function AuthenticatedApp() {
         <Route path="/fish-department" element={<FishDepartmentPage />} />
         <Route path="/fish-head-purchase" element={<PurchaseWeighingPage productType="fish_head" />} />
         <Route path="/fish-meal-purchase" element={<PurchaseWeighingPage productType="fish_meal" />} />
+        <Route path="/fish-head-settlement" element={<PurchaseSettlementPage productType="fish_head" />} />
+        <Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" />} />
+        <Route path="/fish-meal-settlement" element={<PurchaseSettlementPage productType="fish_meal" />} />
+        <Route path="/fish-meal-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_meal" />} />
         <Route path="/fish-head-wages" element={<FishHeadWagePage />} />
         <Route path="/daily" element={<TodaySummaryPage />} />
         <Route path="/ice-department" element={<IceDepartmentPage />} />

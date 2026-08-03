@@ -41,6 +41,22 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     await assertSucceeds(updateDoc(legacyRef, { deleted: true, updatedAt: serverTimestamp() }))
   })
 
+  it('allows repeatable settlement drafts but rejects deletion and confirmation status', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const draftRef = doc(db, 'purchaseSettlementDrafts', 'fish_head_20260803_v978')
+    const line = { lineType: 'fish_head', nameSnapshot: '金线', totalWeightGrams: 160500, basketCount: 1, totalWeightEntryCount: 1,
+      defaultUnitPriceCentsPerKg: 210, unitPriceCentsPerKg: 210, priceWasEdited: false, amountCents: 33705, sourceEntryIds: ['entry-1'],
+      fishSpeciesId: 'jin_xian', fishSpeciesCodeSnapshot: 'jin_xian', fishSpeciesNameSnapshot: '金线' }
+    const draft = { productType: 'fish_head', businessDate: '03/08/2026', dateSortKey: 20260803, monthKey: '08/2026', monthSortKey: 202608,
+      vesselId: 'v978', vesselCodeSnapshot: '978', receiptNo: '', status: 'settlement_draft', lines: [line], totalAmountCents: 33705,
+      sourceEntryIds: ['entry-1'], createdAt: serverTimestamp(), createdBy: 'u1', updatedAt: serverTimestamp(), updatedBy: 'u1', revision: 1, voided: false }
+    await assertSucceeds(setDoc(draftRef, draft))
+    await assertSucceeds(updateDoc(draftRef, { receiptNo: 'FH-001', totalAmountCents: 33705, revision: 2, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(draftRef, { vesselCodeSnapshot: '833', monthKey: '08/2026', monthSortKey: 202608, revision: 3, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    await assertFails(deleteDoc(draftRef))
+    await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'invalid-settlement'), { ...draft, status: 'settlement_confirmed' }))
+  })
+
   it('allows an atomic draft record and immutable create action, but rejects action changes', async () => {
     const db = environment.authenticatedContext('u1').firestore(), record = createIceWorkRecord({ id: 'ice-1', workDate: '31/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'u1', factoryIncomingWeightGrams: 1_000 })
     const recordRef = doc(db, 'iceWorkRecords', record.id), actionRef = doc(recordRef, 'actions', 'create-ice-1'), batch = writeBatch(db)

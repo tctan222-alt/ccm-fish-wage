@@ -444,7 +444,7 @@ export function WeighingEntryPage({
       </button>)}</div>
     </section>
     {!locked&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
-    {session?.status==='completed'&&<Link className="primary-action settlement-link" to={`/weighing/${session.id}/review`}>去结单</Link>}
+    {session?.status==='completed'&&<Link className="primary-action settlement-link" to={productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>去结单</Link>}
     {showComplete&&session&&<CompleteDialog session={session} pending={pending} close={()=>setShowComplete(false)} confirm={()=>void complete()}/>}
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
       save={after=>updateEntry(editing,after)} voidEntry={reason=>queueVoid(editing,reason)}/>}
