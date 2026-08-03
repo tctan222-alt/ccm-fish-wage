@@ -1923,7 +1923,6 @@ service cloud.firestore {
         && request.resource.data.productType == resource.data.productType
         && request.resource.data.businessDate == resource.data.businessDate
         && request.resource.data.vesselId == resource.data.vesselId
-        && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
         && request.resource.data.createdBy == resource.data.createdBy
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.updatedBy == request.auth.uid

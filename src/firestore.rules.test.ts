@@ -52,7 +52,7 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
       sourceEntryIds: ['entry-1'], createdAt: serverTimestamp(), createdBy: 'u1', updatedAt: serverTimestamp(), updatedBy: 'u1', revision: 1, voided: false }
     await assertSucceeds(setDoc(draftRef, draft))
     await assertSucceeds(updateDoc(draftRef, { receiptNo: 'FH-001', totalAmountCents: 33705, revision: 2, updatedBy: 'u1', updatedAt: serverTimestamp() }))
-    await assertFails(updateDoc(draftRef, { vesselCodeSnapshot: '833', monthKey: '08/2026', monthSortKey: 202608, revision: 3, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(draftRef, { vesselId: 'v833', monthKey: '08/2026', monthSortKey: 202608, revision: 3, updatedBy: 'u1', updatedAt: serverTimestamp() }))
     await assertFails(deleteDoc(draftRef))
     await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'invalid-settlement'), { ...draft, status: 'settlement_confirmed' }))
     await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'voided-settlement'), { ...draft, voided: true }))
