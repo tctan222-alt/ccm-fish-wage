@@ -55,6 +55,7 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     await assertFails(updateDoc(draftRef, { vesselCodeSnapshot: '833', monthKey: '08/2026', monthSortKey: 202608, revision: 3, updatedBy: 'u1', updatedAt: serverTimestamp() }))
     await assertFails(deleteDoc(draftRef))
     await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'invalid-settlement'), { ...draft, status: 'settlement_confirmed' }))
+    await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'voided-settlement'), { ...draft, voided: true }))
   })
 
   it('allows an atomic draft record and immutable create action, but rejects action changes', async () => {
