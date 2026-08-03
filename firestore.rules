@@ -1922,9 +1922,6 @@ service cloud.firestore {
       allow update: if signedIn() && validPurchaseSettlementDraft(request.resource.data)
         && request.resource.data.productType == resource.data.productType
         && request.resource.data.businessDate == resource.data.businessDate
-        && request.resource.data.dateSortKey == resource.data.dateSortKey
-        && request.resource.data.monthKey == resource.data.monthKey
-        && request.resource.data.monthSortKey == resource.data.monthSortKey
         && request.resource.data.vesselId == resource.data.vesselId
         && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
         && request.resource.data.createdBy == resource.data.createdBy
