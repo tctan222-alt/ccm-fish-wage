@@ -94,7 +94,7 @@ describe('iPhone 现场称重单页',()=>{
     await screen.findByLabelText('重量（kg）')
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     const slip=screen.getByLabelText('鱼头单号')
-    await waitFor(()=>expect(slip).not.toBeDisabled())
+    await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FH-833-A'}})
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
