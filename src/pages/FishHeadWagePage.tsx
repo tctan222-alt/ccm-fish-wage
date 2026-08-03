@@ -1,7 +1,9 @@
 import { useEffect,useRef,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { NumericKeypad } from '../components/NumericKeypad'
-import { FIXED_RATE_CENTS,malaysiaDateKey,money,parseRateCents,validWeight,wageCents } from '../lib/wage'
+import { FIXED_RATE_CENTS,money,parseRateCents,validWeight,wageCents } from '../lib/wage'
+import { businessDateFromLegacy,legacyIsoDateFromBusinessDate,malaysiaBusinessDate,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
+import { workerDepartmentFromWorker } from '../lib/masterData'
 import { loadActiveWorkers } from '../services/workers'
 import { saveWageEntries } from '../services/wages'
 import type { WageEntry,Worker } from '../types'
@@ -17,12 +19,14 @@ export interface PageProps {
   workerLoader?:()=>Promise<Worker[]>
   batchSaver?:(entries:WageEntry[])=>Promise<void>
   now?:()=>number
+  today?:()=>string
 }
 
 export function FishHeadWagePage({
   workerLoader=loadActiveWorkers,
   batchSaver=saveWageEntries,
   now=Date.now,
+  today=()=>malaysiaBusinessDate(new Date(now())),
 }:PageProps){
   const [workers,setWorkers]=useState<Worker[]|null>(null)
   const [worker,setWorker]=useState<Worker|null>(null)
@@ -35,6 +39,7 @@ export function FishHeadWagePage({
   const [savedSummary,setSavedSummary]=useState('')
   const [error,setError]=useState('')
   const [duplicate,setDuplicate]=useState(false)
+  const [businessDate,setBusinessDate]=useState(today)
 
   const addLock=useRef(false)
   const saveLock=useRef(false)
@@ -42,7 +47,7 @@ export function FishHeadWagePage({
 
   useEffect(()=>{
     workerLoader()
-      .then(items=>setWorkers(items.filter(item=>item.active)))
+      .then(items=>setWorkers(items.filter(item=>item.active&&workerDepartmentFromWorker(item)==='fish_head_cutting')))
       .catch(()=>{setWorkers([]);setError('无法载入工人，请稍后再试。')})
   },[workerLoader])
 
@@ -88,7 +93,11 @@ export function FishHeadWagePage({
 
     const entry:SessionEntry={
       localId:`${timestamp}-${entries.length}-${worker.id}`,
-      dateKey:malaysiaDateKey(new Date(timestamp)),
+      dateKey:legacyIsoDateFromBusinessDate(businessDate),
+      businessDate,
+      dateSortKey:sortKeyFromBusinessDate(businessDate),
+      monthKey:monthKeyFromBusinessDate(businessDate),
+      monthSortKey:monthSortKeyFromMonthKey(monthKeyFromBusinessDate(businessDate)),
       workerId:worker.id,
       workerName:worker.name,
       weightKg:weightNumber,
@@ -138,6 +147,10 @@ export function FishHeadWagePage({
 
     const payload:WageEntry[]=entries.map(entry=>({
       dateKey:entry.dateKey,
+      businessDate:entry.businessDate,
+      dateSortKey:entry.dateSortKey,
+      monthKey:entry.monthKey,
+      monthSortKey:entry.monthSortKey,
       workerId:entry.workerId,
       workerName:entry.workerName,
       weightKg:entry.weightKg,
@@ -180,9 +193,15 @@ export function FishHeadWagePage({
     </header>
 
     <nav className="summary-nav" aria-label="工钱汇总">
-      <Link className="summary-link" to="/today" aria-label="工钱录入">工钱录入</Link>
+      <Link className="summary-link" to={`/today?date=${encodeURIComponent(legacyIsoDateFromBusinessDate(businessDate))}`} aria-label="工钱录入">工钱录入</Link>
       <Link className="summary-link monthly" to="/monthly" aria-label="工钱 Summary">工钱 Summary</Link>
     </nav>
+
+    <section className="date-filter">
+      <label>日期<input aria-label="日期" type="date" value={legacyIsoDateFromBusinessDate(businessDate)} disabled={entries.length>0}
+        onChange={event=>setBusinessDate(businessDateFromLegacy(event.target.value))}/><small>{businessDate}</small></label>
+      {entries.length>0&&<p className="session-lock">请先保存或清除当前清单，才可切换日期。</p>}
+    </section>
 
     {savedSummary&&<p className="success saved-summary" role="status" aria-live="polite">✓ {savedSummary}</p>}
 

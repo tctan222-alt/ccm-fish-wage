@@ -18,5 +18,8 @@ describe('CCM 部门首页', () => {
     for (const vessel of vessels) expect(await screen.findByRole('link', { name: vessel.vesselCode })).toHaveAttribute('href', `/ice-department/${vessel.id}`)
     expect(screen.getByRole('heading', { name: 'CCM 行政' })).toBeInTheDocument()
     expect(screen.getByText('建设中')).toBeInTheDocument()
+    const links=screen.getAllByRole('link')
+    expect(links.at(-1)).toHaveAccessibleName('主资料 Master Data')
+    expect(links.at(-1)).toHaveAttribute('href','/master-data')
   })
 })

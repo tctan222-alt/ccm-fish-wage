@@ -12,7 +12,7 @@ describe('worker master data page',()=>{
     ]}/></MemoryRouter>)
     expect(await screen.findByText('Ali')).toBeInTheDocument()
     expect(screen.getByText('ID: legacy-id')).toBeInTheDocument()
-    expect(screen.getByText('fish_head')).toBeInTheDocument()
+    expect(screen.getByText('未分类（请设置）')).toBeInTheDocument()
   })
 
   it('filters active and inactive workers and offers no delete action',async()=>{
@@ -76,5 +76,21 @@ describe('worker master data page',()=>{
     expect(screen.getByRole('button',{name:'Saving…'})).toBeDisabled()
     resolve({id:'new',name:'New Worker',active:true,order:0})
     await waitFor(()=>expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('允许在主资料以中文设置工人部门，不删除其他工人',async()=>{
+    const creator=vi.fn(async(input)=>({id:'new',name:input.name,active:true,order:0,...input}))
+    render(<MemoryRouter><WorkersPage loader={async()=>[
+      {id:'ccm',name:'CCM 工人',active:true,order:1,workerDepartment:'ccm_general'},
+      {id:'other',name:'其他工人',active:true,order:2,workerDepartment:'other'},
+    ]} creator={creator}/></MemoryRouter>)
+    expect(await screen.findByText('CCM 工人')).toBeInTheDocument()
+    expect(screen.getByText('其他工人')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'Add Worker'}))
+    fireEvent.change(screen.getByLabelText('Worker name'),{target:{value:'新切鱼头工人'}})
+    fireEvent.click(screen.getByLabelText('切鱼头工钱'))
+    fireEvent.click(screen.getByRole('button',{name:'Save Worker'}))
+    await waitFor(()=>expect(creator).toHaveBeenCalledOnce())
+    expect(creator.mock.calls[0][0]).toMatchObject({workerDepartment:'fish_head_cutting'})
   })
 })

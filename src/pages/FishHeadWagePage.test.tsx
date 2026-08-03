@@ -4,8 +4,8 @@ import { afterEach,describe,expect,it,vi } from 'vitest'
 import { FishHeadWagePage } from './FishHeadWagePage'
 
 const workers=[
-  {id:'w1',name:'Ah Mei',active:true,order:1},
-  {id:'w2',name:'Ali',active:true,order:2},
+  {id:'w1',name:'Ah Mei',active:true,order:1,workerDepartment:'fish_head_cutting' as const},
+  {id:'w2',name:'Ali',active:true,order:2,workerDepartment:'fish_head_cutting' as const},
 ]
 
 afterEach(()=>{
@@ -57,6 +57,42 @@ describe('fish head worker session flow',()=>{
     ]} batchSaver={vi.fn()}/></MemoryRouter>)
     expect(await screen.findByRole('button',{name:'Ah Mei'})).toBeInTheDocument()
     expect(screen.queryByRole('button',{name:'Inactive Worker'})).not.toBeInTheDocument()
+  })
+
+  it('只显示切鱼头工钱工人，且不会把未分类或其他部门工人误带入',async()=>{
+    render(<MemoryRouter><FishHeadWagePage workerLoader={async()=>[
+      {id:'cutting',name:'切鱼头工人',active:true,order:1,workerDepartment:'fish_head_cutting'},
+      {id:'ccm',name:'CCM 工人',active:true,order:2,workerDepartment:'ccm_general'},
+      {id:'other',name:'其他工人',active:true,order:3,workerDepartment:'other'},
+      {id:'legacy',name:'未分类旧工人',active:true,order:4},
+      {id:'legacy-cutting',name:'旧切鱼头工人',active:true,order:5,department:'fish_head'},
+    ]} batchSaver={vi.fn()}/></MemoryRouter>)
+    expect(await screen.findByRole('button',{name:'切鱼头工人'})).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'旧切鱼头工人'})).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'CCM 工人'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'其他工人'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'未分类旧工人'})).not.toBeInTheDocument()
+  })
+
+  it('可选择补录日期，并按所选日期保存完整工资日期字段和当日汇总链接',async()=>{
+    const batchSaver=vi.fn().mockResolvedValue(undefined)
+    render(<MemoryRouter><FishHeadWagePage workerLoader={async()=>workers} batchSaver={batchSaver}
+      today={()=>'03/08/2026'} now={()=>1_000_000}/></MemoryRouter>)
+    const date=await screen.findByLabelText('日期')
+    expect(date).toHaveValue('2026-08-03')
+    expect(screen.getByText('03/08/2026')).toBeInTheDocument()
+
+    fireEvent.change(date,{target:{value:'2026-07-31'}})
+    expect(screen.getByText('31/07/2026')).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'工钱录入'})).toHaveAttribute('href','/today?date=2026-07-31')
+    await chooseWorkerAndEnter74Kg()
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认并保存工人合计'}))
+
+    await waitFor(()=>expect(batchSaver).toHaveBeenCalledOnce())
+    expect(batchSaver.mock.calls[0][0][0]).toMatchObject({
+      dateKey:'2026-07-31',businessDate:'31/07/2026',dateSortKey:20260731,monthKey:'07/2026',monthSortKey:202607,
+    })
   })
 
   it('adds an entry locally, lists it, and keeps worker and rate selected',async()=>{

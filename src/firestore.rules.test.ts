@@ -20,6 +20,27 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
 
   it('rejects unauthenticated reads', async () => { await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), 'vessels', 'v978'))) })
 
+  it('allows explicit worker departments and rejects unknown worker department values', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const worker = { name: '切鱼头工人', active: true, order: 0, workerCode: 'WK-00000001', phone: '', department: 'fish_head', workerDepartment: 'fish_head_cutting', employmentStartDate: '', employmentEndDate: '', notes: '', createdBy: 'u1', createdAt: serverTimestamp(), updatedBy: 'u1', updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }
+    await assertSucceeds(setDoc(doc(db, 'workers', 'cutting-worker'), worker))
+    await assertFails(setDoc(doc(db, 'workers', 'invalid-worker'), { ...worker, workerDepartment: 'vessel' }))
+  })
+
+  it('requires the complete wage business-date fields for new wage records', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const wage = { dateKey: '2026-07-31', businessDate: '31/07/2026', dateSortKey: 20260731, monthKey: '07/2026', monthSortKey: 202607, workerId: 'cutting-worker', workerName: '切鱼头工人', weightKg: 80, rateRm: '0.12', wageRm: '9.60', createdBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), deleted: false }
+    await assertSucceeds(setDoc(doc(db, 'fishHeadWageEntries', 'dated-wage'), wage))
+    const missingBusinessDate = Object.fromEntries(Object.entries(wage).filter(([key]) => key !== 'businessDate'))
+    await assertFails(setDoc(doc(db, 'fishHeadWageEntries', 'missing-date-wage'), missingBusinessDate))
+    await assertFails(setDoc(doc(db, 'fishHeadWageEntries', 'wrong-sort-wage'), { ...wage, dateSortKey: 20260801 }))
+    await assertFails(setDoc(doc(db, 'fishHeadWageEntries', 'impossible-date-wage'), { ...wage, dateKey: '2026-02-29', businessDate: '29/02/2026', dateSortKey: 20260229, monthKey: '02/2026', monthSortKey: 202602 }))
+    const legacyWage = { dateKey: '2026-07-30', workerId: 'cutting-worker', workerName: '旧工人', weightKg: 80, rateRm: '0.12', wageRm: '9.60', createdBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp(), deleted: false }
+    const legacyRef = doc(db, 'fishHeadWageEntries', 'legacy-wage')
+    await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'fishHeadWageEntries', 'legacy-wage'), legacyWage))
+    await assertSucceeds(updateDoc(legacyRef, { deleted: true, updatedAt: serverTimestamp() }))
+  })
+
   it('allows an atomic draft record and immutable create action, but rejects action changes', async () => {
     const db = environment.authenticatedContext('u1').firestore(), record = createIceWorkRecord({ id: 'ice-1', workDate: '31/07/2026', vesselId: 'v978', vesselCodeSnapshot: '978', vesselNameSnapshot: '978', createdBy: 'u1', factoryIncomingWeightGrams: 1_000 })
     const recordRef = doc(db, 'iceWorkRecords', record.id), actionRef = doc(recordRef, 'actions', 'create-ice-1'), batch = writeBatch(db)
