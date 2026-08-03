@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { WorkerFormDialog } from '../components/WorkerFormDialog'
-import { normalizeWorker,type WorkerInput } from '../lib/masterData'
+import { normalizeWorker,workerDepartmentLabel,workerDepartmentFromWorker,type WorkerInput } from '../lib/masterData'
 import { createWorker,deactivateWorker,loadWorkers,reactivateWorker,updateWorker } from '../services/workers'
 import type { Worker } from '../types'
 
@@ -33,7 +33,7 @@ export function WorkersPage({loader=loadWorkers,creator=createWorker,updater=upd
     {error&&<p className="error" role="alert">{error}</p>}
     {workers===null?<p className="notice">Loading workers…</p>:<div className="master-card-list">{visible.map(worker=><article className="master-card" key={worker.id}>
       <div className="master-card-heading"><div><small>{worker.workerCode||`ID: ${worker.id}`}</small><h2>{worker.name}</h2></div><span className={`record-status ${worker.active?'active':'inactive'}`}>{worker.active?'Active':'Inactive'}</span></div>
-      <dl><div><dt>Department</dt><dd>{worker.department||'fish_head'}</dd></div><div><dt>Phone</dt><dd>{worker.phone||'—'}</dd></div><div><dt>Start</dt><dd>{worker.employmentStartDate||'—'}</dd></div><div><dt>End</dt><dd>{worker.employmentEndDate||'—'}</dd></div></dl>
+      <dl><div><dt>部门</dt><dd>{workerDepartmentLabel(workerDepartmentFromWorker(worker))}</dd></div><div><dt>Phone</dt><dd>{worker.phone||'—'}</dd></div><div><dt>Start</dt><dd>{worker.employmentStartDate||'—'}</dd></div><div><dt>End</dt><dd>{worker.employmentEndDate||'—'}</dd></div></dl>
       {worker.notes&&<p>{worker.notes}</p>}<div className="master-actions"><button disabled={busyId===worker.id} onClick={()=>setEditing(worker)}>Edit</button><button disabled={busyId===worker.id} aria-label={`${worker.active?'Deactivate':'Reactivate'} ${worker.name}`} className={worker.active?'danger-action':'activate-action'} onClick={()=>void toggle(worker)}>{busyId===worker.id?'Saving…':worker.active?'Deactivate':'Reactivate'}</button></div>
     </article>)}</div>}
     {editing!==undefined&&<WorkerFormDialog worker={editing} save={saveWorker}

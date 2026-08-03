@@ -22,5 +22,6 @@ export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
       <Link className="page-link" to="/ice-department">查看冰工部门</Link>
     </section>
     <section className="department-card muted-department"><h2>CCM 行政</h2><p>建设中</p><Link className="page-link" to="/ccm-admin">查看</Link></section>
+    <section className="department-card master-data-dashboard"><Link className="primary-action" to="/master-data">主资料 Master Data</Link></section>
   </main>
 }

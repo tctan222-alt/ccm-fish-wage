@@ -1,4 +1,4 @@
-import type { Worker } from '../types'
+import type { Worker,WorkerDepartment } from '../types'
 
 export interface BusinessPartner {
   id:string
@@ -35,10 +35,28 @@ export interface WorkerInput {
   name:string
   phone:string
   department:string
+  workerDepartment?:WorkerDepartment
   employmentStartDate:string
   employmentEndDate:string
   notes:string
 }
+
+export const WORKER_DEPARTMENTS=['fish_head_cutting','ccm_general','other'] as const
+export function isWorkerDepartment(value:unknown):value is WorkerDepartment{return typeof value==='string'&&WORKER_DEPARTMENTS.includes(value as WorkerDepartment)}
+export function workerDepartmentFromWorker(worker:Pick<Worker,'workerDepartment'|'department'>):WorkerDepartment|undefined {
+  if(isWorkerDepartment(worker.workerDepartment))return worker.workerDepartment
+  if(worker.department==='fish_head')return 'fish_head_cutting'
+  if(worker.department==='ccm_general')return 'ccm_general'
+  if(worker.department==='other')return 'other'
+  return undefined
+}
+export function workerDepartmentLabel(value:WorkerDepartment|undefined){
+  if(value==='fish_head_cutting')return '切鱼头工钱'
+  if(value==='ccm_general')return 'CCM 普通'
+  if(value==='other')return '其他'
+  return '未分类（请设置）'
+}
+function legacyDepartmentFor(value:WorkerDepartment){return value==='fish_head_cutting'?'fish_head':value}
 
 function clean(value:string){return value.trim()}
 function generatedCode(prefix:string,id:string){return `${prefix}-${id.replace(/[^a-z0-9]/gi,'').slice(0,8).toUpperCase().padEnd(8,'0')}`}
@@ -89,7 +107,8 @@ export function normalizeWorker(raw:Worker):Worker {
     name:clean(raw.name),
     workerCode:raw.workerCode??'',
     phone:raw.phone??'',
-    department:raw.department??'fish_head',
+    department:raw.department??'',
+    workerDepartment:workerDepartmentFromWorker(raw),
     employmentStartDate:raw.employmentStartDate??'',
     employmentEndDate:raw.employmentEndDate??'',
     notes:raw.notes??'',
@@ -102,7 +121,8 @@ export function normalizeWorkerInput(input:WorkerInput):WorkerInput {
   return {
     name:clean(input.name),
     phone:clean(input.phone),
-    department:clean(input.department)||'fish_head',
+    workerDepartment:isWorkerDepartment(input.workerDepartment)?input.workerDepartment:'other',
+    department:clean(input.department)||legacyDepartmentFor(isWorkerDepartment(input.workerDepartment)?input.workerDepartment:'other'),
     employmentStartDate:input.employmentStartDate,
     employmentEndDate:input.employmentEndDate,
     notes:clean(input.notes),

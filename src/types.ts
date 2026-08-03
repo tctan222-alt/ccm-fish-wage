@@ -1,3 +1,5 @@
+export type WorkerDepartment='fish_head_cutting'|'ccm_general'|'other'
+
 export interface Worker {
   id:string
   name:string
@@ -6,6 +8,7 @@ export interface Worker {
   workerCode?:string
   phone?:string
   department?:string
+  workerDepartment?:WorkerDepartment
   employmentStartDate?:string
   employmentEndDate?:string
   notes?:string
@@ -16,4 +19,17 @@ export interface Worker {
   inactiveBy?:string|null
   inactiveAt?:unknown|null
 }
-export interface WageEntry { dateKey:string; workerId:string; workerName:string; weightKg:number; rateRm:string; wageRm:string; createdBy:string|null; deleted:boolean }
+export interface WageEntry {
+  dateKey:string
+  businessDate?:string
+  dateSortKey?:number
+  monthKey?:string
+  monthSortKey?:number
+  workerId:string
+  workerName:string
+  weightKg:number
+  rateRm:string
+  wageRm:string
+  createdBy:string|null
+  deleted:boolean
+}

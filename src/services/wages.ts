@@ -10,6 +10,7 @@ import {
 } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
 import { monthDateRange } from '../lib/wage'
+import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import type { WageEntry } from '../types'
 
 export interface StoredWageEntry extends WageEntry {
@@ -40,6 +41,34 @@ export interface MonthlyWageData extends DailyWageData {
   monthKey:string
 }
 
+export type NewWageEntry = WageEntry & Required<Pick<WageEntry,'businessDate'|'dateSortKey'|'monthKey'|'monthSortKey'>>
+
+/**
+ * New writes always derive the business-date fields from the legacy ISO key.
+ * Reads retain their compatibility path for historical records that predate these fields.
+ */
+export function prepareWageEntryForSave(entry:WageEntry):NewWageEntry {
+  const businessDate=businessDateFromLegacy(entry.dateKey)
+  const monthKey=monthKeyFromBusinessDate(businessDate)
+  return {
+    ...entry,
+    businessDate,
+    dateSortKey:sortKeyFromBusinessDate(businessDate),
+    monthKey,
+    monthSortKey:monthSortKeyFromMonthKey(monthKey),
+  }
+}
+
+function storedWageEntry(id:string,data:Record<string,unknown>):StoredWageEntry {
+  const entry={id,...data} as StoredWageEntry
+  try {
+    const businessDate=typeof entry.businessDate==='string'?businessDateFromLegacy(entry.businessDate):businessDateFromLegacy(entry.dateKey)
+    const monthKey=typeof entry.monthKey==='string'?entry.monthKey:monthKeyFromBusinessDate(businessDate)
+    return {...entry,businessDate,dateSortKey:typeof entry.dateSortKey==='number'?entry.dateSortKey:sortKeyFromBusinessDate(businessDate),monthKey,
+      monthSortKey:typeof entry.monthSortKey==='number'?entry.monthSortKey:monthSortKeyFromMonthKey(monthKey)}
+  }catch{return entry}
+}
+
 export async function saveWageEntries(entries:WageEntry[]):Promise<void> {
   if (!firebaseConfigured) throw new Error('Firebase is not configured')
   if (entries.length===0) return
@@ -47,9 +76,10 @@ export async function saveWageEntries(entries:WageEntry[]):Promise<void> {
   const batch=writeBatch(db)
   for (const entry of entries) {
     const reference=doc(collection(db,'fishHeadWageEntries'))
+    const prepared=prepareWageEntryForSave(entry)
     batch.set(reference,{
-      ...entry,
-      createdBy:entry.createdBy??auth.currentUser?.uid??null,
+      ...prepared,
+      createdBy:prepared.createdBy??auth.currentUser?.uid??null,
       createdAt:serverTimestamp(),
       updatedAt:serverTimestamp(),
     })
@@ -67,7 +97,7 @@ export async function loadWageEntriesByDate(dateKey:string):Promise<StoredWageEn
     query(collection(db,'fishHeadWageEntries'),where('dateKey','==',dateKey)),
   )
   return snapshot.docs
-    .map(item=>({id:item.id,...item.data()} as StoredWageEntry))
+    .map(item=>storedWageEntry(item.id,item.data()))
     .filter(entry=>entry.deleted===false)
 }
 
@@ -98,7 +128,7 @@ export async function loadWageEntriesByMonth(monthKey:string):Promise<StoredWage
     ),
   )
   return snapshot.docs
-    .map(item=>({id:item.id,...item.data()} as StoredWageEntry))
+    .map(item=>storedWageEntry(item.id,item.data()))
     .filter(entry=>entry.deleted===false)
 }
 
@@ -113,7 +143,7 @@ export async function loadWageEntriesByMonthFromServer(monthKey:string):Promise<
     ),
   )
   return snapshot.docs
-    .map(item=>({id:item.id,...item.data()} as StoredWageEntry))
+    .map(item=>storedWageEntry(item.id,item.data()))
     .filter(entry=>entry.deleted===false)
 }
 

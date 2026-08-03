@@ -92,7 +92,7 @@ describe('business partner master data',()=>{
 describe('worker master data',()=>{
   it('loads a legacy worker without new optional fields',()=>{
     expect(normalizeWorker({id:'legacy',name:' Ali ',active:true,order:2}))
-      .toMatchObject({id:'legacy',name:'Ali',workerCode:'',department:'fish_head'})
+      .toMatchObject({id:'legacy',name:'Ali',workerCode:'',department:'',workerDepartment:undefined})
   })
 
   it('rejects an employment end date before the start date',()=>{

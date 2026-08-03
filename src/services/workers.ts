@@ -33,7 +33,7 @@ export async function loadActiveWorkers():Promise<Worker[]> {
 export async function createWorker(input:WorkerInput| string,order:number):Promise<Worker> {
   const user=requireUser()
   const value=typeof input==='string'
-    ?{name:input,phone:'',department:'fish_head',employmentStartDate:'',employmentEndDate:'',notes:''}
+    ?{name:input,phone:'',department:'fish_head',workerDepartment:'fish_head_cutting' as const,employmentStartDate:'',employmentEndDate:'',notes:''}
     :input
   const clean=normalizeWorkerInput(value)
   const errors=validateWorker(clean)

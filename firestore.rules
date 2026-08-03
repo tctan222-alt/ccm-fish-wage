@@ -30,7 +30,7 @@ service cloud.firestore {
 
     function validWorker(data) {
       return data.keys().hasOnly([
-          'name', 'active', 'order', 'workerCode', 'phone', 'department',
+          'name', 'active', 'order', 'workerCode', 'phone', 'department', 'workerDepartment',
           'employmentStartDate', 'employmentEndDate', 'notes',
           'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
         ])
@@ -41,6 +41,7 @@ service cloud.firestore {
         && (!('workerCode' in data) || (data.workerCode is string && data.workerCode.matches('^WK-[A-Z0-9]{8}$')))
         && (!('phone' in data) || (data.phone is string && data.phone.size() <= 30))
         && (!('department' in data) || (data.department is string && data.department.size() > 0 && data.department.size() <= 50))
+        && (!('workerDepartment' in data) || data.workerDepartment in ['fish_head_cutting', 'ccm_general', 'other'])
         && (!('employmentStartDate' in data) || (data.employmentStartDate is string
           && (data.employmentStartDate == '' || data.employmentStartDate.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$'))))
         && (!('employmentEndDate' in data) || (data.employmentEndDate is string
@@ -1052,16 +1053,30 @@ service cloud.firestore {
         && data.lastActionId is string;
     }
 
+    function validWageDateKey(dateKey) {
+      return dateKey is string
+        && dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        // timestamp.date rejects impossible calendar dates, including non-leap 29 February.
+        && timestamp.date(int(dateKey[0:4]), int(dateKey[5:7]), int(dateKey[8:10]))
+          == timestamp.date(int(dateKey[0:4]), int(dateKey[5:7]), int(dateKey[8:10]));
+    }
+
     function validWageEntry(data) {
       return data.keys().hasOnly([
-          'dateKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
+          'dateKey', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
           'wageRm', 'createdBy', 'createdAt', 'updatedAt', 'deleted'
         ])
         && data.keys().hasAll([
           'dateKey', 'workerId', 'workerName', 'weightKg', 'rateRm',
           'wageRm', 'createdBy', 'createdAt', 'updatedAt', 'deleted'
         ])
-        && data.dateKey is string && data.dateKey.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && validWageDateKey(data.dateKey)
+        && ((data.keys().hasAll(['businessDate', 'dateSortKey', 'monthKey', 'monthSortKey'])
+          && data.businessDate is string && data.businessDate == data.dateKey[8:10] + '/' + data.dateKey[5:7] + '/' + data.dateKey[0:4]
+          && data.dateSortKey is int && data.dateSortKey == int(data.dateKey[0:4] + data.dateKey[5:7] + data.dateKey[8:10])
+          && data.monthKey is string && data.monthKey == data.businessDate[3:10]
+          && data.monthSortKey is int && data.monthSortKey == int(data.monthKey[3:7] + data.monthKey[0:2]))
+          || (!('businessDate' in data) && !('dateSortKey' in data) && !('monthKey' in data) && !('monthSortKey' in data)))
         && data.workerId is string && data.workerId.size() > 0
         && data.workerName is string && data.workerName.size() > 0
         && data.weightKg is int && data.weightKg >= 1 && data.weightKg <= 300
@@ -2198,6 +2213,7 @@ service cloud.firestore {
     match /fishHeadWageEntries/{entryId} {
       allow read: if signedIn();
       allow create: if signedIn() && validWageEntry(request.resource.data)
+        && request.resource.data.keys().hasAll(['businessDate', 'dateSortKey', 'monthKey', 'monthSortKey'])
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.deleted == false
         && request.resource.data.createdAt == request.time
