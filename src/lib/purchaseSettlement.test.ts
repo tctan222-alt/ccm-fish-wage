@@ -18,28 +18,46 @@ const entry=(overrides:Partial<SettlementSourceEntry>={}):SettlementSourceEntry=
 
 describe('purchase settlement pricing',()=>{
   it('uses fish-head base prices and only adds the no-loan premium when a base price exists',()=>{
+    expect(getDefaultFishHeadPriceCents('金线','')).toBe(205)
     expect(getDefaultFishHeadPriceCents('金线','978')).toBe(210)
+    expect(getDefaultFishHeadPriceCents('金线','5202')).toBe(210)
     expect(getDefaultFishHeadPriceCents('金线','833')).toBe(205)
+    expect(getDefaultFishHeadPriceCents('来戈','')).toBe(245)
     expect(getDefaultFishHeadPriceCents('来戈','978')).toBe(250)
+    expect(getDefaultFishHeadPriceCents('红目林','833')).toBe(275)
+    expect(getDefaultFishHeadPriceCents('乌目林','833')).toBe(160)
     expect(getDefaultFishHeadPriceCents('白竹占','833')).toBe(175)
     expect(getDefaultFishHeadPriceCents('未匹配鱼名','978')).toBeNull()
   })
 
   it('matches every slash alias and applies fish-meal vessel premiums',()=>{
-    expect(getDefaultFishHeadPriceCents('泥仔','833')).toBe(355)
-    expect(getDefaultFishHeadPriceCents('竹占','833')).toBe(175)
+    for(const alias of ['戈里','黄线仔','泥仔'])expect(getDefaultFishHeadPriceCents(alias,'833')).toBe(355)
+    for(const alias of ['竹占','水占仔','白竹占','石头鱼','白皂','飞鱼','香鱼','米仔仔','娃娃鱼','红水占']){
+      expect(getDefaultFishHeadPriceCents(alias,'833')).toBe(175)
+    }
+    expect(getDefaultFishMealPriceCents('bucket','')).toBe(75)
+    expect(getDefaultFishMealPriceCents('bag','')).toBe(70)
     expect(getDefaultFishMealPriceCents('bucket','978')).toBe(78)
+    expect(getDefaultFishMealPriceCents('bag','978')).toBe(73)
+    expect(getDefaultFishMealPriceCents('bucket','1785')).toBe(78)
+    expect(getDefaultFishMealPriceCents('bag','5202')).toBe(73)
     expect(getDefaultFishMealPriceCents('bag','1785')).toBe(73)
     expect(getDefaultFishMealPriceCents('bucket','833')).toBe(75)
+    expect(getDefaultFishMealPriceCents('bag','2072')).toBe(70)
   })
 
   it('parses editable RM prices as integer cents and rejects invalid values',()=>{
     expect(parseSettlementPrice('1')).toBe(100)
     expect(parseSettlementPrice('1.2')).toBe(120)
+    expect(parseSettlementPrice('1.20')).toBe(120)
+    expect(parseSettlementPrice('0.80')).toBe(80)
     expect(parseSettlementPrice('.8')).toBe(80)
     expect(parseSettlementPrice('')).toBeNull()
     expect(()=>parseSettlementPrice('-1')).toThrow()
+    expect(()=>parseSettlementPrice('1.2.3')).toThrow()
     expect(()=>parseSettlementPrice('1.234')).toThrow()
+    expect(()=>parseSettlementPrice('abc')).toThrow()
+    expect(()=>parseSettlementPrice('NaN')).toThrow()
     expect(()=>parseSettlementPrice('Infinity')).toThrow()
   })
 
@@ -64,6 +82,7 @@ describe('purchase settlement pricing',()=>{
     expect(calculateSettlementLineAmount(line)).toBe(32903)
     const edited=updateSettlementLinePrice(line,'1.20')
     expect(edited).toMatchObject({unitPriceCentsPerKg:120,priceWasEdited:true,amountCents:19260})
+    expect(calculateSettlementLineAmount({...line,totalWeightGrams:1,unitPriceCentsPerKg:500})).toBe(1)
   })
 
   it('builds a stable draft without changing source entry facts',()=>{
@@ -73,5 +92,6 @@ describe('purchase settlement pricing',()=>{
     expect(draft).toMatchObject({status:'settlement_draft',totalAmountCents:33705,revision:1,voided:false,receiptNo:''})
     expect(lines[0].sourceEntryIds).toEqual(['entry-1'])
     expect(()=>assertValidPurchaseSettlementDraft({...draft,totalAmountCents:1})).toThrow()
+    expect(draft.totalAmountCents).toBe(draft.lines.reduce((sum,line)=>sum+line.amountCents,0))
   })
 })

@@ -387,8 +387,65 @@ service cloud.firestore {
     // domain layer validates each line; Firestore Rules keeps the compact state
     // guard here because the backend compiler has a strict expression budget.
     function validPurchaseSettlementDraft(data) {
-      return data.status == 'settlement_draft'
-        && data.voided == false;
+      return data.keys().hasOnly([
+          'productType', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey',
+          'vesselId', 'vesselCodeSnapshot', 'receiptNo', 'status', 'lines',
+          'totalAmountCents', 'sourceEntryIds', 'createdAt', 'createdBy',
+          'updatedAt', 'updatedBy', 'revision', 'voided', 'voidReason',
+          'voidedBy', 'voidedAt'
+        ])
+        && data.keys().hasAll([
+          'productType', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey',
+          'vesselId', 'vesselCodeSnapshot', 'receiptNo', 'status', 'lines',
+          'totalAmountCents', 'sourceEntryIds', 'createdAt', 'createdBy',
+          'updatedAt', 'updatedBy', 'revision', 'voided'
+        ])
+        && data.productType in ['fish_head', 'fish_meal']
+        && data.businessDate is string && data.businessDate.size() >= 8 && data.businessDate.size() <= 10
+        && data.dateSortKey is int && data.dateSortKey >= 20200101
+        && data.monthKey is string && data.monthKey.size() >= 7 && data.monthKey.size() <= 7
+        && data.monthSortKey is int && data.monthSortKey >= 202001
+        && data.vesselId is string && data.vesselId.size() > 0 && data.vesselId.size() <= 80
+        && data.vesselCodeSnapshot is string && data.vesselCodeSnapshot.size() > 0 && data.vesselCodeSnapshot.size() <= 30
+        && data.receiptNo is string && data.receiptNo.size() <= 100
+        && data.status == 'settlement_draft'
+        && data.lines is list && data.lines.size() <= 100
+        && data.totalAmountCents is int && data.totalAmountCents >= 0
+        && data.sourceEntryIds is list && data.sourceEntryIds.size() > 0 && data.sourceEntryIds.size() <= 500
+        && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy is string && data.updatedAt is timestamp
+        && data.revision is int && data.revision >= 1
+        && data.voided is bool
+        && ((data.voided == false
+            && (!('voidReason' in data) || data.voidReason == null)
+            && (!('voidedBy' in data) || data.voidedBy == null)
+            && (!('voidedAt' in data) || data.voidedAt == null))
+          || (data.voided == true
+            && data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100
+            && data.voidedBy is string && data.voidedAt is timestamp));
+    }
+
+    function validPurchaseSettlementDraftUpdate() {
+      return validPurchaseSettlementDraft(request.resource.data)
+        && request.resource.data.productType == resource.data.productType
+        && request.resource.data.businessDate == resource.data.businessDate
+        && request.resource.data.dateSortKey == resource.data.dateSortKey
+        && request.resource.data.monthKey == resource.data.monthKey
+        && request.resource.data.monthSortKey == resource.data.monthSortKey
+        && request.resource.data.vesselId == resource.data.vesselId
+        && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
+        && request.resource.data.createdBy == resource.data.createdBy
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.revision == resource.data.revision + 1
+        && ((resource.data.voided == false && request.resource.data.voided == false)
+          || (resource.data.voided == false && request.resource.data.voided == true
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'voided', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'revision'
+            ])
+            && request.resource.data.voidedBy == request.auth.uid
+            && request.resource.data.voidedAt == request.time));
     }
 
     function validLinkedPurchaseAction(receiptId, actionType) {
@@ -1918,16 +1975,13 @@ service cloud.firestore {
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
-      allow update: if signedIn() && validPurchaseSettlementDraft(request.resource.data)
-        && request.resource.data.productType == resource.data.productType
-        && request.resource.data.businessDate == resource.data.businessDate
-        && request.resource.data.vesselId == resource.data.vesselId
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
         && request.resource.data.updatedAt == request.time
-        && request.resource.data.revision == resource.data.revision + 1;
+        && request.resource.data.voided == false
+        && (!('voidReason' in request.resource.data) || request.resource.data.voidReason == null)
+        && (!('voidedBy' in request.resource.data) || request.resource.data.voidedBy == null)
+        && (!('voidedAt' in request.resource.data) || request.resource.data.voidedAt == null);
+      allow update: if signedIn() && validPurchaseSettlementDraft(request.resource.data)
+        && validPurchaseSettlementDraftUpdate();
       allow delete: if false;
     }
 
