@@ -11,6 +11,13 @@ import { loadWeighingBundle } from '../services/weighing'
 function lineKey(line:PurchaseSettlementLine){return line.sourceEntryIds.join('|')}
 function priceText(value:number|null){return value===null?'':(value/100).toFixed(2)}
 function dateInputValue(value:string){try{return legacyIsoDateFromBusinessDate(value)}catch{return ''}}
+function mealCountText(line:PurchaseSettlementLine){
+  const totalRecords=line.totalWeightEntryCount-line.basketCount
+  return [
+    line.basketCount>0?`${line.basketCount}篮`:null,
+    totalRecords>0?`总重 ${totalRecords} 条`:null,
+  ].filter(Boolean).join(' / ')
+}
 
 export function PurchaseSettlementPage({
   productType,
@@ -96,7 +103,7 @@ export function PurchaseSettlementPage({
   }
   async function copyTable(){
     const header=fishHead?'鱼名\t总重量\t篮数\t预设价\t单价 RM/kg\t金额':'品质\t总重量\t篮数/总重记录\t预设价\t单价 RM/kg\t金额'
-    const rows=lines.map(line=>[line.nameSnapshot,`${formatWeightKg(line.totalWeightGrams)} kg`,fishHead?`${line.basketCount}篮`:`${line.basketCount}篮 / 总重${line.totalWeightEntryCount-line.basketCount}条`,priceText(line.defaultUnitPriceCentsPerKg)||'-',priceText(line.unitPriceCentsPerKg),formatSettlementMoney(line.amountCents)].join('\t'))
+    const rows=lines.map(line=>[line.nameSnapshot,`${formatWeightKg(line.totalWeightGrams)} kg`,fishHead?`${line.basketCount}篮`:mealCountText(line),priceText(line.defaultUnitPriceCentsPerKg)||'-',priceText(line.unitPriceCentsPerKg),formatSettlementMoney(line.amountCents)].join('\t'))
     try{await navigator.clipboard?.writeText([header,...rows,`总额\t${formatSettlementMoney(total)}`].join('\n'));setMessage('表格已复制，可以贴到 Excel。')}catch{setError('无法复制表格，请手动选择复制。')}
   }
   return <main className="purchase-settlement-page"><header><p className="eyebrow">CCM Fishery</p><h1>{fishHead?'鱼头结单':'鱼仔结单'}</h1><Link className="page-link" to={fishHead?'/fish-head-purchase':'/fish-meal-purchase'}>← 返回现场录入</Link></header>
@@ -105,7 +112,7 @@ export function PurchaseSettlementPage({
       <label className="settlement-receipt-no">单号（可之后补填）<input aria-label="单号" value={receiptNo} onChange={event=>setReceiptNo(event.target.value)} placeholder="可留空"/></label></section>
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="notice" role="status">{message}</p>}
     {loading?<p className="notice">正在载入结单资料…</p>:<section className="settlement-table-section"><p className="settlement-meta">船号：{selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
-      {lines.length===0?<p className="notice">当前船号和日期没有可结单的{fishHead?'鱼头':'鱼仔'}记录。</p>:<><div className="settlement-table-scroll"><table className="settlement-table"><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>单价 RM/kg</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td>{formatWeightKg(line.totalWeightGrams)} kg</td><td>{fishHead?`${line.basketCount}篮`:`${line.basketCount}篮 / 总重${line.totalWeightEntryCount-line.basketCount}条`}</td><td>{priceText(line.defaultUnitPriceCentsPerKg)?`RM ${priceText(line.defaultUnitPriceCentsPerKg)}`:'-'}</td><td><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td>{formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>总额</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div><div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button><button className="primary-action" type="button" disabled={busy} onClick={()=>void saveDraft()}>保存结单草稿</button></div></>}
+      {lines.length===0?<p className="notice">当前没有称重资料，不能结单。</p>:<><div className="settlement-table-scroll"><table className="settlement-table"><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>单价 RM/kg</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td>{formatWeightKg(line.totalWeightGrams)} kg</td><td>{fishHead?`${line.basketCount}篮`:mealCountText(line)}</td><td>{priceText(line.defaultUnitPriceCentsPerKg)?`RM ${priceText(line.defaultUnitPriceCentsPerKg)}`:'-'}</td><td><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td>{formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>总额</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div><div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button><button className="primary-action" type="button" disabled={busy} onClick={()=>void saveDraft()}>保存结单草稿</button></div></>}
     </section>}
   </main>
 }
