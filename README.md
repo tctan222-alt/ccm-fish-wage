@@ -36,6 +36,11 @@ headers. The reviewed Firestore rules deny unauthenticated access and hard delet
 Neither configuration has been deployed: the owner must approve and deploy rules
 and Hosting, and must enable Email/Password in the Firebase console first.
 
+## Developer docs
+
+Codex operating rules, ERP architecture notes, test and deploy rules, purchase rules,
+wage rules, and the reusable Codex task template live in `docs/`.
+
 ## Current Modules
 
 - Fish Head Wage (v0.3 basket entry)
