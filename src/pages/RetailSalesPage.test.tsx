@@ -33,6 +33,31 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('mobile retail checkout', () => {
+  it('accepts decimal kg, shows exact draft amounts, and preserves weights on the saved printable receipt', async () => {
+    mount(); fill('小贩名', '阿明')
+    expect(screen.getByLabelText('重量 kg')).toHaveAttribute('inputmode', 'decimal')
+    fireEvent.click(screen.getByRole('button', { name: /甘丰/ })); fill('重量 kg', '12.5')
+    expect(screen.getByText('RM75.00')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '加入明细' }))
+    add('马丰', '7.3')
+    expect(screen.getByText('12.5 kg × RM6.00/kg')).toBeInTheDocument()
+    expect(screen.getByText('7.3 kg × RM8.00/kg')).toBeInTheDocument()
+    expect(screen.getByText('RM133.40')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '结算' }))
+    const receipt = await screen.findByRole('region', { name: '现金结算单' })
+    expect(within(receipt).getByRole('cell', { name: '12.5' })).toBeInTheDocument()
+    expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()
+    expect(within(receipt).getByRole('cell', { name: '75.00' })).toBeInTheDocument()
+    expect(within(receipt).getByRole('cell', { name: '58.40' })).toBeInTheDocument()
+    expect(services.save.mock.calls[0][1]).toMatchObject({ lines: [{ weightDeciKg: 125, amountCents: 7500 }, { weightDeciKg: 73, amountCents: 5840 }] })
+  })
+  it('rejects two decimal places explicitly without adding or rounding the weight', () => {
+    mount(); add('甘丰', '2.25')
+    expect(screen.getByRole('alert')).toHaveTextContent('最多一位小数')
+    expect(screen.getByLabelText('重量 kg')).toHaveValue('2.25')
+    expect(screen.getByRole('button', { name: '结算' })).toBeDisabled()
+    expect(services.save).not.toHaveBeenCalled()
+  })
   it('retains vendor/date across lines, accepts overrides, saves once, prints, and starts next vendor', async () => {
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
     mount()
@@ -95,7 +120,7 @@ describe('mobile retail checkout', () => {
     expect(services.save).not.toHaveBeenCalled()
   })
   it('restores an interrupted checkout after a page reload', async () => {
-    const pending = { id: 'old-attempt', input: { businessDate: '05/09/2026', vendorName: '阿明', lines: [{ fishId: 'a', chineseName: '甘丰', malayName: 'kembung', weightKg: 2, unitPriceCents: 600, amountCents: 1200 }] } }
+    const pending = { id: 'old-attempt', input: prepareRetailSale({ businessDate: '05/09/2026', vendorName: '阿明', lines: [{ fishId: 'a', chineseName: '甘丰', malayName: 'kembung', weightKg: 2, unitPriceCents: 600, amountCents: 1200 }] }) }
     services.restore.mockReturnValue(pending)
     mount(); expect(screen.getByLabelText('小贩名')).toHaveValue('阿明')
     expect(screen.getByLabelText('小贩名')).toBeDisabled()
@@ -124,7 +149,7 @@ describe('retail settings and history', () => {
     await waitFor(() => expect(services.initialize).toHaveBeenCalledOnce())
   })
   it('loads date history, filters by vendor, opens stored snapshots and reprints', async () => {
-    const sale: RetailSale = { id: 'old', businessDate: '06/09/2026', dateSortKey: 20260906, vendorName: '阿明', totalAmountCents: 1200, lines: [{ fishId: 'a', chineseName: '历史甘丰', malayName: 'old name', weightKg: 2, unitPriceCents: 600, amountCents: 1200 }] }
+    const sale: RetailSale = { id: 'old', businessDate: '06/09/2026', dateSortKey: 20260906, vendorName: '阿明', totalAmountCents: 5840, lines: [{ fishId: 'a', chineseName: '历史甘丰', malayName: 'old name', weightDeciKg: 73, unitPriceCents: 800, amountCents: 5840 }] }
     services.history.mockResolvedValue([sale, { ...sale, id: 'other', vendorName: '阿华' }]); services.detail.mockResolvedValue(sale)
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
     render(<MemoryRouter initialEntries={['/retail-sales/history']}><Routes><Route path="/retail-sales/history" element={<RetailHistoryPage />} /><Route path="/retail-sales/history/:saleId" element={<RetailReceiptPage />} /></Routes></MemoryRouter>)
@@ -134,6 +159,8 @@ describe('retail settings and history', () => {
     fireEvent.click(screen.getByRole('link', { name: '查看并打印 阿明' }))
     const receipt = await screen.findByRole('region', { name: '现金结算单' })
     expect(within(receipt).getByText('历史甘丰')).toBeInTheDocument(); expect(within(receipt).getByText('old name')).toBeInTheDocument()
+    expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()
+    expect(within(receipt).getByRole('cell', { name: '58.40' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '打印结算单' })); expect(print).toHaveBeenCalledOnce(); print.mockRestore()
   })
 })

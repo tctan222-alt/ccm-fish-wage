@@ -3,6 +3,11 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    // Shared lazy accessors keep the compiled rules below the runtime size limit.
+    // Calling these preserves the original request/resource availability checks.
+    function incomingData() { return request.resource.data; }
+    function existingData() { return resource.data; }
+
 
     function validRetailFish(data) {
       return data.keys().hasOnly(['chineseName', 'malayName', 'suggestedPriceCents', 'active', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
@@ -14,16 +19,16 @@ service cloud.firestore {
     }
 
     function validRetailLine(line) {
-      let kg = line.weightKg;
+      let deciKg = line.weightDeciKg;
       let price = line.unitPriceCents;
       let amount = line.amountCents;
-      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightKg', 'unitPriceCents', 'amountCents'])
+      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightDeciKg', 'unitPriceCents', 'amountCents'])
         && line.fishId.matches('^[^/]{1,100}$')
         && line.chineseName.matches('^.{1,100}$')
         && line.malayName.matches('^.{0,100}$')
-        && kg is int && kg >= 1 && kg <= 300
+        && deciKg is int && deciKg >= 1 && deciKg <= 3000
         && price is int && price > 0 && price <= 1000000
-        && amount is int && amount == kg * price;
+        && amount is int && amount == int((deciKg * price + 5) / 10);
     }
 
     // Rules cannot iterate lists. Validate every supported slot, including the last.
@@ -62,22 +67,22 @@ service cloud.firestore {
 
     match /retailFish/{fishId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validRetailFish(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
-      allow update: if signedIn() && validRetailFish(request.resource.data)
-        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt;
+      allow create: if signedIn() && validRetailFish(incomingData())
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time;
+      allow update: if signedIn() && validRetailFish(incomingData())
+        && incomingData().createdBy == existingData().createdBy && incomingData().createdAt == existingData().createdAt;
       allow delete: if false;
     }
     match /retailSales/{saleId} {
       allow read: if signedIn();
       // Immutable prepared groups are validated separately within the expression
       // budget. Only this final atomic document appears as a completed sale.
-      allow create: if signedIn() && validRetailSale(request.resource.data, saleId);
+      allow create: if signedIn() && validRetailSale(incomingData(), saleId);
       allow update, delete: if false;
       match /groups/{groupId} {
         allow read: if signedIn();
         allow create: if signedIn() && groupId in ['first', 'second', 'third', 'fourth']
-          && validRetailGroup(request.resource.data);
+          && validRetailGroup(incomingData());
         allow update, delete: if false;
       }
     }
@@ -504,26 +509,26 @@ service cloud.firestore {
     }
 
     function validPurchaseSettlementDraftUpdate() {
-      return validPurchaseSettlementDraft(request.resource.data)
-        && request.resource.data.productType == resource.data.productType
-        && request.resource.data.businessDate == resource.data.businessDate
-        && request.resource.data.dateSortKey == resource.data.dateSortKey
-        && request.resource.data.monthKey == resource.data.monthKey
-        && request.resource.data.monthSortKey == resource.data.monthSortKey
-        && request.resource.data.vesselId == resource.data.vesselId
-        && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.revision == resource.data.revision + 1
-        && ((resource.data.voided == false && request.resource.data.voided == false)
-          || (resource.data.voided == false && request.resource.data.voided == true
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      return validPurchaseSettlementDraft(incomingData())
+        && incomingData().productType == existingData().productType
+        && incomingData().businessDate == existingData().businessDate
+        && incomingData().dateSortKey == existingData().dateSortKey
+        && incomingData().monthKey == existingData().monthKey
+        && incomingData().monthSortKey == existingData().monthSortKey
+        && incomingData().vesselId == existingData().vesselId
+        && incomingData().vesselCodeSnapshot == existingData().vesselCodeSnapshot
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().revision == existingData().revision + 1
+        && ((existingData().voided == false && incomingData().voided == false)
+          || (existingData().voided == false && incomingData().voided == true
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'voided', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'revision'
             ])
-            && request.resource.data.voidedBy == request.auth.uid
-            && request.resource.data.voidedAt == request.time));
+            && incomingData().voidedBy == request.auth.uid
+            && incomingData().voidedAt == request.time));
     }
 
     function validLinkedPurchaseAction(receiptId, actionType) {
@@ -548,11 +553,11 @@ service cloud.firestore {
         && (
           (action.type == 'payment_create'
             && payment.voided == false
-            && receipt.paidCents == resource.data.paidCents + payment.amountCents)
+            && receipt.paidCents == existingData().paidCents + payment.amountCents)
           ||
           (action.type == 'payment_void'
             && payment.voided == true
-            && receipt.paidCents == resource.data.paidCents - payment.amountCents)
+            && receipt.paidCents == existingData().paidCents - payment.amountCents)
         )
         && action.afterSnapshot.paidCents == receipt.paidCents
         && action.afterSnapshot.paymentStatus == receipt.paymentStatus;
@@ -839,7 +844,7 @@ service cloud.firestore {
     }
 
     function validWeighingIdentityUnchanged() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      return incomingData().diff(existingData()).affectedKeys().hasOnly([
           'status', 'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams',
           'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
           'fishMealBagBasketCount', 'fishMealBagWeightGrams', 'fishMealTotalWeightGrams',
@@ -847,26 +852,26 @@ service cloud.firestore {
           'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'processedBy',
           'processedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId', 'externalSlipNo'
         ])
-        && request.resource.data.revision == resource.data.revision + 1
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
+        && incomingData().revision == existingData().revision + 1
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time;
     }
 
     function validWeighingControlledMetadataUpdate() {
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      return incomingData().diff(existingData()).affectedKeys().hasOnly([
           'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey',
           'externalSlipNo', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
           'notes', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
         ])
-        && request.resource.data.status == resource.data.status
-        && request.resource.data.productType == resource.data.productType
-        && request.resource.data.revision == resource.data.revision + 1
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
+        && incomingData().status == existingData().status
+        && incomingData().productType == existingData().productType
+        && incomingData().revision == existingData().revision + 1
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time;
     }
 
     function validLegacyIceWorkRecord(data) {
@@ -942,74 +947,74 @@ service cloud.firestore {
     }
 
     function validDraftVesselTripUpdate(tripId) {
-      let action = getAfter(vesselTripActionPath(tripId, request.resource.data.lastActionId)).data;
+      let action = getAfter(vesselTripActionPath(tripId, incomingData().lastActionId)).data;
       let crew = action.type == 'crew_add'
         ? getAfter(vesselTripCrewPath(tripId, action.crewSettlementId)).data
         : {};
       let entry = action.type in ['entry_add', 'entry_void']
         ? getAfter(vesselTripEntryPath(action.entryId)).data
         : {};
-      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      return incomingData().diff(existingData()).affectedKeys().hasOnly([
           'incomeCents', 'expenseCents', 'crewWageCents', 'crewAdvanceCents',
           'profitCents', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
         ])
         && (
           (action.type == 'crew_add'
             && existsAfter(vesselTripCrewPath(tripId, action.crewSettlementId))
-            && crew.lastActionId == request.resource.data.lastActionId
-            && request.resource.data.crewWageCents == resource.data.crewWageCents + crew.grossWageCents
-            && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents + crew.advanceCents)
+            && crew.lastActionId == incomingData().lastActionId
+            && incomingData().crewWageCents == existingData().crewWageCents + crew.grossWageCents
+            && incomingData().crewAdvanceCents == existingData().crewAdvanceCents + crew.advanceCents)
           ||
           (action.type == 'entry_add'
             && existsAfter(vesselTripEntryPath(action.entryId))
-            && entry.lastActionId == request.resource.data.lastActionId
+            && entry.lastActionId == incomingData().lastActionId
             && ((entry.type == 'income'
-                && request.resource.data.incomeCents == resource.data.incomeCents + entry.amountCents
-                && request.resource.data.expenseCents == resource.data.expenseCents)
+                && incomingData().incomeCents == existingData().incomeCents + entry.amountCents
+                && incomingData().expenseCents == existingData().expenseCents)
               || (entry.type == 'expense'
-                && request.resource.data.expenseCents == resource.data.expenseCents + entry.amountCents
-                && request.resource.data.incomeCents == resource.data.incomeCents)))
+                && incomingData().expenseCents == existingData().expenseCents + entry.amountCents
+                && incomingData().incomeCents == existingData().incomeCents)))
           ||
           (action.type == 'entry_void'
             && existsAfter(vesselTripEntryPath(action.entryId))
-            && entry.voided == true && entry.lastActionId == request.resource.data.lastActionId
+            && entry.voided == true && entry.lastActionId == incomingData().lastActionId
             && ((entry.type == 'income'
-                && request.resource.data.incomeCents == resource.data.incomeCents - entry.amountCents
-                && request.resource.data.expenseCents == resource.data.expenseCents)
+                && incomingData().incomeCents == existingData().incomeCents - entry.amountCents
+                && incomingData().expenseCents == existingData().expenseCents)
               || (entry.type == 'expense'
-                && request.resource.data.expenseCents == resource.data.expenseCents - entry.amountCents
-                && request.resource.data.incomeCents == resource.data.incomeCents)))
+                && incomingData().expenseCents == existingData().expenseCents - entry.amountCents
+                && incomingData().incomeCents == existingData().incomeCents)))
         );
     }
 
     function validVesselTripPaymentUpdate(tripId) {
-      let action = getAfter(vesselTripActionPath(tripId, request.resource.data.lastActionId)).data;
+      let action = getAfter(vesselTripActionPath(tripId, incomingData().lastActionId)).data;
       let payment = getAfter(vesselCrewPaymentPath(action.paymentId)).data;
       return action.paymentId is string
         && existsAfter(vesselCrewPaymentPath(action.paymentId))
         && payment.tripId == tripId
-        && payment.lastActionId == request.resource.data.lastActionId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        && payment.lastActionId == incomingData().lastActionId
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'crewAdvanceCents', 'crewPaidCents', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
         ])
         && (
           (action.type == 'payment_create' && payment.voided == false
             && payment.createdAt == request.time
             && ((payment.paymentType == 'advance'
-                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents + payment.amountCents
-                && request.resource.data.crewPaidCents == resource.data.crewPaidCents)
+                && incomingData().crewAdvanceCents == existingData().crewAdvanceCents + payment.amountCents
+                && incomingData().crewPaidCents == existingData().crewPaidCents)
               || (payment.paymentType == 'settlement'
-                && request.resource.data.crewPaidCents == resource.data.crewPaidCents + payment.amountCents
-                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents)))
+                && incomingData().crewPaidCents == existingData().crewPaidCents + payment.amountCents
+                && incomingData().crewAdvanceCents == existingData().crewAdvanceCents)))
           ||
           (action.type == 'payment_void' && payment.voided == true
             && payment.voidedAt == request.time
             && ((payment.paymentType == 'advance'
-                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents - payment.amountCents
-                && request.resource.data.crewPaidCents == resource.data.crewPaidCents)
+                && incomingData().crewAdvanceCents == existingData().crewAdvanceCents - payment.amountCents
+                && incomingData().crewPaidCents == existingData().crewPaidCents)
               || (payment.paymentType == 'settlement'
-                && request.resource.data.crewPaidCents == resource.data.crewPaidCents - payment.amountCents
-                && request.resource.data.crewAdvanceCents == resource.data.crewAdvanceCents)))
+                && incomingData().crewPaidCents == existingData().crewPaidCents - payment.amountCents
+                && incomingData().crewAdvanceCents == existingData().crewAdvanceCents)))
         );
     }
 
@@ -1020,27 +1025,27 @@ service cloud.firestore {
       return action.paymentId is string
         && existsAfter(vesselCrewPaymentPath(action.paymentId))
         && payment.tripId == tripId
-        && payment.crewSettlementId == resource.data.id
-        && request.resource.data.lastActionId == actionId
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        && payment.crewSettlementId == existingData().id
+        && incomingData().lastActionId == actionId
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'advanceCents', 'paidCents', 'balanceCents', 'lastActionId'
         ])
         && (
           (action.type == 'payment_create' && payment.createdAt == request.time
             && ((payment.paymentType == 'advance'
-                && request.resource.data.advanceCents == resource.data.advanceCents + payment.amountCents
-                && request.resource.data.paidCents == resource.data.paidCents)
+                && incomingData().advanceCents == existingData().advanceCents + payment.amountCents
+                && incomingData().paidCents == existingData().paidCents)
               || (payment.paymentType == 'settlement'
-                && request.resource.data.paidCents == resource.data.paidCents + payment.amountCents
-                && request.resource.data.advanceCents == resource.data.advanceCents)))
+                && incomingData().paidCents == existingData().paidCents + payment.amountCents
+                && incomingData().advanceCents == existingData().advanceCents)))
           ||
           (action.type == 'payment_void' && payment.voidedAt == request.time
             && ((payment.paymentType == 'advance'
-                && request.resource.data.advanceCents == resource.data.advanceCents - payment.amountCents
-                && request.resource.data.paidCents == resource.data.paidCents)
+                && incomingData().advanceCents == existingData().advanceCents - payment.amountCents
+                && incomingData().paidCents == existingData().paidCents)
               || (payment.paymentType == 'settlement'
-                && request.resource.data.paidCents == resource.data.paidCents - payment.amountCents
-                && request.resource.data.advanceCents == resource.data.advanceCents)))
+                && incomingData().paidCents == existingData().paidCents - payment.amountCents
+                && incomingData().advanceCents == existingData().advanceCents)))
         );
     }
 
@@ -1385,398 +1390,398 @@ service cloud.firestore {
     }
 
     function validPaymentMonthUpdate(monthKey) {
-      let action = getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data;
+      let action = getAfter(actionPath(monthKey, incomingData().lastActionId)).data;
       let payment = getAfter(paymentPath(monthKey, action.paymentId)).data;
-      return resource.data.status == 'closed'
-        && request.resource.data.status == 'closed'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'updatedAt', 'lastActionId'])
-        && request.resource.data.updatedAt == request.time
-        && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
+      return existingData().status == 'closed'
+        && incomingData().status == 'closed'
+        && incomingData().diff(existingData()).affectedKeys().hasOnly(['paidCents', 'updatedAt', 'lastActionId'])
+        && incomingData().updatedAt == request.time
+        && existsAfter(actionPath(monthKey, incomingData().lastActionId))
         && existsAfter(paymentPath(monthKey, action.paymentId))
         && action.monthKey == monthKey
-        && action.closeVersion == resource.data.closeVersion
-        && payment.closeVersion == resource.data.closeVersion
+        && action.closeVersion == existingData().closeVersion
+        && payment.closeVersion == existingData().closeVersion
         && (
           (action.type == 'payment_create'
-            && request.resource.data.lastActionId == 'payment_create_' + action.paymentId
+            && incomingData().lastActionId == 'payment_create_' + action.paymentId
             && payment.voided == false
             && payment.createdAt == request.time
-            && request.resource.data.paidCents == resource.data.paidCents + payment.amountCents)
+            && incomingData().paidCents == existingData().paidCents + payment.amountCents)
           ||
           (action.type == 'payment_void'
-            && request.resource.data.lastActionId == 'payment_void_' + action.paymentId
+            && incomingData().lastActionId == 'payment_void_' + action.paymentId
             && payment.voided == true
             && payment.voidedAt == request.time
-            && request.resource.data.paidCents == resource.data.paidCents - payment.amountCents)
+            && incomingData().paidCents == existingData().paidCents - payment.amountCents)
         );
     }
 
     match /workers/{workerId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validWorker(request.resource.data)
-        && request.resource.data.keys().hasAll([
+      allow create: if signedIn() && validWorker(incomingData())
+        && incomingData().keys().hasAll([
           'workerCode', 'phone', 'department', 'employmentStartDate', 'employmentEndDate',
           'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
         ])
-        && request.resource.data.active == true
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.inactiveBy == null
-        && request.resource.data.inactiveAt == null;
-      allow update: if signedIn() && validWorker(request.resource.data)
-        && (!('workerCode' in resource.data) || request.resource.data.workerCode == resource.data.workerCode)
-        && (('createdBy' in resource.data && request.resource.data.createdBy == resource.data.createdBy)
-          || (!('createdBy' in resource.data) && !('createdBy' in request.resource.data)))
-        && (('createdAt' in resource.data && request.resource.data.createdAt == resource.data.createdAt)
-          || (!('createdAt' in resource.data) && !('createdAt' in request.resource.data)))
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+        && incomingData().active == true
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().inactiveBy == null
+        && incomingData().inactiveAt == null;
+      allow update: if signedIn() && validWorker(incomingData())
+        && (!('workerCode' in existingData()) || incomingData().workerCode == existingData().workerCode)
+        && (('createdBy' in existingData() && incomingData().createdBy == existingData().createdBy)
+          || (!('createdBy' in existingData()) && !('createdBy' in incomingData())))
+        && (('createdAt' in existingData() && incomingData().createdAt == existingData().createdAt)
+          || (!('createdAt' in existingData()) && !('createdAt' in incomingData())))
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (request.resource.data.active == resource.data.active
-            && ((!('inactiveBy' in resource.data) && request.resource.data.inactiveBy == null)
-              || request.resource.data.inactiveBy == resource.data.inactiveBy)
-            && ((!('inactiveAt' in resource.data) && request.resource.data.inactiveAt == null)
-              || request.resource.data.inactiveAt == resource.data.inactiveAt))
-          || (resource.data.active == true && request.resource.data.active == false
-            && request.resource.data.inactiveBy == request.auth.uid
-            && request.resource.data.inactiveAt == request.time)
-          || (resource.data.active == false && request.resource.data.active == true
-            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+          (incomingData().active == existingData().active
+            && ((!('inactiveBy' in existingData()) && incomingData().inactiveBy == null)
+              || incomingData().inactiveBy == existingData().inactiveBy)
+            && ((!('inactiveAt' in existingData()) && incomingData().inactiveAt == null)
+              || incomingData().inactiveAt == existingData().inactiveAt))
+          || (existingData().active == true && incomingData().active == false
+            && incomingData().inactiveBy == request.auth.uid
+            && incomingData().inactiveAt == request.time)
+          || (existingData().active == false && incomingData().active == true
+            && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
       allow delete: if false;
     }
 
     match /businessPartners/{partnerId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validPartner(request.resource.data)
-        && request.resource.data.active == true
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.inactiveBy == null
-        && request.resource.data.inactiveAt == null;
-      allow update: if signedIn() && validPartner(request.resource.data)
-        && request.resource.data.partnerCode == resource.data.partnerCode
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+      allow create: if signedIn() && validPartner(incomingData())
+        && incomingData().active == true
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().inactiveBy == null
+        && incomingData().inactiveAt == null;
+      allow update: if signedIn() && validPartner(incomingData())
+        && incomingData().partnerCode == existingData().partnerCode
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (request.resource.data.active == resource.data.active
-            && request.resource.data.inactiveBy == resource.data.inactiveBy
-            && request.resource.data.inactiveAt == resource.data.inactiveAt)
-          || (resource.data.active == true && request.resource.data.active == false
-            && request.resource.data.inactiveBy == request.auth.uid
-            && request.resource.data.inactiveAt == request.time)
-          || (resource.data.active == false && request.resource.data.active == true
-            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+          (incomingData().active == existingData().active
+            && incomingData().inactiveBy == existingData().inactiveBy
+            && incomingData().inactiveAt == existingData().inactiveAt)
+          || (existingData().active == true && incomingData().active == false
+            && incomingData().inactiveBy == request.auth.uid
+            && incomingData().inactiveAt == request.time)
+          || (existingData().active == false && incomingData().active == true
+            && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
       allow delete: if false;
     }
 
     match /fishSpecies/{speciesId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validFishSpecies(request.resource.data)
-        && speciesId == request.resource.data.speciesCode
-        && request.resource.data.active == true
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
-      allow update: if signedIn() && validFishSpecies(request.resource.data)
-        && request.resource.data.speciesCode == resource.data.speciesCode
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+      allow create: if signedIn() && validFishSpecies(incomingData())
+        && speciesId == incomingData().speciesCode
+        && incomingData().active == true
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
+      allow update: if signedIn() && validFishSpecies(incomingData())
+        && incomingData().speciesCode == existingData().speciesCode
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (request.resource.data.active == resource.data.active
-            && request.resource.data.inactiveBy == resource.data.inactiveBy
-            && request.resource.data.inactiveAt == resource.data.inactiveAt)
-          || (resource.data.active == true && request.resource.data.active == false
-            && request.resource.data.inactiveBy == request.auth.uid && request.resource.data.inactiveAt == request.time)
-          || (resource.data.active == false && request.resource.data.active == true
-            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+          (incomingData().active == existingData().active
+            && incomingData().inactiveBy == existingData().inactiveBy
+            && incomingData().inactiveAt == existingData().inactiveAt)
+          || (existingData().active == true && incomingData().active == false
+            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+          || (existingData().active == false && incomingData().active == true
+            && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
       allow delete: if false;
     }
 
     match /weighingSessions/{sessionId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validWeighingSession(request.resource.data)
-        && request.resource.data.status == 'weighing'
-        && request.resource.data.productType in ['fish_head', 'fish_meal']
-        && request.resource.data.revision == 2
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.completedBy == null && request.resource.data.completedAt == null
-        && request.resource.data.processedBy == null && request.resource.data.processedAt == null
-        && request.resource.data.processedReceiptId == null && request.resource.data.processedReceiptCode == null
-        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-        && request.resource.data.voidReason == null
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode
-          == request.resource.data.vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.displayName
-          == request.resource.data.vesselNameSnapshot
+      allow create: if signedIn() && validWeighingSession(incomingData())
+        && incomingData().status == 'weighing'
+        && incomingData().productType in ['fish_head', 'fish_meal']
+        && incomingData().revision == 2
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().completedBy == null && incomingData().completedAt == null
+        && incomingData().processedBy == null && incomingData().processedAt == null
+        && incomingData().processedReceiptId == null && incomingData().processedReceiptCode == null
+        && incomingData().voidedBy == null && incomingData().voidedAt == null
+        && incomingData().voidReason == null
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
+          == incomingData().vesselCodeSnapshot
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
+          == incomingData().vesselNameSnapshot
         && validLinkedWeighingAction(sessionId, 'entry_create')
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId is string
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId is string
         && getAfter(weighingEntryPath(
             sessionId,
-            getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
           )).data.sessionId == sessionId
         && getAfter(weighingEntryPath(
             sessionId,
-            getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
-          )).data.productType == request.resource.data.productType
-        && request.resource.data.fishHeadBasketCount
+            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
+          )).data.productType == incomingData().productType
+        && incomingData().fishHeadBasketCount
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.productType == 'fish_head'
             && getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.entryMode == 'individual' ? 1 : 0)
-        && request.resource.data.totalWeightGrams
+        && incomingData().totalWeightGrams
           == getAfter(weighingEntryPath(
             sessionId,
-            getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
           )).data.weightGrams
-        && request.resource.data.lastSequenceNo
+        && incomingData().lastSequenceNo
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.entryMode == 'individual'
             ? getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.sequenceNo : 0)
-        && request.resource.data.fishHeadWeightGrams
+        && incomingData().fishHeadWeightGrams
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.productType == 'fish_head'
-            ? request.resource.data.totalWeightGrams : 0)
-        && request.resource.data.fishMealBucketWeightGrams
+            ? incomingData().totalWeightGrams : 0)
+        && incomingData().fishMealBucketWeightGrams
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.fishMealQuality == 'bucket'
-            ? request.resource.data.totalWeightGrams : 0)
-        && request.resource.data.fishMealBagWeightGrams
+            ? incomingData().totalWeightGrams : 0)
+        && incomingData().fishMealBagWeightGrams
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.fishMealQuality == 'bag'
-            ? request.resource.data.totalWeightGrams : 0)
-        && request.resource.data.fishMealBucketBasketCount
+            ? incomingData().totalWeightGrams : 0)
+        && incomingData().fishMealBucketBasketCount
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.fishMealQuality == 'bucket'
             && getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.entryMode == 'individual' ? 1 : 0)
-        && request.resource.data.fishMealBagBasketCount
+        && incomingData().fishMealBagBasketCount
           == (getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.fishMealQuality == 'bag'
             && getAfter(weighingEntryPath(
               sessionId,
-              getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
             )).data.entryMode == 'individual' ? 1 : 0);
-      allow update: if signedIn() && validWeighingSession(request.resource.data)
+      allow update: if signedIn() && validWeighingSession(incomingData())
         && validWeighingControlledMetadataUpdate()
-        && resource.data.status in ['weighing', 'completed']
+        && existingData().status in ['weighing', 'completed']
         && validLinkedWeighingAction(sessionId, 'session_update')
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId == null
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.sessionCode == resource.data.sessionCode
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.weighingDate == resource.data.weighingDate
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.monthKey == resource.data.monthKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.dateSortKey == resource.data.dateSortKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.monthSortKey == resource.data.monthSortKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselId == resource.data.vesselId
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.vesselNameSnapshot == resource.data.vesselNameSnapshot
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.externalSlipNo == resource.data.externalSlipNo
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.beforeSnapshot.notes == resource.data.notes
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.sessionCode == request.resource.data.sessionCode
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.weighingDate == request.resource.data.weighingDate
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.monthKey == request.resource.data.monthKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.dateSortKey == request.resource.data.dateSortKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.monthSortKey == request.resource.data.monthSortKey
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselId == request.resource.data.vesselId
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselCodeSnapshot == request.resource.data.vesselCodeSnapshot
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.vesselNameSnapshot == request.resource.data.vesselNameSnapshot
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.externalSlipNo == request.resource.data.externalSlipNo
-        && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.afterSnapshot.notes == request.resource.data.notes
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode
-          == request.resource.data.vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.displayName
-          == request.resource.data.vesselNameSnapshot;
-      allow update: if signedIn() && validWeighingSession(request.resource.data)
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId == null
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.sessionCode == existingData().sessionCode
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.weighingDate == existingData().weighingDate
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.monthKey == existingData().monthKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.dateSortKey == existingData().dateSortKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.monthSortKey == existingData().monthSortKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselId == existingData().vesselId
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselCodeSnapshot == existingData().vesselCodeSnapshot
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselNameSnapshot == existingData().vesselNameSnapshot
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.externalSlipNo == existingData().externalSlipNo
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.notes == existingData().notes
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.sessionCode == incomingData().sessionCode
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.weighingDate == incomingData().weighingDate
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.monthKey == incomingData().monthKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.dateSortKey == incomingData().dateSortKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.monthSortKey == incomingData().monthSortKey
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselId == incomingData().vesselId
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselCodeSnapshot == incomingData().vesselCodeSnapshot
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselNameSnapshot == incomingData().vesselNameSnapshot
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.externalSlipNo == incomingData().externalSlipNo
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.notes == incomingData().notes
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
+          == incomingData().vesselCodeSnapshot
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
+          == incomingData().vesselNameSnapshot;
+      allow update: if signedIn() && validWeighingSession(incomingData())
         && validWeighingIdentityUnchanged()
         && (
-          (resource.data.status == 'weighing' && request.resource.data.status == 'weighing'
+          (existingData().status == 'weighing' && incomingData().status == 'weighing'
             && validLinkedWeighingAction(sessionId, 'entry_create')
             && validWeighingCreateDelta(
-              resource.data,
-              request.resource.data,
+              existingData(),
+              incomingData(),
               getAfter(weighingEntryPath(
                 sessionId,
-                getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
               )).data
             ))
           ||
-          (resource.data.status == 'weighing' && request.resource.data.status == 'weighing'
+          (existingData().status == 'weighing' && incomingData().status == 'weighing'
             && validLinkedWeighingAction(sessionId, 'entry_update')
             && validWeighingAggregateDelta(
-              resource.data,
-              request.resource.data,
+              existingData(),
+              incomingData(),
               get(weighingEntryPath(
                 sessionId,
-                getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
               )).data,
               getAfter(weighingEntryPath(
                 sessionId,
-                getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
               )).data
             )
-            && request.resource.data.lastSequenceNo == resource.data.lastSequenceNo)
+            && incomingData().lastSequenceNo == existingData().lastSequenceNo)
           ||
-          (resource.data.status == 'weighing' && request.resource.data.status == 'weighing'
+          (existingData().status == 'weighing' && incomingData().status == 'weighing'
             && validLinkedWeighingAction(sessionId, 'entry_void')
             && validWeighingAggregateDelta(
-              resource.data,
-              request.resource.data,
+              existingData(),
+              incomingData(),
               get(weighingEntryPath(
                 sessionId,
-                getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId
+                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
               )).data,
               {
                 'productType': 'fish_meal', 'entryMode': 'total', 'weightGrams': 0,
                 'fishMealQuality': null
               }
             )
-            && request.resource.data.lastSequenceNo == resource.data.lastSequenceNo)
+            && incomingData().lastSequenceNo == existingData().lastSequenceNo)
           ||
-          (resource.data.status == 'weighing' && request.resource.data.status == 'completed'
-            && resource.data.totalWeightGrams > 0
+          (existingData().status == 'weighing' && incomingData().status == 'completed'
+            && existingData().totalWeightGrams > 0
             && validLinkedWeighingAction(sessionId, 'complete')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
             ])
-            && request.resource.data.completedBy == request.auth.uid
-            && request.resource.data.completedAt == request.time)
+            && incomingData().completedBy == request.auth.uid
+            && incomingData().completedAt == request.time)
           ||
-          (resource.data.status == 'completed' && request.resource.data.status == 'weighing'
+          (existingData().status == 'completed' && incomingData().status == 'weighing'
             && validLinkedWeighingAction(sessionId, 'reopen')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
             ])
-            && request.resource.data.completedBy == null && request.resource.data.completedAt == null)
+            && incomingData().completedBy == null && incomingData().completedAt == null)
           ||
-          (resource.data.status in ['weighing', 'completed'] && request.resource.data.status == 'voided'
+          (existingData().status in ['weighing', 'completed'] && incomingData().status == 'voided'
             && validLinkedWeighingAction(sessionId, 'session_void')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
             ])
-            && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
-            && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.reason
-              == request.resource.data.voidReason)
+            && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+            && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.reason
+              == incomingData().voidReason)
           ||
-          (resource.data.status == 'completed' && request.resource.data.status == 'processed'
+          (existingData().status == 'completed' && incomingData().status == 'processed'
             && validLinkedWeighingAction(sessionId, 'process')
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'processedReceiptId',
               'processedReceiptCode', 'processedBy', 'processedAt', 'lastActionId'
             ])
-            && request.resource.data.processedBy == request.auth.uid
-            && request.resource.data.processedAt == request.time
-            && request.resource.data.processedReceiptId is string
-            && existsAfter(purchaseReceiptPath(request.resource.data.processedReceiptId))
-            && getAfter(purchaseReceiptPath(request.resource.data.processedReceiptId)).data.sourceWeighingSessionId == sessionId
-            && getAfter(purchaseReceiptPath(request.resource.data.processedReceiptId)).data.receiptCode
-              == request.resource.data.processedReceiptCode)
+            && incomingData().processedBy == request.auth.uid
+            && incomingData().processedAt == request.time
+            && incomingData().processedReceiptId is string
+            && existsAfter(purchaseReceiptPath(incomingData().processedReceiptId))
+            && getAfter(purchaseReceiptPath(incomingData().processedReceiptId)).data.sourceWeighingSessionId == sessionId
+            && getAfter(purchaseReceiptPath(incomingData().processedReceiptId)).data.receiptCode
+              == incomingData().processedReceiptCode)
         );
       allow delete: if false;
 
       match /entries/{entryId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validWeighingEntry(request.resource.data)
-          && request.resource.data.clientEntryId == entryId
-          && request.resource.data.sessionId == sessionId
-          && request.resource.data.revision == 1 && request.resource.data.voided == false
-          && request.resource.data.voidReason == null && request.resource.data.voidedBy == null
-          && request.resource.data.voidedAt == null
-          && request.resource.data.recordedBy == request.auth.uid
-          && request.resource.data.recordedAt == request.time
-          && request.resource.data.updatedBy == request.auth.uid
-          && request.resource.data.updatedAt == request.time
-            && validWeighingSpeciesSnapshot(request.resource.data)
+        allow create: if signedIn() && validWeighingEntry(incomingData())
+          && incomingData().clientEntryId == entryId
+          && incomingData().sessionId == sessionId
+          && incomingData().revision == 1 && incomingData().voided == false
+          && incomingData().voidReason == null && incomingData().voidedBy == null
+          && incomingData().voidedAt == null
+          && incomingData().recordedBy == request.auth.uid
+          && incomingData().recordedAt == request.time
+          && incomingData().updatedBy == request.auth.uid
+          && incomingData().updatedAt == request.time
+            && validWeighingSpeciesSnapshot(incomingData())
             && getAfter(weighingSessionPath(sessionId)).data.status == 'weighing'
-            && (!('weighingDate' in request.resource.data) || (
-              request.resource.data.weighingDate == getAfter(weighingSessionPath(sessionId)).data.weighingDate
-              && request.resource.data.monthKey == getAfter(weighingSessionPath(sessionId)).data.monthKey
-              && request.resource.data.vesselId == getAfter(weighingSessionPath(sessionId)).data.vesselId
-              && request.resource.data.vesselCodeSnapshot == getAfter(weighingSessionPath(sessionId)).data.vesselCodeSnapshot
+            && (!('weighingDate' in incomingData()) || (
+              incomingData().weighingDate == getAfter(weighingSessionPath(sessionId)).data.weighingDate
+              && incomingData().monthKey == getAfter(weighingSessionPath(sessionId)).data.monthKey
+              && incomingData().vesselId == getAfter(weighingSessionPath(sessionId)).data.vesselId
+              && incomingData().vesselCodeSnapshot == getAfter(weighingSessionPath(sessionId)).data.vesselCodeSnapshot
             ))
             && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
-              || request.resource.data.productType == getAfter(weighingSessionPath(sessionId)).data.productType)
+              || incomingData().productType == getAfter(weighingSessionPath(sessionId)).data.productType)
             && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
-              || !('receiptNoSnapshot' in request.resource.data)
-              || request.resource.data.receiptNoSnapshot == getAfter(weighingSessionPath(sessionId)).data.sessionCode)
-            && getAfter(weighingSessionPath(sessionId)).data.lastActionId == request.resource.data.lastActionId
+              || !('receiptNoSnapshot' in incomingData())
+              || incomingData().receiptNoSnapshot == getAfter(weighingSessionPath(sessionId)).data.sessionCode)
+            && getAfter(weighingSessionPath(sessionId)).data.lastActionId == incomingData().lastActionId
           && validLinkedWeighingAction(sessionId, 'entry_create')
-          && getAfter(weighingActionPath(sessionId, request.resource.data.lastActionId)).data.entryId == entryId;
-        allow update: if signedIn() && validWeighingEntry(request.resource.data)
-          && request.resource.data.clientEntryId == resource.data.clientEntryId
-          && request.resource.data.sessionId == resource.data.sessionId
-          && ((!('receiptNoSnapshot' in resource.data) && !('receiptNoSnapshot' in request.resource.data))
-            || request.resource.data.receiptNoSnapshot == resource.data.receiptNoSnapshot)
-          && request.resource.data.entryMode == resource.data.entryMode
-          && request.resource.data.sequenceNo == resource.data.sequenceNo
-          && request.resource.data.recordedAtClient == resource.data.recordedAtClient
-          && request.resource.data.recordedAt == resource.data.recordedAt
-            && request.resource.data.recordedBy == resource.data.recordedBy
-            && ((!('weighingDate' in resource.data) && !('weighingDate' in request.resource.data))
-              || (request.resource.data.weighingDate == resource.data.weighingDate
-                && request.resource.data.monthKey == resource.data.monthKey
-                && request.resource.data.vesselId == resource.data.vesselId
-                && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot))
-          && request.resource.data.revision == resource.data.revision + 1
-          && request.resource.data.updatedBy == request.auth.uid
-          && request.resource.data.updatedAt == request.time
-          && validWeighingSpeciesSnapshot(request.resource.data)
+          && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId == entryId;
+        allow update: if signedIn() && validWeighingEntry(incomingData())
+          && incomingData().clientEntryId == existingData().clientEntryId
+          && incomingData().sessionId == existingData().sessionId
+          && ((!('receiptNoSnapshot' in existingData()) && !('receiptNoSnapshot' in incomingData()))
+            || incomingData().receiptNoSnapshot == existingData().receiptNoSnapshot)
+          && incomingData().entryMode == existingData().entryMode
+          && incomingData().sequenceNo == existingData().sequenceNo
+          && incomingData().recordedAtClient == existingData().recordedAtClient
+          && incomingData().recordedAt == existingData().recordedAt
+            && incomingData().recordedBy == existingData().recordedBy
+            && ((!('weighingDate' in existingData()) && !('weighingDate' in incomingData()))
+              || (incomingData().weighingDate == existingData().weighingDate
+                && incomingData().monthKey == existingData().monthKey
+                && incomingData().vesselId == existingData().vesselId
+                && incomingData().vesselCodeSnapshot == existingData().vesselCodeSnapshot))
+          && incomingData().revision == existingData().revision + 1
+          && incomingData().updatedBy == request.auth.uid
+          && incomingData().updatedAt == request.time
+          && validWeighingSpeciesSnapshot(incomingData())
           && get(weighingSessionPath(sessionId)).data.status == 'weighing'
           && getAfter(weighingSessionPath(sessionId)).data.status == 'weighing'
-          && getAfter(weighingSessionPath(sessionId)).data.lastActionId == request.resource.data.lastActionId
+          && getAfter(weighingSessionPath(sessionId)).data.lastActionId == incomingData().lastActionId
           && (
-            (resource.data.voided == false && request.resource.data.voided == false
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            (existingData().voided == false && incomingData().voided == false
+              && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'fishSpeciesId', 'fishSpeciesCodeSnapshot',
                 'fishSpeciesNameSnapshot', 'fishMealQuality', 'displayNameSnapshot',
                 'weightGrams', 'unitPriceCentsPerKg', 'amountCents', 'remark', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
               ])
               && validLinkedWeighingAction(sessionId, 'entry_update'))
             ||
-            (resource.data.voided == false && request.resource.data.voided == true
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            (existingData().voided == false && incomingData().voided == true
+              && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'voided', 'voidReason', 'voidedBy', 'voidedAt',
                 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
               ])
-              && request.resource.data.voidedBy == request.auth.uid
-              && request.resource.data.voidedAt == request.time
+              && incomingData().voidedBy == request.auth.uid
+              && incomingData().voidedAt == request.time
               && validLinkedWeighingAction(sessionId, 'entry_void'))
           );
         allow delete: if false;
@@ -1784,16 +1789,16 @@ service cloud.firestore {
 
       match /actions/{actionId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validWeighingAction(request.resource.data)
-          && request.resource.data.sessionId == sessionId
+        allow create: if signedIn() && validWeighingAction(incomingData())
+          && incomingData().sessionId == sessionId
           && (
             getAfter(weighingSessionPath(sessionId)).data.lastActionId == actionId
-            || (request.resource.data.type == 'create' && !exists(weighingSessionPath(sessionId))
+            || (incomingData().type == 'create' && !exists(weighingSessionPath(sessionId))
               && getAfter(weighingSessionPath(sessionId)).data.createdBy == request.auth.uid
-              && request.resource.data.entryId == null)
-            || (request.resource.data.type == 'sync_conflict' && exists(weighingSessionPath(sessionId))
+              && incomingData().entryId == null)
+            || (incomingData().type == 'sync_conflict' && exists(weighingSessionPath(sessionId))
               && get(weighingSessionPath(sessionId)).data.status == 'weighing'
-              && request.resource.data.entryId is string)
+              && incomingData().entryId is string)
           );
         allow update, delete: if false;
       }
@@ -1801,55 +1806,55 @@ service cloud.firestore {
 
     match /purchaseCategories/{categoryId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validPurchaseCategory(request.resource.data)
-        && categoryId == request.resource.data.categoryCode
-        && request.resource.data.active == true
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
-      allow update: if signedIn() && validPurchaseCategory(request.resource.data)
-        && request.resource.data.categoryCode == resource.data.categoryCode
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+      allow create: if signedIn() && validPurchaseCategory(incomingData())
+        && categoryId == incomingData().categoryCode
+        && incomingData().active == true
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
+      allow update: if signedIn() && validPurchaseCategory(incomingData())
+        && incomingData().categoryCode == existingData().categoryCode
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (request.resource.data.active == resource.data.active
-            && request.resource.data.inactiveBy == resource.data.inactiveBy
-            && request.resource.data.inactiveAt == resource.data.inactiveAt)
-          || (resource.data.active == true && request.resource.data.active == false
-            && request.resource.data.inactiveBy == request.auth.uid && request.resource.data.inactiveAt == request.time)
-          || (resource.data.active == false && request.resource.data.active == true
-            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+          (incomingData().active == existingData().active
+            && incomingData().inactiveBy == existingData().inactiveBy
+            && incomingData().inactiveAt == existingData().inactiveAt)
+          || (existingData().active == true && incomingData().active == false
+            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+          || (existingData().active == false && incomingData().active == true
+            && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
       allow delete: if false;
     }
 
     match /vessels/{vesselId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validVessel(request.resource.data)
-        && request.resource.data.active == true
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null;
-      allow update: if signedIn() && validVessel(request.resource.data)
-        && request.resource.data.vesselCode == resource.data.vesselCode
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+      allow create: if signedIn() && validVessel(incomingData())
+        && incomingData().active == true
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
+      allow update: if signedIn() && validVessel(incomingData())
+        && incomingData().vesselCode == existingData().vesselCode
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (request.resource.data.active == resource.data.active
-            && request.resource.data.inactiveBy == resource.data.inactiveBy
-            && request.resource.data.inactiveAt == resource.data.inactiveAt)
-          || (resource.data.active == true && request.resource.data.active == false
-            && request.resource.data.inactiveBy == request.auth.uid && request.resource.data.inactiveAt == request.time)
-          || (resource.data.active == false && request.resource.data.active == true
-            && request.resource.data.inactiveBy == null && request.resource.data.inactiveAt == null)
+          (incomingData().active == existingData().active
+            && incomingData().inactiveBy == existingData().inactiveBy
+            && incomingData().inactiveAt == existingData().inactiveAt)
+          || (existingData().active == true && incomingData().active == false
+            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+          || (existingData().active == false && incomingData().active == true
+            && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
       allow delete: if false;
     }
@@ -1869,41 +1874,41 @@ service cloud.firestore {
     }
 
     match /iceWorkRecords/{recordId} {
-      allow create: if signedIn() && validIceWorkRecord(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
-        && request.resource.data.status == 'draft' && request.resource.data.revision == 1 && request.resource.data.voided == false
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode == request.resource.data.vesselCodeSnapshot
-        && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'create', 1);
-      allow update: if signedIn() && validIceWorkRecord(request.resource.data)
-        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && request.resource.data.revision == resource.data.revision + 1
-        && ((resource.data.status in ['draft', 'reopened'] && request.resource.data.status == resource.data.status
-              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'update', request.resource.data.revision))
-          || (resource.data.status in ['draft', 'reopened'] && request.resource.data.status == 'confirmed'
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      allow create: if signedIn() && validIceWorkRecord(incomingData())
+        && incomingData().createdBy == request.auth.uid && incomingData().updatedBy == request.auth.uid
+        && incomingData().createdAt == request.time && incomingData().updatedAt == request.time
+        && incomingData().status == 'draft' && incomingData().revision == 1 && incomingData().voided == false
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode == incomingData().vesselCodeSnapshot
+        && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'create', 1);
+      allow update: if signedIn() && validIceWorkRecord(incomingData())
+        && incomingData().createdBy == existingData().createdBy && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().revision == existingData().revision + 1
+        && ((existingData().status in ['draft', 'reopened'] && incomingData().status == existingData().status
+              && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'update', incomingData().revision))
+          || (existingData().status in ['draft', 'reopened'] && incomingData().status == 'confirmed'
+              && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'status', 'revision', 'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
               ])
-              && request.resource.data.confirmedBy == request.auth.uid && request.resource.data.confirmedAt == request.time
-              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'confirm', request.resource.data.revision))
-          || (resource.data.status == 'confirmed' && request.resource.data.status == 'reopened'
-              && request.resource.data.reopenedBy == request.auth.uid && request.resource.data.reopenedAt == request.time
-              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'reopen', request.resource.data.revision))
-          || (resource.data.status != 'voided' && request.resource.data.status == 'voided' && request.resource.data.voided == true
-              && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
-              && validIceWorkRecordAction(recordId, request.resource.data.lastActionId, 'void', request.resource.data.revision)));
+              && incomingData().confirmedBy == request.auth.uid && incomingData().confirmedAt == request.time
+              && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'confirm', incomingData().revision))
+          || (existingData().status == 'confirmed' && incomingData().status == 'reopened'
+              && incomingData().reopenedBy == request.auth.uid && incomingData().reopenedAt == request.time
+              && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'reopen', incomingData().revision))
+          || (existingData().status != 'voided' && incomingData().status == 'voided' && incomingData().voided == true
+              && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+              && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'void', incomingData().revision)));
       match /actions/{actionId} {
         allow read: if signedIn();
-        allow create: if signedIn() && request.resource.data.type in ['create','update','confirm','reopen','void']
-          && request.resource.data.recordId == recordId && request.resource.data.performedBy == request.auth.uid
-        && request.resource.data.performedAt == request.time && request.resource.data.revision is int
-          && request.resource.data.clientOperationId == actionId
-          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.revision == request.resource.data.revision
+        allow create: if signedIn() && incomingData().type in ['create','update','confirm','reopen','void']
+          && incomingData().recordId == recordId && incomingData().performedBy == request.auth.uid
+        && incomingData().performedAt == request.time && incomingData().revision is int
+          && incomingData().clientOperationId == actionId
+          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.revision == incomingData().revision
           && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.lastActionId == actionId
-          && iceWorkRecordSnapshotMatches(getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, request.resource.data.afterSnapshot)
-          && (request.resource.data.type == 'create' ? request.resource.data.beforeSnapshot == null : iceWorkRecordSnapshotMatches(get(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, request.resource.data.beforeSnapshot));
+          && iceWorkRecordSnapshotMatches(getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, incomingData().afterSnapshot)
+          && (incomingData().type == 'create' ? incomingData().beforeSnapshot == null : iceWorkRecordSnapshotMatches(get(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, incomingData().beforeSnapshot));
         allow update, delete: if false;
       }
     }
@@ -1921,70 +1926,70 @@ service cloud.firestore {
 
     match /purchaseReceipts/{receiptId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validPurchaseReceipt(request.resource.data)
-        && validActivePurchaseParties(request.resource.data)
-        && request.resource.data.status == 'draft'
-        && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.confirmedBy == null && request.resource.data.confirmedAt == null
-        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-        && request.resource.data.voidReason == null
+      allow create: if signedIn() && validPurchaseReceipt(incomingData())
+        && validActivePurchaseParties(incomingData())
+        && incomingData().status == 'draft'
+        && incomingData().paidCents == 0 && incomingData().paymentStatus == 'unpaid'
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().confirmedBy == null && incomingData().confirmedAt == null
+        && incomingData().voidedBy == null && incomingData().voidedAt == null
+        && incomingData().voidReason == null
         && validDraftPurchaseAction(receiptId, 'create')
         && (
-          request.resource.data.sourceWeighingSessionId == null
+          incomingData().sourceWeighingSessionId == null
           ||
-          (request.resource.data.sourceWeighingSessionId is string
-            && getAfter(weighingSessionPath(request.resource.data.sourceWeighingSessionId)).data.status == 'processed'
-            && getAfter(weighingSessionPath(request.resource.data.sourceWeighingSessionId)).data.processedReceiptId == receiptId
-            && getAfter(weighingSessionPath(request.resource.data.sourceWeighingSessionId)).data.processedReceiptCode
-              == request.resource.data.receiptCode
-            && validLinkedWeighingAction(request.resource.data.sourceWeighingSessionId, 'process'))
+          (incomingData().sourceWeighingSessionId is string
+            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.status == 'processed'
+            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptId == receiptId
+            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptCode
+              == incomingData().receiptCode
+            && validLinkedWeighingAction(incomingData().sourceWeighingSessionId, 'process'))
         );
-      allow update: if signedIn() && validPurchaseReceipt(request.resource.data)
-        && request.resource.data.receiptCode == resource.data.receiptCode
-        && request.resource.data.sourceWeighingSessionId == resource.data.sourceWeighingSessionId
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
+      allow update: if signedIn() && validPurchaseReceipt(incomingData())
+        && incomingData().receiptCode == existingData().receiptCode
+        && incomingData().sourceWeighingSessionId == existingData().sourceWeighingSessionId
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
         && (
-          (resource.data.status == 'draft' && request.resource.data.status == 'draft'
-            && validActivePurchaseParties(request.resource.data)
-            && request.resource.data.draftVersion == resource.data.draftVersion + 1
-            && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
-            && request.resource.data.confirmedBy == null && request.resource.data.confirmedAt == null
-            && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-            && request.resource.data.voidReason == null
+          (existingData().status == 'draft' && incomingData().status == 'draft'
+            && validActivePurchaseParties(incomingData())
+            && incomingData().draftVersion == existingData().draftVersion + 1
+            && incomingData().paidCents == 0 && incomingData().paymentStatus == 'unpaid'
+            && incomingData().confirmedBy == null && incomingData().confirmedAt == null
+            && incomingData().voidedBy == null && incomingData().voidedAt == null
+            && incomingData().voidReason == null
             && validDraftPurchaseAction(receiptId, 'update_draft'))
           ||
-          (resource.data.status == 'draft' && request.resource.data.status == 'confirmed'
-            && validActivePurchaseParties(request.resource.data)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'draft' && incomingData().status == 'confirmed'
+            && validActivePurchaseParties(incomingData())
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'supplierCodeSnapshot', 'supplierNameSnapshot', 'vesselCodeSnapshot', 'vesselNameSnapshot',
               'status', 'lineCount', 'totalBasketCount', 'totalWeightGrams', 'totalAmountCents', 'paymentStatus',
               'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.lineCount >= 1
-            && request.resource.data.totalWeightGrams > 0 && request.resource.data.totalAmountCents > 0
-            && request.resource.data.paidCents == 0 && request.resource.data.paymentStatus == 'unpaid'
-            && request.resource.data.confirmedBy == request.auth.uid && request.resource.data.confirmedAt == request.time
-            && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-            && request.resource.data.voidReason == null
+            && incomingData().lineCount >= 1
+            && incomingData().totalWeightGrams > 0 && incomingData().totalAmountCents > 0
+            && incomingData().paidCents == 0 && incomingData().paymentStatus == 'unpaid'
+            && incomingData().confirmedBy == request.auth.uid && incomingData().confirmedAt == request.time
+            && incomingData().voidedBy == null && incomingData().voidedAt == null
+            && incomingData().voidReason == null
             && validConfirmPurchaseAction(receiptId))
           ||
-          (resource.data.status == 'confirmed' && request.resource.data.status == 'voided'
-            && resource.data.paidCents == 0 && request.resource.data.paidCents == 0
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'confirmed' && incomingData().status == 'voided'
+            && existingData().paidCents == 0 && incomingData().paidCents == 0
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
+            && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
             && validVoidPurchaseAction(receiptId))
           ||
-          (resource.data.status == 'confirmed' && request.resource.data.status == 'confirmed'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'confirmed' && incomingData().status == 'confirmed'
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'paidCents', 'paymentStatus', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
             && validPurchaseReceiptPaymentUpdate(receiptId))
@@ -1993,44 +1998,44 @@ service cloud.firestore {
 
       match /lines/{lineId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validPurchaseLine(request.resource.data)
+        allow create: if signedIn() && validPurchaseLine(incomingData())
           && (
-            (request.resource.data.sourceWeighingSessionId == null
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.active == true
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.categoryCode
-                == request.resource.data.categoryCodeSnapshot
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.displayName
-                == request.resource.data.categoryNameSnapshot)
+            (incomingData().sourceWeighingSessionId == null
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.active == true
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.categoryCode
+                == incomingData().categoryCodeSnapshot
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.displayName
+                == incomingData().categoryNameSnapshot)
             ||
-            (request.resource.data.sourceWeighingSessionId is string
-              && request.resource.data.sourceWeighingSessionId
+            (incomingData().sourceWeighingSessionId is string
+              && incomingData().sourceWeighingSessionId
                 == getAfter(purchaseReceiptPath(receiptId)).data.sourceWeighingSessionId
-              && getAfter(weighingSessionPath(request.resource.data.sourceWeighingSessionId)).data.processedReceiptId == receiptId)
+              && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptId == receiptId)
           )
-          && request.resource.data.createdAt == request.time && request.resource.data.updatedAt == request.time
+          && incomingData().createdAt == request.time && incomingData().updatedAt == request.time
           && validDraftLineUpsert(receiptId, lineId);
-        allow update: if signedIn() && validPurchaseLine(request.resource.data)
-          && request.resource.data.sourceWeighingSessionId == resource.data.sourceWeighingSessionId
+        allow update: if signedIn() && validPurchaseLine(incomingData())
+          && incomingData().sourceWeighingSessionId == existingData().sourceWeighingSessionId
           && (
-            (request.resource.data.sourceWeighingSessionId == null
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.active == true
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.categoryCode
-                == request.resource.data.categoryCodeSnapshot
-              && get(/databases/$(database)/documents/purchaseCategories/$(request.resource.data.categoryId)).data.displayName
-                == request.resource.data.categoryNameSnapshot)
+            (incomingData().sourceWeighingSessionId == null
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.active == true
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.categoryCode
+                == incomingData().categoryCodeSnapshot
+              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.displayName
+                == incomingData().categoryNameSnapshot)
             ||
-            (request.resource.data.sourceWeighingSessionId is string
-              && request.resource.data.sourceWeighingSessionId
+            (incomingData().sourceWeighingSessionId is string
+              && incomingData().sourceWeighingSessionId
                 == getAfter(purchaseReceiptPath(receiptId)).data.sourceWeighingSessionId)
           )
-          && request.resource.data.createdAt == resource.data.createdAt
-          && request.resource.data.updatedAt == request.time
+          && incomingData().createdAt == existingData().createdAt
+          && incomingData().updatedAt == request.time
           && (
             validDraftLineUpsert(receiptId, lineId)
             ||
             (get(purchaseReceiptPath(receiptId)).data.status == 'draft'
               && getAfter(purchaseReceiptPath(receiptId)).data.status == 'confirmed'
-              && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'categoryCodeSnapshot', 'categoryNameSnapshot', 'amountCents', 'updatedAt'
               ]))
           );
@@ -2039,8 +2044,8 @@ service cloud.firestore {
 
       match /actions/{actionId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validPurchaseAction(request.resource.data)
-          && request.resource.data.receiptId == receiptId
+        allow create: if signedIn() && validPurchaseAction(incomingData())
+          && incomingData().receiptId == receiptId
           && getAfter(purchaseReceiptPath(receiptId)).data.lastActionId == actionId;
         allow update, delete: if false;
       }
@@ -2048,173 +2053,173 @@ service cloud.firestore {
 
     match /purchaseSettlementDrafts/{draftId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validPurchaseSettlementDraft(request.resource.data)
-        && request.resource.data.productType in ['fish_head', 'fish_meal']
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.voided == false
-        && (!('voidReason' in request.resource.data) || request.resource.data.voidReason == null)
-        && (!('voidedBy' in request.resource.data) || request.resource.data.voidedBy == null)
-        && (!('voidedAt' in request.resource.data) || request.resource.data.voidedAt == null);
-      allow update: if signedIn() && validPurchaseSettlementDraft(request.resource.data)
+      allow create: if signedIn() && validPurchaseSettlementDraft(incomingData())
+        && incomingData().productType in ['fish_head', 'fish_meal']
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time
+        && incomingData().voided == false
+        && (!('voidReason' in incomingData()) || incomingData().voidReason == null)
+        && (!('voidedBy' in incomingData()) || incomingData().voidedBy == null)
+        && (!('voidedAt' in incomingData()) || incomingData().voidedAt == null);
+      allow update: if signedIn() && validPurchaseSettlementDraft(incomingData())
         && validPurchaseSettlementDraftUpdate();
       allow delete: if false;
     }
 
     match /purchasePayments/{paymentId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validPurchasePayment(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.voided == false && request.resource.data.voidReason == null
-        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-        && get(purchaseReceiptPath(request.resource.data.receiptId)).data.status == 'confirmed'
-        && request.resource.data.receiptCode == get(purchaseReceiptPath(request.resource.data.receiptId)).data.receiptCode
-        && request.resource.data.supplierId == get(purchaseReceiptPath(request.resource.data.receiptId)).data.supplierId
-        && request.resource.data.supplierNameSnapshot == get(purchaseReceiptPath(request.resource.data.receiptId)).data.supplierNameSnapshot
-        && request.resource.data.amountCents
-          <= get(purchaseReceiptPath(request.resource.data.receiptId)).data.totalAmountCents
-            - get(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents
-        && getAfter(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents
-          == get(purchaseReceiptPath(request.resource.data.receiptId)).data.paidCents + request.resource.data.amountCents
-        && validLinkedPurchaseAction(request.resource.data.receiptId, 'payment_create')
+      allow create: if signedIn() && validPurchasePayment(incomingData())
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().voided == false && incomingData().voidReason == null
+        && incomingData().voidedBy == null && incomingData().voidedAt == null
+        && get(purchaseReceiptPath(incomingData().receiptId)).data.status == 'confirmed'
+        && incomingData().receiptCode == get(purchaseReceiptPath(incomingData().receiptId)).data.receiptCode
+        && incomingData().supplierId == get(purchaseReceiptPath(incomingData().receiptId)).data.supplierId
+        && incomingData().supplierNameSnapshot == get(purchaseReceiptPath(incomingData().receiptId)).data.supplierNameSnapshot
+        && incomingData().amountCents
+          <= get(purchaseReceiptPath(incomingData().receiptId)).data.totalAmountCents
+            - get(purchaseReceiptPath(incomingData().receiptId)).data.paidCents
+        && getAfter(purchaseReceiptPath(incomingData().receiptId)).data.paidCents
+          == get(purchaseReceiptPath(incomingData().receiptId)).data.paidCents + incomingData().amountCents
+        && validLinkedPurchaseAction(incomingData().receiptId, 'payment_create')
         && getAfter(purchaseActionPath(
-          request.resource.data.receiptId,
-          getAfter(purchaseReceiptPath(request.resource.data.receiptId)).data.lastActionId
+          incomingData().receiptId,
+          getAfter(purchaseReceiptPath(incomingData().receiptId)).data.lastActionId
         )).data.paymentId == paymentId;
-      allow update: if signedIn() && validPurchasePayment(request.resource.data)
-        && resource.data.voided == false && request.resource.data.voided == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      allow update: if signedIn() && validPurchasePayment(incomingData())
+        && existingData().voided == false && incomingData().voided == true
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'voided', 'voidReason', 'voidedBy', 'voidedAt'
         ])
-        && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
-        && getAfter(purchaseReceiptPath(resource.data.receiptId)).data.paidCents
-          == get(purchaseReceiptPath(resource.data.receiptId)).data.paidCents - resource.data.amountCents
-        && getAfter(purchaseReceiptPath(resource.data.receiptId)).data.paidCents >= 0
-        && validLinkedPurchaseAction(resource.data.receiptId, 'payment_void')
+        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+        && getAfter(purchaseReceiptPath(existingData().receiptId)).data.paidCents
+          == get(purchaseReceiptPath(existingData().receiptId)).data.paidCents - existingData().amountCents
+        && getAfter(purchaseReceiptPath(existingData().receiptId)).data.paidCents >= 0
+        && validLinkedPurchaseAction(existingData().receiptId, 'payment_void')
         && getAfter(purchaseActionPath(
-          resource.data.receiptId,
-          getAfter(purchaseReceiptPath(resource.data.receiptId)).data.lastActionId
+          existingData().receiptId,
+          getAfter(purchaseReceiptPath(existingData().receiptId)).data.lastActionId
         )).data.paymentId == paymentId
         && getAfter(purchaseActionPath(
-          resource.data.receiptId,
-          getAfter(purchaseReceiptPath(resource.data.receiptId)).data.lastActionId
-        )).data.reason == request.resource.data.voidReason;
+          existingData().receiptId,
+          getAfter(purchaseReceiptPath(existingData().receiptId)).data.lastActionId
+        )).data.reason == incomingData().voidReason;
       allow delete: if false;
     }
 
     match /vesselWageTemplates/{templateId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validVesselWageTemplate(request.resource.data)
-        && request.resource.data.id == templateId
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
-      allow update: if signedIn() && validVesselWageTemplate(request.resource.data)
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.updatedBy == request.auth.uid
-        && request.resource.data.updatedAt == request.time;
+      allow create: if signedIn() && validVesselWageTemplate(incomingData())
+        && incomingData().id == templateId
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time;
+      allow update: if signedIn() && validVesselWageTemplate(incomingData())
+        && incomingData().id == existingData().id
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().updatedBy == request.auth.uid
+        && incomingData().updatedAt == request.time;
       allow delete: if false;
     }
 
     match /vesselTrips/{tripId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validVesselTrip(request.resource.data)
-        && request.resource.data.id == tripId
-        && request.resource.data.status == 'draft'
-        && request.resource.data.incomeCents == 0 && request.resource.data.expenseCents == 0
-        && request.resource.data.crewWageCents == 0 && request.resource.data.crewAdvanceCents == 0
-        && request.resource.data.crewPaidCents == 0 && request.resource.data.profitCents == 0
-        && request.resource.data.revision == 1 && request.resource.data.voidReason == null
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && request.resource.data.lastActionId == 'create'
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.vesselCode
-          == request.resource.data.vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(request.resource.data.vesselId)).data.displayName
-          == request.resource.data.vesselNameSnapshot;
-      allow update: if signedIn() && validVesselTrip(request.resource.data)
-        && request.resource.data.id == resource.data.id
-        && request.resource.data.createdBy == resource.data.createdBy
-        && request.resource.data.createdAt == resource.data.createdAt
-        && request.resource.data.vesselId == resource.data.vesselId
-        && request.resource.data.vesselCodeSnapshot == resource.data.vesselCodeSnapshot
-        && request.resource.data.vesselNameSnapshot == resource.data.vesselNameSnapshot
-        && request.resource.data.tripCode == resource.data.tripCode
-        && request.resource.data.departureDate == resource.data.departureDate
-        && request.resource.data.returnDate == resource.data.returnDate
-        && request.resource.data.notes == resource.data.notes
-        && request.resource.data.revision == resource.data.revision + 1
-        && request.resource.data.updatedBy == request.auth.uid && request.resource.data.updatedAt == request.time
-        && existsAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId))
-        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId)).data.performedBy
+      allow create: if signedIn() && validVesselTrip(incomingData())
+        && incomingData().id == tripId
+        && incomingData().status == 'draft'
+        && incomingData().incomeCents == 0 && incomingData().expenseCents == 0
+        && incomingData().crewWageCents == 0 && incomingData().crewAdvanceCents == 0
+        && incomingData().crewPaidCents == 0 && incomingData().profitCents == 0
+        && incomingData().revision == 1 && incomingData().voidReason == null
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().lastActionId == 'create'
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
+          == incomingData().vesselCodeSnapshot
+        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
+          == incomingData().vesselNameSnapshot;
+      allow update: if signedIn() && validVesselTrip(incomingData())
+        && incomingData().id == existingData().id
+        && incomingData().createdBy == existingData().createdBy
+        && incomingData().createdAt == existingData().createdAt
+        && incomingData().vesselId == existingData().vesselId
+        && incomingData().vesselCodeSnapshot == existingData().vesselCodeSnapshot
+        && incomingData().vesselNameSnapshot == existingData().vesselNameSnapshot
+        && incomingData().tripCode == existingData().tripCode
+        && incomingData().departureDate == existingData().departureDate
+        && incomingData().returnDate == existingData().returnDate
+        && incomingData().notes == existingData().notes
+        && incomingData().revision == existingData().revision + 1
+        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && existsAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId))
+        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).data.performedBy
           == request.auth.uid
-        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(request.resource.data.lastActionId)).data.performedAt
+        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).data.performedAt
           == request.time
         && (
-          (resource.data.status == 'draft' && request.resource.data.status == 'draft'
+          (existingData().status == 'draft' && incomingData().status == 'draft'
             && validDraftVesselTripUpdate(tripId))
           ||
-          (resource.data.status == 'draft' && request.resource.data.status == 'confirmed'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'draft' && incomingData().status == 'confirmed'
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.confirmedBy == request.auth.uid
-            && request.resource.data.confirmedAt == request.time
-            && request.resource.data.lastActionId == 'confirm')
+            && incomingData().confirmedBy == request.auth.uid
+            && incomingData().confirmedAt == request.time
+            && incomingData().lastActionId == 'confirm')
           ||
-          (resource.data.status in ['draft', 'confirmed']
-            && request.resource.data.status == resource.data.status
+          (existingData().status in ['draft', 'confirmed']
+            && incomingData().status == existingData().status
             && validVesselTripPaymentUpdate(tripId))
           ||
-          (resource.data.status == 'confirmed' && request.resource.data.status == 'settled'
-            && request.resource.data.crewAdvanceCents + request.resource.data.crewPaidCents
-              == request.resource.data.crewWageCents
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'confirmed' && incomingData().status == 'settled'
+            && incomingData().crewAdvanceCents + incomingData().crewPaidCents
+              == incomingData().crewWageCents
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'settledBy', 'settledAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.settledBy == request.auth.uid
-            && request.resource.data.settledAt == request.time
-            && request.resource.data.lastActionId == 'settle')
+            && incomingData().settledBy == request.auth.uid
+            && incomingData().settledAt == request.time
+            && incomingData().lastActionId == 'settle')
           ||
-          (resource.data.status in ['draft', 'confirmed', 'settled']
-            && request.resource.data.status == 'voided'
-            && resource.data.crewAdvanceCents == 0 && request.resource.data.crewAdvanceCents == 0
-            && resource.data.crewPaidCents == 0 && request.resource.data.crewPaidCents == 0
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status in ['draft', 'confirmed', 'settled']
+            && incomingData().status == 'voided'
+            && existingData().crewAdvanceCents == 0 && incomingData().crewAdvanceCents == 0
+            && existingData().crewPaidCents == 0 && incomingData().crewPaidCents == 0
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'voidReason', 'revision', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.voidedBy == request.auth.uid
-            && request.resource.data.voidedAt == request.time
-            && request.resource.data.lastActionId == 'void'
+            && incomingData().voidedBy == request.auth.uid
+            && incomingData().voidedAt == request.time
+            && incomingData().lastActionId == 'void'
             && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/void).data.reason
-              == request.resource.data.voidReason)
+              == incomingData().voidReason)
         );
       allow delete: if false;
 
       match /crew/{crewId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validVesselCrewSettlement(request.resource.data)
-          && request.resource.data.id == crewId && request.resource.data.tripId == tripId
-          && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-          && request.resource.data.advanceCents == 0 && request.resource.data.paidCents == 0
-          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.active == true
-          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.department == 'vessel'
-          && get(/databases/$(database)/documents/workers/$(request.resource.data.workerId)).data.name
-            == request.resource.data.workerNameSnapshot
+        allow create: if signedIn() && validVesselCrewSettlement(incomingData())
+          && incomingData().id == crewId && incomingData().tripId == tripId
+          && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+          && incomingData().advanceCents == 0 && incomingData().paidCents == 0
+          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.active == true
+          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.department == 'vessel'
+          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.name
+            == incomingData().workerNameSnapshot
           && get(vesselTripPath(tripId)).data.status == 'draft'
-          && request.resource.data.lastActionId == 'crew_add_' + crewId
-          && getAfter(vesselTripPath(tripId)).data.lastActionId == request.resource.data.lastActionId
+          && incomingData().lastActionId == 'crew_add_' + crewId
+          && getAfter(vesselTripPath(tripId)).data.lastActionId == incomingData().lastActionId
           && getAfter(vesselTripPath(tripId)).data.crewWageCents
-            == get(vesselTripPath(tripId)).data.crewWageCents + request.resource.data.grossWageCents
+            == get(vesselTripPath(tripId)).data.crewWageCents + incomingData().grossWageCents
           && getAfter(vesselTripPath(tripId)).data.crewAdvanceCents
-            == get(vesselTripPath(tripId)).data.crewAdvanceCents + request.resource.data.advanceCents;
-        allow update: if signedIn() && validVesselCrewSettlement(request.resource.data)
+            == get(vesselTripPath(tripId)).data.crewAdvanceCents + incomingData().advanceCents;
+        allow update: if signedIn() && validVesselCrewSettlement(incomingData())
           && validVesselCrewPaymentUpdate(tripId);
         allow delete: if false;
       }
@@ -2222,18 +2227,18 @@ service cloud.firestore {
       match /actions/{actionId} {
         allow read: if signedIn();
         allow create: if signedIn()
-          && request.resource.data.keys().hasAll(['type', 'performedBy', 'performedAt'])
-          && request.resource.data.type in ['crew_add', 'entry_add', 'entry_void', 'confirm', 'settle', 'payment_create', 'payment_void', 'void']
-          && request.resource.data.performedBy == request.auth.uid
-          && request.resource.data.performedAt == request.time
+          && incomingData().keys().hasAll(['type', 'performedBy', 'performedAt'])
+          && incomingData().type in ['crew_add', 'entry_add', 'entry_void', 'confirm', 'settle', 'payment_create', 'payment_void', 'void']
+          && incomingData().performedBy == request.auth.uid
+          && incomingData().performedAt == request.time
           && getAfter(vesselTripPath(tripId)).data.lastActionId == actionId
           && (
-            !(request.resource.data.type in ['entry_void', 'payment_void'])
+            !(incomingData().type in ['entry_void', 'payment_void'])
             ||
-            (request.resource.data.reason is string
-              && request.resource.data.reason.size() >= 3 && request.resource.data.reason.size() <= 100
-              && request.resource.data.beforeSnapshot is map
-              && request.resource.data.afterSnapshot is map)
+            (incomingData().reason is string
+              && incomingData().reason.size() >= 3 && incomingData().reason.size() <= 100
+              && incomingData().beforeSnapshot is map
+              && incomingData().afterSnapshot is map)
           );
         allow update, delete: if false;
       }
@@ -2241,260 +2246,260 @@ service cloud.firestore {
 
     match /vesselTripEntries/{entryId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validVesselTripEntry(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.lastActionId == 'entry_add_' + entryId
-        && get(vesselTripPath(request.resource.data.tripId)).data.status == 'draft'
-        && getAfter(vesselTripPath(request.resource.data.tripId)).data.lastActionId == request.resource.data.lastActionId
+      allow create: if signedIn() && validVesselTripEntry(incomingData())
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().lastActionId == 'entry_add_' + entryId
+        && get(vesselTripPath(incomingData().tripId)).data.status == 'draft'
+        && getAfter(vesselTripPath(incomingData().tripId)).data.lastActionId == incomingData().lastActionId
         && (
-          (request.resource.data.type == 'income'
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.incomeCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.incomeCents + request.resource.data.amountCents
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.expenseCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.expenseCents)
+          (incomingData().type == 'income'
+            && getAfter(vesselTripPath(incomingData().tripId)).data.incomeCents
+              == get(vesselTripPath(incomingData().tripId)).data.incomeCents + incomingData().amountCents
+            && getAfter(vesselTripPath(incomingData().tripId)).data.expenseCents
+              == get(vesselTripPath(incomingData().tripId)).data.expenseCents)
           ||
-          (request.resource.data.type == 'expense'
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.expenseCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.expenseCents + request.resource.data.amountCents
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.incomeCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.incomeCents)
+          (incomingData().type == 'expense'
+            && getAfter(vesselTripPath(incomingData().tripId)).data.expenseCents
+              == get(vesselTripPath(incomingData().tripId)).data.expenseCents + incomingData().amountCents
+            && getAfter(vesselTripPath(incomingData().tripId)).data.incomeCents
+              == get(vesselTripPath(incomingData().tripId)).data.incomeCents)
         );
-      allow update: if signedIn() && validVesselTripEntry(request.resource.data)
-        && resource.data.voided == false && request.resource.data.voided == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided', 'voidReason', 'lastActionId'])
-        && request.resource.data.lastActionId == 'entry_void_' + entryId
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.reason
-          == request.resource.data.voidReason
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.type
-          == resource.data.type
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.amountCents
-          == resource.data.amountCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.voided == true
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.incomeCents
-          == getAfter(vesselTripPath(resource.data.tripId)).data.incomeCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.expenseCents
-          == getAfter(vesselTripPath(resource.data.tripId)).data.expenseCents
-        && get(vesselTripPath(resource.data.tripId)).data.status == 'draft'
-        && getAfter(vesselTripPath(resource.data.tripId)).data.lastActionId == request.resource.data.lastActionId
+      allow update: if signedIn() && validVesselTripEntry(incomingData())
+        && existingData().voided == false && incomingData().voided == true
+        && incomingData().diff(existingData()).affectedKeys().hasOnly(['voided', 'voidReason', 'lastActionId'])
+        && incomingData().lastActionId == 'entry_void_' + entryId
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.reason
+          == incomingData().voidReason
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.type
+          == existingData().type
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.amountCents
+          == existingData().amountCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.voided == true
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.incomeCents
+          == getAfter(vesselTripPath(existingData().tripId)).data.incomeCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.expenseCents
+          == getAfter(vesselTripPath(existingData().tripId)).data.expenseCents
+        && get(vesselTripPath(existingData().tripId)).data.status == 'draft'
+        && getAfter(vesselTripPath(existingData().tripId)).data.lastActionId == incomingData().lastActionId
         && (
-          (resource.data.type == 'income'
-            && getAfter(vesselTripPath(resource.data.tripId)).data.incomeCents
-              == get(vesselTripPath(resource.data.tripId)).data.incomeCents - resource.data.amountCents)
+          (existingData().type == 'income'
+            && getAfter(vesselTripPath(existingData().tripId)).data.incomeCents
+              == get(vesselTripPath(existingData().tripId)).data.incomeCents - existingData().amountCents)
           ||
-          (resource.data.type == 'expense'
-            && getAfter(vesselTripPath(resource.data.tripId)).data.expenseCents
-              == get(vesselTripPath(resource.data.tripId)).data.expenseCents - resource.data.amountCents)
+          (existingData().type == 'expense'
+            && getAfter(vesselTripPath(existingData().tripId)).data.expenseCents
+              == get(vesselTripPath(existingData().tripId)).data.expenseCents - existingData().amountCents)
         );
       allow delete: if false;
     }
 
     match /vesselCrewPayments/{paymentId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validVesselCrewPayment(request.resource.data)
-        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time
-        && request.resource.data.voided == false && request.resource.data.voidReason == null
-        && request.resource.data.voidedBy == null && request.resource.data.voidedAt == null
-        && request.resource.data.lastActionId == 'payment_create_' + paymentId
-        && ((request.resource.data.paymentType == 'advance'
-            && get(vesselTripPath(request.resource.data.tripId)).data.status in ['draft', 'confirmed'])
-          || (request.resource.data.paymentType == 'settlement'
-            && get(vesselTripPath(request.resource.data.tripId)).data.status == 'confirmed'))
-        && request.resource.data.workerId
-          == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.workerId
-        && request.resource.data.workerNameSnapshot
-          == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.workerNameSnapshot
-        && request.resource.data.amountCents
-          <= get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.balanceCents
-        && ((request.resource.data.paymentType == 'advance'
-            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
-                + request.resource.data.amountCents
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.crewAdvanceCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.crewAdvanceCents + request.resource.data.amountCents
-            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents)
-          || (request.resource.data.paymentType == 'settlement'
-            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.paidCents
-                + request.resource.data.amountCents
-            && getAfter(vesselTripPath(request.resource.data.tripId)).data.crewPaidCents
-              == get(vesselTripPath(request.resource.data.tripId)).data.crewPaidCents + request.resource.data.amountCents
-            && getAfter(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(request.resource.data.tripId, request.resource.data.crewSettlementId)).data.advanceCents));
-      allow update: if signedIn() && validVesselCrewPayment(request.resource.data)
-        && resource.data.voided == false && request.resource.data.voided == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      allow create: if signedIn() && validVesselCrewPayment(incomingData())
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().voided == false && incomingData().voidReason == null
+        && incomingData().voidedBy == null && incomingData().voidedAt == null
+        && incomingData().lastActionId == 'payment_create_' + paymentId
+        && ((incomingData().paymentType == 'advance'
+            && get(vesselTripPath(incomingData().tripId)).data.status in ['draft', 'confirmed'])
+          || (incomingData().paymentType == 'settlement'
+            && get(vesselTripPath(incomingData().tripId)).data.status == 'confirmed'))
+        && incomingData().workerId
+          == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.workerId
+        && incomingData().workerNameSnapshot
+          == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.workerNameSnapshot
+        && incomingData().amountCents
+          <= get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.balanceCents
+        && ((incomingData().paymentType == 'advance'
+            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
+                + incomingData().amountCents
+            && getAfter(vesselTripPath(incomingData().tripId)).data.crewAdvanceCents
+              == get(vesselTripPath(incomingData().tripId)).data.crewAdvanceCents + incomingData().amountCents
+            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents)
+          || (incomingData().paymentType == 'settlement'
+            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
+                + incomingData().amountCents
+            && getAfter(vesselTripPath(incomingData().tripId)).data.crewPaidCents
+              == get(vesselTripPath(incomingData().tripId)).data.crewPaidCents + incomingData().amountCents
+            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents));
+      allow update: if signedIn() && validVesselCrewPayment(incomingData())
+        && existingData().voided == false && incomingData().voided == true
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'voided', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
         ])
-        && request.resource.data.voidedBy == request.auth.uid && request.resource.data.voidedAt == request.time
-        && request.resource.data.lastActionId == 'payment_void_' + paymentId
-        && get(vesselTripPath(resource.data.tripId)).data.status in ['draft', 'confirmed']
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.reason
-          == request.resource.data.voidReason
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.paymentType
-          == resource.data.paymentType
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.amountCents
-          == resource.data.amountCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.crewAdvanceCents
-          == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.crewPaidCents
-          == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.tripAdvanceCents
-          == get(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.beforeSnapshot.tripPaidCents
-          == get(vesselTripPath(resource.data.tripId)).data.crewPaidCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.crewAdvanceCents
-          == getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.crewPaidCents
-          == getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.tripAdvanceCents
-          == getAfter(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
-        && getAfter(vesselTripActionPath(resource.data.tripId, request.resource.data.lastActionId)).data.afterSnapshot.tripPaidCents
-          == getAfter(vesselTripPath(resource.data.tripId)).data.crewPaidCents
-        && ((resource.data.paymentType == 'advance'
-            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
-                - resource.data.amountCents
-            && getAfter(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents
-              == get(vesselTripPath(resource.data.tripId)).data.crewAdvanceCents - resource.data.amountCents
-            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents)
-          || (resource.data.paymentType == 'settlement'
-            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.paidCents
-                - resource.data.amountCents
-            && getAfter(vesselTripPath(resource.data.tripId)).data.crewPaidCents
-              == get(vesselTripPath(resource.data.tripId)).data.crewPaidCents - resource.data.amountCents
-            && getAfter(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(resource.data.tripId, resource.data.crewSettlementId)).data.advanceCents));
+        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+        && incomingData().lastActionId == 'payment_void_' + paymentId
+        && get(vesselTripPath(existingData().tripId)).data.status in ['draft', 'confirmed']
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.reason
+          == incomingData().voidReason
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.paymentType
+          == existingData().paymentType
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.amountCents
+          == existingData().amountCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.crewAdvanceCents
+          == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.crewPaidCents
+          == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.tripAdvanceCents
+          == get(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.tripPaidCents
+          == get(vesselTripPath(existingData().tripId)).data.crewPaidCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.crewAdvanceCents
+          == getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.crewPaidCents
+          == getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.tripAdvanceCents
+          == getAfter(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
+        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.tripPaidCents
+          == getAfter(vesselTripPath(existingData().tripId)).data.crewPaidCents
+        && ((existingData().paymentType == 'advance'
+            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+                - existingData().amountCents
+            && getAfter(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
+              == get(vesselTripPath(existingData().tripId)).data.crewAdvanceCents - existingData().amountCents
+            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents)
+          || (existingData().paymentType == 'settlement'
+            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+                - existingData().amountCents
+            && getAfter(vesselTripPath(existingData().tripId)).data.crewPaidCents
+              == get(vesselTripPath(existingData().tripId)).data.crewPaidCents - existingData().amountCents
+            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents));
       allow delete: if false;
     }
 
     match /fishHeadWageEntries/{entryId} {
       allow read: if signedIn();
-      allow create: if signedIn() && validWageEntry(request.resource.data)
-        && request.resource.data.keys().hasAll(['businessDate', 'dateSortKey', 'monthKey', 'monthSortKey'])
-        && request.resource.data.createdBy == request.auth.uid
-        && request.resource.data.deleted == false
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.updatedAt == request.time
-        && monthOpenAfter(request.resource.data.dateKey);
-      allow update: if signedIn() && validWageEntry(request.resource.data)
-        && resource.data.deleted == false && request.resource.data.deleted == true
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'updatedAt'])
-        && request.resource.data.updatedAt == request.time
-        && monthOpenAfter(resource.data.dateKey);
+      allow create: if signedIn() && validWageEntry(incomingData())
+        && incomingData().keys().hasAll(['businessDate', 'dateSortKey', 'monthKey', 'monthSortKey'])
+        && incomingData().createdBy == request.auth.uid
+        && incomingData().deleted == false
+        && incomingData().createdAt == request.time
+        && incomingData().updatedAt == request.time
+        && monthOpenAfter(incomingData().dateKey);
+      allow update: if signedIn() && validWageEntry(incomingData())
+        && existingData().deleted == false && incomingData().deleted == true
+        && incomingData().diff(existingData()).affectedKeys().hasOnly(['deleted', 'updatedAt'])
+        && incomingData().updatedAt == request.time
+        && monthOpenAfter(existingData().dateKey);
       allow delete: if false;
     }
 
     match /fishHeadWageVoids/{voidId} {
       allow read: if signedIn();
       allow create: if signedIn()
-        && request.resource.data.keys().hasOnly([
+        && incomingData().keys().hasOnly([
           'entryId', 'dateKey', 'workerId', 'workerName', 'weightKg',
           'rateRm', 'wageRm', 'voidReason', 'voidedBy', 'voidedAt'
         ])
-        && request.resource.data.keys().hasAll([
+        && incomingData().keys().hasAll([
           'entryId', 'dateKey', 'workerId', 'workerName', 'weightKg',
           'rateRm', 'wageRm', 'voidReason', 'voidedBy', 'voidedAt'
         ])
-        && request.resource.data.entryId == voidId
-        && request.resource.data.workerName is string && request.resource.data.workerName.size() > 0
-        && request.resource.data.weightKg is int && request.resource.data.weightKg >= 1 && request.resource.data.weightKg <= 300
-        && request.resource.data.rateRm is string && request.resource.data.rateRm.matches('^[0-9][.][0-9]{2}$')
-        && request.resource.data.wageRm is string && request.resource.data.wageRm.matches('^[0-9]+[.][0-9]{2}$')
-        && request.resource.data.voidReason is string && request.resource.data.voidReason.size() > 0 && request.resource.data.voidReason.size() <= 100
-        && request.resource.data.voidedBy == request.auth.uid
-        && request.resource.data.voidedAt == request.time
-        && monthOpenAfter(request.resource.data.dateKey)
+        && incomingData().entryId == voidId
+        && incomingData().workerName is string && incomingData().workerName.size() > 0
+        && incomingData().weightKg is int && incomingData().weightKg >= 1 && incomingData().weightKg <= 300
+        && incomingData().rateRm is string && incomingData().rateRm.matches('^[0-9][.][0-9]{2}$')
+        && incomingData().wageRm is string && incomingData().wageRm.matches('^[0-9]+[.][0-9]{2}$')
+        && incomingData().voidReason is string && incomingData().voidReason.size() > 0 && incomingData().voidReason.size() <= 100
+        && incomingData().voidedBy == request.auth.uid
+        && incomingData().voidedAt == request.time
+        && monthOpenAfter(incomingData().dateKey)
         && get(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == false
         && getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == true
-        && request.resource.data.dateKey == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.dateKey
-        && request.resource.data.workerId == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerId
-        && request.resource.data.workerName == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerName
-        && request.resource.data.weightKg == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.weightKg
-        && request.resource.data.rateRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.rateRm
-        && request.resource.data.wageRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.wageRm;
+        && incomingData().dateKey == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.dateKey
+        && incomingData().workerId == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerId
+        && incomingData().workerName == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerName
+        && incomingData().weightKg == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.weightKg
+        && incomingData().rateRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.rateRm
+        && incomingData().wageRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.wageRm;
       allow update, delete: if false;
     }
 
     match /fishHeadWageMonths/{monthKey} {
       allow read: if signedIn();
-      allow create: if signedIn() && validMonth(request.resource.data)
-        && request.resource.data.monthKey == monthKey
-        && request.resource.data.status == 'open'
-        && request.resource.data.closeVersion == 0
-        && request.resource.data.workerCount == 0
-        && request.resource.data.basketCount == 0
-        && request.resource.data.totalWeightKg == 0
-        && request.resource.data.totalWageCents == 0
-        && request.resource.data.paidCents == 0
-        && request.resource.data.closedBy == null
-        && request.resource.data.closedAt == null
-        && request.resource.data.closingToken is string
-        && request.resource.data.closingBy == request.auth.uid
-        && request.resource.data.closingAt == request.time
-        && request.resource.data.updatedAt == request.time
-        && request.resource.data.lastActionId == 'closing_lock'
-        && request.resource.data.statementIds.size() == 0;
-      allow update: if signedIn() && validMonth(request.resource.data)
-        && request.resource.data.monthKey == resource.data.monthKey
+      allow create: if signedIn() && validMonth(incomingData())
+        && incomingData().monthKey == monthKey
+        && incomingData().status == 'open'
+        && incomingData().closeVersion == 0
+        && incomingData().workerCount == 0
+        && incomingData().basketCount == 0
+        && incomingData().totalWeightKg == 0
+        && incomingData().totalWageCents == 0
+        && incomingData().paidCents == 0
+        && incomingData().closedBy == null
+        && incomingData().closedAt == null
+        && incomingData().closingToken is string
+        && incomingData().closingBy == request.auth.uid
+        && incomingData().closingAt == request.time
+        && incomingData().updatedAt == request.time
+        && incomingData().lastActionId == 'closing_lock'
+        && incomingData().statementIds.size() == 0;
+      allow update: if signedIn() && validMonth(incomingData())
+        && incomingData().monthKey == existingData().monthKey
         && (
-          (resource.data.status == 'open'
-            && (resource.data.closingToken == null
-              || request.time >= resource.data.closingAt + duration.value(5, 'm'))
-            && request.resource.data.status == 'open'
-            && request.resource.data.diff(resource.data).affectedKeys()
+          (existingData().status == 'open'
+            && (existingData().closingToken == null
+              || request.time >= existingData().closingAt + duration.value(5, 'm'))
+            && incomingData().status == 'open'
+            && incomingData().diff(existingData()).affectedKeys()
               .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
-            && request.resource.data.closingToken is string
-            && request.resource.data.closingBy == request.auth.uid
-            && request.resource.data.closingAt == request.time
-            && request.resource.data.updatedAt == request.time)
+            && incomingData().closingToken is string
+            && incomingData().closingBy == request.auth.uid
+            && incomingData().closingAt == request.time
+            && incomingData().updatedAt == request.time)
           ||
-          (resource.data.status == 'open'
-            && resource.data.closingToken is string
-            && resource.data.closingBy == request.auth.uid
-            && request.resource.data.status == 'closed'
-            && request.resource.data.closeVersion == resource.data.closeVersion + 1
-            && request.resource.data.paidCents == 0
-            && request.resource.data.closedBy == request.auth.uid
-            && request.resource.data.closedAt == request.time
-            && request.resource.data.updatedAt == request.time
-            && request.resource.data.closingToken == null
-            && request.resource.data.closingBy == null
-            && request.resource.data.closingAt == null
-            && validCloseAction(monthKey, request.resource.data.closeVersion, request.resource.data.lastActionId))
+          (existingData().status == 'open'
+            && existingData().closingToken is string
+            && existingData().closingBy == request.auth.uid
+            && incomingData().status == 'closed'
+            && incomingData().closeVersion == existingData().closeVersion + 1
+            && incomingData().paidCents == 0
+            && incomingData().closedBy == request.auth.uid
+            && incomingData().closedAt == request.time
+            && incomingData().updatedAt == request.time
+            && incomingData().closingToken == null
+            && incomingData().closingBy == null
+            && incomingData().closingAt == null
+            && validCloseAction(monthKey, incomingData().closeVersion, incomingData().lastActionId))
           ||
-          (resource.data.status == 'open'
-            && resource.data.closingToken is string
-            && resource.data.closingBy == request.auth.uid
-            && request.resource.data.status == 'open'
-            && request.resource.data.diff(resource.data).affectedKeys()
+          (existingData().status == 'open'
+            && existingData().closingToken is string
+            && existingData().closingBy == request.auth.uid
+            && incomingData().status == 'open'
+            && incomingData().diff(existingData()).affectedKeys()
               .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
-            && request.resource.data.closingToken == null
-            && request.resource.data.closingBy == null
-            && request.resource.data.closingAt == null
-            && request.resource.data.updatedAt == request.time)
+            && incomingData().closingToken == null
+            && incomingData().closingBy == null
+            && incomingData().closingAt == null
+            && incomingData().updatedAt == request.time)
           ||
-          (resource.data.status == 'closed'
-            && resource.data.paidCents == 0
-            && request.resource.data.status == 'open'
-            && request.resource.data.closeVersion == resource.data.closeVersion
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          (existingData().status == 'closed'
+            && existingData().paidCents == 0
+            && incomingData().status == 'open'
+            && incomingData().closeVersion == existingData().closeVersion
+            && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'reopenedBy', 'reopenedAt', 'updatedAt', 'lastActionId'
             ])
-            && request.resource.data.reopenedBy == request.auth.uid
-            && request.resource.data.reopenedAt == request.time
-            && request.resource.data.updatedAt == request.time
-            && request.resource.data.lastActionId == 'reopen_' + string(resource.data.closeVersion)
-            && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'reopen'
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.reason is string
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.performedBy == request.auth.uid
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.beforeSnapshot.status == 'closed'
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.beforeSnapshot.paidCents == 0
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.afterSnapshot.status == 'open'
-            && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.afterSnapshot.paidCents == 0)
+            && incomingData().reopenedBy == request.auth.uid
+            && incomingData().reopenedAt == request.time
+            && incomingData().updatedAt == request.time
+            && incomingData().lastActionId == 'reopen_' + string(existingData().closeVersion)
+            && existsAfter(actionPath(monthKey, incomingData().lastActionId))
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'reopen'
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.reason is string
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.performedBy == request.auth.uid
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.beforeSnapshot.status == 'closed'
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.beforeSnapshot.paidCents == 0
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.afterSnapshot.status == 'open'
+            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.afterSnapshot.paidCents == 0)
           ||
           validPaymentMonthUpdate(monthKey)
         );
@@ -2502,86 +2507,86 @@ service cloud.firestore {
 
       match /statements/{statementId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validStatement(request.resource.data)
-          && request.resource.data.id == statementId
-          && request.resource.data.monthKey == monthKey
-          && request.resource.data.paidCents == 0
-          && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.snapshotAt == request.time
+        allow create: if signedIn() && validStatement(incomingData())
+          && incomingData().id == statementId
+          && incomingData().monthKey == monthKey
+          && incomingData().paidCents == 0
+          && incomingData().createdBy == request.auth.uid
+          && incomingData().snapshotAt == request.time
           && getAfter(monthPath(monthKey)).data.status == 'closed'
-          && request.resource.data.closeVersion == getAfter(monthPath(monthKey)).data.closeVersion
-          && request.resource.data.lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
+          && incomingData().closeVersion == getAfter(monthPath(monthKey)).data.closeVersion
+          && incomingData().lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
           && statementId in getAfter(monthPath(monthKey)).data.statementIds
-          && validCloseAction(monthKey, request.resource.data.closeVersion, request.resource.data.lastActionId);
-        allow update: if signedIn() && validStatement(request.resource.data)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['paidCents', 'lastActionId'])
-          && request.resource.data.closeVersion == resource.data.closeVersion
-          && request.resource.data.lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
-          && existsAfter(actionPath(monthKey, request.resource.data.lastActionId))
-          && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.workerId == resource.data.workerId
-          && getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.closeVersion == resource.data.closeVersion
+          && validCloseAction(monthKey, incomingData().closeVersion, incomingData().lastActionId);
+        allow update: if signedIn() && validStatement(incomingData())
+          && incomingData().diff(existingData()).affectedKeys().hasOnly(['paidCents', 'lastActionId'])
+          && incomingData().closeVersion == existingData().closeVersion
+          && incomingData().lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
+          && existsAfter(actionPath(monthKey, incomingData().lastActionId))
+          && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.workerId == existingData().workerId
+          && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.closeVersion == existingData().closeVersion
           && (
-            (getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'payment_create'
-              && request.resource.data.paidCents == resource.data.paidCents
-                + getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.paymentId)).data.amountCents)
+            (getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'payment_create'
+              && incomingData().paidCents == existingData().paidCents
+                + getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, incomingData().lastActionId)).data.paymentId)).data.amountCents)
             ||
-            (getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.type == 'payment_void'
-              && request.resource.data.paidCents == resource.data.paidCents
-                - getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, request.resource.data.lastActionId)).data.paymentId)).data.amountCents)
+            (getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'payment_void'
+              && incomingData().paidCents == existingData().paidCents
+                - getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, incomingData().lastActionId)).data.paymentId)).data.amountCents)
           );
         allow delete: if false;
       }
 
       match /payments/{paymentId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validPayment(request.resource.data)
-          && request.resource.data.monthKey == monthKey
-          && request.resource.data.createdBy == request.auth.uid
-          && request.resource.data.createdAt == request.time
-          && request.resource.data.voided == false
-          && request.resource.data.voidReason == null
-          && request.resource.data.voidedBy == null
-          && request.resource.data.voidedAt == null
+        allow create: if signedIn() && validPayment(incomingData())
+          && incomingData().monthKey == monthKey
+          && incomingData().createdBy == request.auth.uid
+          && incomingData().createdAt == request.time
+          && incomingData().voided == false
+          && incomingData().voidReason == null
+          && incomingData().voidedBy == null
+          && incomingData().voidedAt == null
           && get(monthPath(monthKey)).data.status == 'closed'
-          && request.resource.data.closeVersion == get(monthPath(monthKey)).data.closeVersion
-          && get(statementPath(monthKey, request.resource.data.statementId)).data.closeVersion == request.resource.data.closeVersion
-          && request.resource.data.workerId == get(statementPath(monthKey, request.resource.data.statementId)).data.workerId
-          && request.resource.data.workerName == get(statementPath(monthKey, request.resource.data.statementId)).data.workerName
-          && request.resource.data.amountCents <= get(statementPath(monthKey, request.resource.data.statementId)).data.wageCents
-            - get(statementPath(monthKey, request.resource.data.statementId)).data.paidCents
-          && getAfter(statementPath(monthKey, request.resource.data.statementId)).data.paidCents
-            == get(statementPath(monthKey, request.resource.data.statementId)).data.paidCents + request.resource.data.amountCents
+          && incomingData().closeVersion == get(monthPath(monthKey)).data.closeVersion
+          && get(statementPath(monthKey, incomingData().statementId)).data.closeVersion == incomingData().closeVersion
+          && incomingData().workerId == get(statementPath(monthKey, incomingData().statementId)).data.workerId
+          && incomingData().workerName == get(statementPath(monthKey, incomingData().statementId)).data.workerName
+          && incomingData().amountCents <= get(statementPath(monthKey, incomingData().statementId)).data.wageCents
+            - get(statementPath(monthKey, incomingData().statementId)).data.paidCents
+          && getAfter(statementPath(monthKey, incomingData().statementId)).data.paidCents
+            == get(statementPath(monthKey, incomingData().statementId)).data.paidCents + incomingData().amountCents
           && getAfter(monthPath(monthKey)).data.paidCents
-            == get(monthPath(monthKey)).data.paidCents + request.resource.data.amountCents
-          && getAfter(statementPath(monthKey, request.resource.data.statementId)).data.lastActionId == 'payment_create_' + paymentId
+            == get(monthPath(monthKey)).data.paidCents + incomingData().amountCents
+          && getAfter(statementPath(monthKey, incomingData().statementId)).data.lastActionId == 'payment_create_' + paymentId
           && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_create_' + paymentId
           && existsAfter(actionPath(monthKey, 'payment_create_' + paymentId));
-        allow update: if signedIn() && validPayment(request.resource.data)
-          && resource.data.voided == false && request.resource.data.voided == true
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['voided', 'voidReason', 'voidedBy', 'voidedAt'])
-          && request.resource.data.voidReason is string
-          && request.resource.data.voidReason.size() >= 3 && request.resource.data.voidReason.size() <= 100
-          && request.resource.data.voidedBy == request.auth.uid
-          && request.resource.data.voidedAt == request.time
-          && getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents
-            == get(statementPath(monthKey, resource.data.statementId)).data.paidCents - resource.data.amountCents
+        allow update: if signedIn() && validPayment(incomingData())
+          && existingData().voided == false && incomingData().voided == true
+          && incomingData().diff(existingData()).affectedKeys().hasOnly(['voided', 'voidReason', 'voidedBy', 'voidedAt'])
+          && incomingData().voidReason is string
+          && incomingData().voidReason.size() >= 3 && incomingData().voidReason.size() <= 100
+          && incomingData().voidedBy == request.auth.uid
+          && incomingData().voidedAt == request.time
+          && getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents
+            == get(statementPath(monthKey, existingData().statementId)).data.paidCents - existingData().amountCents
           && getAfter(monthPath(monthKey)).data.paidCents
-            == get(monthPath(monthKey)).data.paidCents - resource.data.amountCents
-          && getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents >= 0
+            == get(monthPath(monthKey)).data.paidCents - existingData().amountCents
+          && getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents >= 0
           && getAfter(monthPath(monthKey)).data.paidCents >= 0
-          && getAfter(statementPath(monthKey, resource.data.statementId)).data.lastActionId == 'payment_void_' + paymentId
+          && getAfter(statementPath(monthKey, existingData().statementId)).data.lastActionId == 'payment_void_' + paymentId
           && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_void_' + paymentId
           && existsAfter(actionPath(monthKey, 'payment_void_' + paymentId))
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.reason
-            == request.resource.data.voidReason
+            == incomingData().voidReason
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.amountCents
-            == resource.data.amountCents
+            == existingData().amountCents
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.statementPaidCents
-            == get(statementPath(monthKey, resource.data.statementId)).data.paidCents
+            == get(statementPath(monthKey, existingData().statementId)).data.paidCents
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.monthPaidCents
             == get(monthPath(monthKey)).data.paidCents
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.statementPaidCents
-            == getAfter(statementPath(monthKey, resource.data.statementId)).data.paidCents
+            == getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents
           && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.monthPaidCents
             == getAfter(monthPath(monthKey)).data.paidCents;
         allow delete: if false;
@@ -2589,29 +2594,29 @@ service cloud.firestore {
 
       match /actions/{actionId} {
         allow read: if signedIn();
-        allow create: if signedIn() && validAction(request.resource.data)
-          && request.resource.data.monthKey == monthKey
+        allow create: if signedIn() && validAction(incomingData())
+          && incomingData().monthKey == monthKey
           && getAfter(monthPath(monthKey)).data.lastActionId == actionId
           && (
-            (request.resource.data.type == 'close' && actionId == 'close_' + string(request.resource.data.closeVersion))
-            || (request.resource.data.type == 'reopen' && actionId == 'reopen_' + string(request.resource.data.closeVersion))
-            || (request.resource.data.type == 'payment_create'
-              && actionId == 'payment_create_' + request.resource.data.paymentId
-              && getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.createdAt == request.time
-              && request.resource.data.afterSnapshot.amountCents
-                == getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.amountCents
-              && request.resource.data.afterSnapshot.statementPaidCents
+            (incomingData().type == 'close' && actionId == 'close_' + string(incomingData().closeVersion))
+            || (incomingData().type == 'reopen' && actionId == 'reopen_' + string(incomingData().closeVersion))
+            || (incomingData().type == 'payment_create'
+              && actionId == 'payment_create_' + incomingData().paymentId
+              && getAfter(paymentPath(monthKey, incomingData().paymentId)).data.createdAt == request.time
+              && incomingData().afterSnapshot.amountCents
+                == getAfter(paymentPath(monthKey, incomingData().paymentId)).data.amountCents
+              && incomingData().afterSnapshot.statementPaidCents
                 == getAfter(statementPath(
                   monthKey,
-                  getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.statementId
+                  getAfter(paymentPath(monthKey, incomingData().paymentId)).data.statementId
                 )).data.paidCents
-              && request.resource.data.afterSnapshot.monthPaidCents
+              && incomingData().afterSnapshot.monthPaidCents
                 == getAfter(monthPath(monthKey)).data.paidCents)
-            || (request.resource.data.type == 'payment_void'
-              && actionId == 'payment_void_' + request.resource.data.paymentId
-              && getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.voidedAt == request.time
-              && request.resource.data.reason
-                == getAfter(paymentPath(monthKey, request.resource.data.paymentId)).data.voidReason)
+            || (incomingData().type == 'payment_void'
+              && actionId == 'payment_void_' + incomingData().paymentId
+              && getAfter(paymentPath(monthKey, incomingData().paymentId)).data.voidedAt == request.time
+              && incomingData().reason
+                == getAfter(paymentPath(monthKey, incomingData().paymentId)).data.voidReason)
           );
         allow update, delete: if false;
       }

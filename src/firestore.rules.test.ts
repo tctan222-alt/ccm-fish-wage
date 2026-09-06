@@ -57,12 +57,47 @@ describe('Firestore Rules: retail cash sales', () => {
     await assertFails(writeSale(doc(db, 'retailSales', 'retail-total-tampered'), { ...max, totalAmountCents: 1 }))
     await assertFails(writeSale(doc(db, 'retailSales', 'retail-over-limit'), { ...max, lines: [...max.lines, line], totalAmountCents: max.totalAmountCents + line.amountCents }))
   })
+  it('accepts tenths of a kg and independently enforces rounding to integer cents', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const cases = [['12.5', '6', 7500], ['7.3', '8', 5840], ['0.1', '0.05', 1], ['0.1', '0.04', 0], ['300', '10000', 300000000]] as const
+    for (const [index, [kg, price, expected]] of cases.entries()) {
+      const decimalLine = makeRetailLine(retailSeed[0], kg, price)
+      expect(decimalLine.amountCents).toBe(expected)
+      const ref = doc(db, 'retailSales', `retail-decimal-${index}`)
+      await assertSucceeds(writeSale(ref, sale([decimalLine])))
+      expect((await getDoc(ref)).data()?.totalAmountCents).toBe(expected)
+      await assertFails(writeSale(doc(db, 'retailSales', `retail-rounding-tampered-${index}`), {
+        ...sale([decimalLine]), lines: [{ ...decimalLine, amountCents: expected + 1 }], totalAmountCents: expected + 1,
+      }))
+    }
+    await assertFails(setDoc(doc(db, 'retailSales', 'retail-legacy-write', 'groups', 'first'), {
+      lines: [{ fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightKg: 2, unitPriceCents: 615, amountCents: 1230 }],
+      totalAmountCents: 1230, createdBy: 'u1', createdAt: serverTimestamp(),
+    }))
+  })
+  it('can finalize pre-upgrade immutable integer groups without rewriting them', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const ref = doc(db, 'retailSales', 'retail-legacy-pending')
+    const legacyLine = { fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightKg: 2, unitPriceCents: 615, amountCents: 1230 }
+    await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'retailSales', ref.id, 'groups', 'first'), {
+      lines: [legacyLine], totalAmountCents: 1230, createdBy: 'u1', createdAt: serverTimestamp(),
+    }))
+    for (const key of ['second', 'third', 'fourth']) await assertSucceeds(setDoc(doc(ref, 'groups', key), { lines: [], totalAmountCents: 0, createdBy: 'u1', createdAt: serverTimestamp() }))
+    const header = { businessDate: '06/09/2026', dateSortKey: 20260906, vendorName: '阿明', totalAmountCents: 1230,
+      createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+      lineGroups: { first: [legacyLine], second: [], third: [], fourth: [] } }
+    await assertFails(setDoc(doc(environment.authenticatedContext('other').firestore(), 'retailSales', ref.id), { ...header, createdBy: 'other', updatedBy: 'other' }))
+    await assertFails(setDoc(ref, { ...header, lineGroups: { ...header.lineGroups, first: [line] } }))
+    await assertSucceeds(setDoc(ref, header))
+    expect((await getDoc(doc(ref, 'groups', 'first'))).data()?.lines).toEqual([legacyLine])
+  })
   it('rejects invalid dates, kg, prices, empty sales and forged audit fields', async () => {
     const db = environment.authenticatedContext('u1').firestore()
     const invalid = [
       { businessDate: '29/02/2026', dateSortKey: 20260229 }, { dateSortKey: 20260907 }, { vendorName: '' }, { lines: [], totalAmountCents: 0 },
-      ...[0, 301, 1.5].map(weightKg => ({ lines: [{ ...line, weightKg, amountCents: weightKg * line.unitPriceCents }], totalAmountCents: weightKg * line.unitPriceCents })),
-      ...[0, -1, 1.5, 1000001].map(unitPriceCents => ({ lines: [{ ...line, unitPriceCents, amountCents: line.weightKg * unitPriceCents }], totalAmountCents: line.weightKg * unitPriceCents })),
+      ...[0, -1, 3001, 22.5].map(weightDeciKg => ({ lines: [{ ...line, weightDeciKg, amountCents: Math.floor((weightDeciKg * line.unitPriceCents + 5) / 10) }], totalAmountCents: Math.floor((weightDeciKg * line.unitPriceCents + 5) / 10) })),
+      ...[0, -1, 1.5, 1000001].map(unitPriceCents => ({ lines: [{ ...line, unitPriceCents, amountCents: Math.floor((line.weightDeciKg * unitPriceCents + 5) / 10) }], totalAmountCents: Math.floor((line.weightDeciKg * unitPriceCents + 5) / 10) })),
+      { lines: [{ ...line, weightKg: 2 }] },
       { createdBy: 'other' }, { updatedBy: 'other' }, { createdAt: new Date('2020-01-01') }, { inventoryDeducted: true },
     ]
     for (let index = 0; index < invalid.length; index++) await assertFails(writeSale(doc(db, 'retailSales', `retail-invalid-${index}`), { ...sale(), ...invalid[index] }))

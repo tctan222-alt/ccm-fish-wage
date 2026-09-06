@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { makeRetailLine, MAX_RETAIL_LINES, normalizeRetailFish, prepareRetailSale, retailPriceCents, type RetailFish } from './retailSales'
+import { makeRetailLine, MAX_RETAIL_LINES, normalizeRetailFish, prepareRetailSale, retailPriceCents, retailWeightKg, type RetailFish, type RetailLineInput } from './retailSales'
 
 const fish: RetailFish = { id: 'fish', chineseName: '甘丰', malayName: 'kembung', suggestedPriceCents: 600, active: true }
 describe('retail cash calculations and snapshots', () => {
@@ -20,8 +20,38 @@ describe('retail cash calculations and snapshots', () => {
   it.each(['', '0', '-1', '0.001', '1e2', 'Infinity', '10000.01'])('rejects invalid price %s', value => {
     expect(() => retailPriceCents(value)).toThrow()
   })
-  it.each(['0', '-1', '301', '1.5', '', '1e2'])('rejects invalid kg %s', value => {
+  it.each(['0', '-1', '300.1', '301', '2.25', '0.01', '', '1e2', 'Infinity'])('rejects invalid kg %s', value => {
     expect(() => makeRetailLine(fish, value, '6')).toThrow()
+  })
+  it.each([
+    ['12.5', '6', 125, 7500],
+    ['7.3', '8', 73, 5840],
+    ['0.1', '0.05', 1, 1],
+    ['0.1', '0.04', 1, 0],
+    ['300', '10000', 3000, 300_000_000],
+  ])('stores %s kg at RM%s using integers and rounds to the nearest cent', (kg, price, weightDeciKg, amountCents) => {
+    const line = makeRetailLine(fish, kg, price)
+    expect(line).toMatchObject({ weightDeciKg, amountCents })
+    expect(line).not.toHaveProperty('weightKg')
+    expect(retailWeightKg(line)).toBe(kg)
+    expect(prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines: [line] }).totalAmountCents).toBe(amountCents)
+  })
+  it('normalizes legacy integer weights without mutating the stored input or amount', () => {
+    const legacy = { fishId: 'fish', chineseName: '旧鱼名', malayName: 'old', weightKg: 3, unitPriceCents: 615, amountCents: 1845 }
+    const sale = prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines: [legacy] })
+    expect(sale.lines[0]).toEqual({ fishId: 'fish', chineseName: '旧鱼名', malayName: 'old', weightDeciKg: 30, unitPriceCents: 615, amountCents: 1845 })
+    expect(legacy).toHaveProperty('weightKg', 3)
+    expect(legacy).not.toHaveProperty('weightDeciKg')
+  })
+  it.each([
+    { weightDeciKg: 1.5, amountCents: 90 },
+    { weightDeciKg: 0, amountCents: 0 },
+    { weightDeciKg: 3001, amountCents: 180060 },
+    { weightKg: 1.5, amountCents: 900 },
+    { weightDeciKg: 10, weightKg: 1, amountCents: 600 },
+  ])('rejects invalid or ambiguous persisted weight %j', invalidWeight => {
+    const line = { fishId: 'fish', chineseName: '甘丰', malayName: 'kembung', unitPriceCents: 600, ...invalidWeight } as RetailLineInput
+    expect(() => prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines: [line] })).toThrow('销售明细或金额无效')
   })
   it('rejects inactive fish, invalid dates, missing vendor, empty and oversized sales, and tampered amounts', () => {
     const line = makeRetailLine(fish, '2', '6')
