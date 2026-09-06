@@ -6,19 +6,25 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # No lockfile existed on this branch and registry access was unavailable
-      # while preparing it. npm install validates the manifest and creates one;
-      # switch this to npm ci when that generated lockfile is committed.
-      - run: npm install
+          cache: npm
+      - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test -- --run
+      - run: npm test
       - run: npm run build
