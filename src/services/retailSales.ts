@@ -28,7 +28,7 @@ export async function initializeRetailFish() {
   })
 }
 
-export async function saveRetailFish(id: string | null, input: RetailFishInput) {
+export async function saveRetailFish(id: string | null, input: RetailFishInput): Promise<RetailFish> {
   const uid = userId(), clean = normalizeRetailFish(input)
   const ref = id ? doc(db, 'retailFish', id) : doc(collection(db, 'retailFish'))
   await runTransaction(db, async transaction => {
@@ -37,6 +37,14 @@ export async function saveRetailFish(id: string | null, input: RetailFishInput) 
     if (snapshot.exists()) transaction.update(ref, { ...clean, updatedBy: uid, updatedAt: serverTimestamp() })
     else transaction.set(ref, { ...clean, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
   })
+  return { id: ref.id, ...clean }
+}
+
+export async function quickAddRetailFish(input: RetailFishInput): Promise<RetailFish> {
+  const clean = normalizeRetailFish(input)
+  if (!clean.malayName) throw new Error('请输入马来文鱼名。')
+  if (clean.suggestedPriceCents === null) throw new Error('请输入建议 RM/kg。')
+  return saveRetailFish(null, clean)
 }
 
 export const newRetailSaleId = () => doc(collection(db, 'retailSales')).id

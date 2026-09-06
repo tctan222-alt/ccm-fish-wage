@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import { businessDateFromLegacy, formatAuditTimestamp, legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, watchRetailFish } from '../services/retailSales'
+import { RetailFishPicker } from '../components/RetailFishPicker'
 import './retailSales.css'
 
 function message(error: unknown) { return error instanceof Error ? error.message : '操作失败，请重试。' }
@@ -28,11 +29,15 @@ export function RetailSalesPage() {
   const { fish, error: loadError } = useFish()
   const [businessDate, setDate] = useState(retailToday), [vendorName, setVendor] = useState('')
   const [search, setSearch] = useState(''), [selected, setSelected] = useState<RetailFish | null>(null)
+  const [createdFish, setCreatedFish] = useState<RetailFish[]>([]), [quickBusy, setQuickBusy] = useState(false)
+  const [pickerVersion, setPickerVersion] = useState(0)
   const [weight, setWeight] = useState(''), [price, setPrice] = useState(''), [lines, setLines] = useState<RetailLine[]>([])
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [sale, setSale] = useState<RetailSale | null>(null)
   const [pending, setPending] = useState<{ id: string; input: RetailSaleInput } | null>(null)
   const saving = useRef(false), weightInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [recoveryError, setRecoveryError] = useState('')
+  const availableFish = fish === null ? null : [...fish, ...createdFish.filter(created => !fish.some(item => item.id === created.id))]
+  useEffect(() => { if (selected && !quickBusy) weightInput.current?.focus() }, [selected, quickBusy])
   useEffect(() => {
     try {
       const restored = loadPendingRetailSale()
@@ -44,25 +49,25 @@ export function RetailSalesPage() {
   try { if (selected && weight && price) preview = makeRetailLine(selected, weight, price) } catch { /* Show validation on add. */ }
 
   function select(item: RetailFish) {
-    setSelected({ ...item }); setPrice(item.suggestedPriceCents === null ? '' : (item.suggestedPriceCents / 100).toFixed(2))
+    setSelected({ ...item }); setSearch(item.chineseName); setWeight(''); setPrice(item.suggestedPriceCents === null ? '' : (item.suggestedPriceCents / 100).toFixed(2))
     setError(''); weightInput.current?.focus()
   }
   function add(event: FormEvent) {
     event.preventDefault(); setError('')
     try {
-      if (!selected || !fish?.some(item => item.id === selected.id && item.active)) throw new Error('请选择启用的鱼种。')
+      if (!selected || !availableFish?.some(item => item.id === selected.id && item.active)) throw new Error('请选择已有鱼种，或先补齐新鱼资料并保存。')
       if (lines.length >= MAX_RETAIL_LINES) throw new Error(`本单已达 ${MAX_RETAIL_LINES} 条，请先结算。`)
       const line = makeRetailLine(selected, weight, price)
       setLines(current => [...current, line]); setSelected(null); setWeight(''); setPrice(''); setSearch(''); searchInput.current?.focus()
     } catch (problem) { setError(message(problem)) }
   }
   async function checkout() {
-    if (saving.current) return
+    if (saving.current || quickBusy) return
     setError('')
     let attempt = pending
     try {
       if (!attempt) {
-        if (selected || weight || price) throw new Error('请先加入或清除当前品名，再结算。')
+        if (selected || search.trim() || weight || price) throw new Error('请先加入或清除当前品名，再结算。')
         const input = prepareRetailSale({ businessDate, vendorName, lines })
         attempt = { id: newRetailSaleId(), input }; rememberPendingRetailSale(attempt); setPending(attempt)
       }
@@ -79,21 +84,21 @@ export function RetailSalesPage() {
   return <main className="retail-page"><RetailHeader title="门市销售" />
     {(error || loadError || recoveryError) && <p className="error" role="alert">{error || loadError || recoveryError}</p>}
     {pending && <p className="notice">正在确认结算结果。失败时请点「重试结算」，系统会核对同一单号，避免重复保存。单号：{pending.id}</p>}
-    <fieldset disabled={busy || !!pending} className="retail-fields">
+    <fieldset disabled={busy || quickBusy || !!pending} className="retail-fields">
       <section className="retail-context"><DateField value={businessDate} onChange={setDate} /><label>小贩名<input value={vendorName} maxLength={100} onChange={event => setVendor(event.target.value)} placeholder="直接输入小贩名" /></label></section>
-      <form onSubmit={add}><section><label>搜索鱼名<input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="中文 / 马来文" /></label>
-        {fish === null ? <p role="status">正在载入鱼种…</p> : !fish.length ? <p className="notice">尚未建立门市鱼种，请到「鱼名与建议价」建立初始资料或新增鱼种。</p> : null}
-        <div className="retail-fish-grid">{fish?.filter(item => item.active && `${item.chineseName} ${item.malayName}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())).map(item => <button key={item.id} type="button" aria-pressed={selected?.id === item.id} onClick={() => select(item)}><strong>{item.chineseName}</strong><small>{item.malayName || '　'}</small></button>)}</div>
-        {fish?.length && !fish.some(item => item.active) ? <p>暂无启用鱼种，请在设置中启用或新增。</p> : null}
-        <p className="retail-selected">{selected ? `已选：${selected.chineseName}` : '请选择品名'}</p>
+      <section><RetailFishPicker key={pickerVersion} fish={availableFish} query={search} inputRef={searchInput}
+        onQueryChange={value => { setSearch(value); setSelected(null); setPrice(''); setWeight(''); setError('') }}
+        onSelect={select} onCreated={item => setCreatedFish(current => [...current, item])} onBusyChange={setQuickBusy} />
+        <p className="retail-selected">{selected ? <>{selected.chineseName} · {selected.malayName || '未填马来文名'} · 建议 {selected.suggestedPriceCents === null ? '未设置' : `${retailMoney(selected.suggestedPriceCents)}/kg`}</> : '输入鱼名，选择已有结果或直接新增。'}</p>
+        <form onSubmit={add}>
         <div className="retail-numbers"><label>重量 kg<input ref={weightInput} inputMode="decimal" value={weight} onChange={event => setWeight(event.target.value)} placeholder="0.1–300，最多一位小数" /></label>
           <label>实际 RM/kg<input inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} placeholder="手动输入售价" /></label></div>
         <p className="retail-line-total">本行金额 <strong>{preview ? retailMoney(preview.amountCents) : '—'}</strong></p>
-        <div className="retail-actions"><button className="primary-action" disabled={!fish || !selected}>加入明细</button><button type="button" onClick={() => { setSelected(null); setWeight(''); setPrice(''); setError('') }}>清除当前品名</button></div>
-      </section></form>
+        <div className="retail-actions"><button className="primary-action" disabled={!availableFish || !selected}>加入明细</button><button type="button" onClick={() => { setSelected(null); setSearch(''); setWeight(''); setPrice(''); setError(''); setPickerVersion(current => current + 1) }}>清除当前品名</button></div>
+        </form></section>
       <section><h2>本单明细（{lines.length}）</h2><ol className="retail-lines">{lines.map((line, index) => <li key={index}><div><strong>{line.chineseName}</strong><small>{line.malayName}</small><span>{retailWeightKg(line)} kg × {retailMoney(line.unitPriceCents)}/kg</span></div><strong>{retailMoney(line.amountCents)}</strong><button aria-label={`移除第 ${index + 1} 条明细`} onClick={() => setLines(current => current.filter((_, position) => position !== index))}>移除</button></li>)}</ol></section>
     </fieldset>
-    <section className="retail-checkout"><div>本次现金合计 <strong>{retailMoney(total)}</strong></div><button className="primary-action" disabled={busy || !lines.length || !!recoveryError} onClick={() => void checkout()}>{busy ? '正在保存…' : pending ? '重试结算' : '结算'}</button></section>
+    <section className="retail-checkout"><div>本次现金合计 <strong>{retailMoney(total)}</strong></div><button className="primary-action" disabled={busy || quickBusy || !lines.length || !!recoveryError} onClick={() => void checkout()}>{busy ? '正在保存…' : pending ? '重试结算' : '结算'}</button></section>
   </main>
 }
 

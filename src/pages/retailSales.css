@@ -6,10 +6,13 @@
 .retail-fields:disabled{opacity:.7}
 .retail-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.retail-nav a{display:grid;place-items:center;min-height:48px;padding:8px 2px;color:#075985;font-size:.85rem;font-weight:800;text-align:center}
 .retail-context,.retail-numbers{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.retail-fish-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px;max-height:240px;overflow-y:auto}
-.retail-fish-grid button{padding:10px 4px;min-height:68px;overflow-wrap:anywhere}
-.retail-fish-grid small,.retail-lines small,.retail-receipt small{display:block;font-size:.8em;font-weight:400;color:#486581}
-.retail-fish-grid button[aria-pressed=true]{background:#075985;color:white}.retail-fish-grid button[aria-pressed=true] small{color:white}
+.retail-fish-suggestions{display:grid;gap:4px;margin-top:8px;max-height:280px;overflow-y:auto;border:1px solid #bcccdc;border-radius:10px;padding:4px}
+.retail-fish-suggestions button{display:flex;justify-content:space-between;align-items:center;gap:12px;text-align:left;padding:12px;min-height:64px;overflow-wrap:anywhere}
+.retail-fish-suggestions button>span{min-width:0}.retail-fish-suggestions button>span:last-child{font-weight:750;text-align:right}
+.retail-fish-suggestions button[aria-selected=true]{background:#e0f2fe;border-color:#075985}
+.retail-fish-suggestions small,.retail-lines small,.retail-receipt small{display:block;font-size:.8em;font-weight:400;color:#486581}
+.retail-new-fish{width:100%;min-height:56px;margin-top:8px;text-align:left;color:#075985;border:2px solid #075985;font-weight:800;overflow-wrap:anywhere}
+.retail-quick-add{margin-top:12px;background:#f0f9ff;border:2px solid #7dd3fc;border-radius:10px;padding:14px}.retail-quick-add h2{overflow-wrap:anywhere}.retail-quick-add label{margin-bottom:12px}
 .retail-selected{font-weight:800}.retail-numbers input{font-size:1.6rem!important;font-variant-numeric:tabular-nums}
 .retail-line-total{display:flex;justify-content:space-between;gap:8px}.retail-line-total strong{font-size:1.5rem}
 .retail-actions{display:grid;gap:8px}.retail-actions button{width:100%}
