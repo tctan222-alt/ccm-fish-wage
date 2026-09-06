@@ -129,7 +129,7 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('session-2')).toHaveLength(1))
-    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('60 kg')
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('60 kg'))
 
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
     await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('80 kg'))
@@ -158,7 +158,7 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'20'}})
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('meal-session-2')).toHaveLength(1))
-    expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('20 kg')
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('20 kg'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v978'}})
     await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent('10 kg'))
     expect(await store.getSession('meal-session-1')).toMatchObject({productType:'fish_meal',vesselId:'v978',sessionCode:'FM-978-30072026-01'})
