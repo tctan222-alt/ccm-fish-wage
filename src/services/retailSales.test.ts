@@ -2,16 +2,23 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeRetailLine, type RetailSaleInput } from '../lib/retailSales'
 import seed from '../data/retailFishSeed.json'
 
-const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), writes: vi.fn(), failPath: '', uid: 'u1' }))
+const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), writes: vi.fn(), failPath: '', uid: 'u1', nextId: 0 }))
 vi.mock('../firebase', () => ({ db: {}, auth: { get currentUser() { return { uid: state.uid } } } }))
 vi.mock('firebase/firestore', () => {
   const snapshot = (path: string) => ({ id: path.split('/').at(-1), exists: () => state.records.has(path), data: () => state.records.get(path) })
   return {
     collection: (_db: unknown, name: string) => ({ path: name }),
-    doc: (parent: { path?: string }, ...parts: string[]) => ({ path: [parent.path, ...parts].filter(Boolean).join('/') }),
+    doc: (parent: { path?: string }, ...parts: string[]) => {
+      const path = [parent.path, ...(parent.path && !parts.length ? [`auto-${++state.nextId}`] : parts)].filter(Boolean).join('/')
+      return { path, id: path.split('/').at(-1) }
+    },
     getDoc: async (ref: { path: string }) => snapshot(ref.path),
     getDocs: async () => ({ docs: [...state.records.keys()].filter(path => /^retailSales\/[^/]+$/.test(path)).map(snapshot) }),
-    onSnapshot: vi.fn(), query: vi.fn(), where: vi.fn(),
+    onSnapshot: (ref: { path: string }, next: (data: unknown) => void) => {
+      next({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref.path}/`) && path.split('/').length === 2).map(snapshot) })
+      return vi.fn()
+    },
+    query: vi.fn(), where: vi.fn(),
     serverTimestamp: () => ({ toDate: () => new Date('2026-09-06T12:00:00Z') }),
     runTransaction: async (_db: unknown, callback: (transaction: unknown) => Promise<void>) => callback({
       get: async (ref: { path: string }) => snapshot(ref.path),
@@ -23,9 +30,41 @@ vi.mock('firebase/firestore', () => {
     }),
   }
 })
-import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, rememberPendingRetailSale, saveRetailSale } from './retailSales'
+import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, watchRetailFish } from './retailSales'
 const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', lines: [makeRetailLine(seed[0], '2', '6.15')] }
-beforeEach(() => { state.records.clear(); state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; sessionStorage.clear() })
+beforeEach(() => { state.records.clear(); state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; sessionStorage.clear() })
+
+describe('retail quick-add fish', () => {
+  const fishInput = { chineseName: ' 新鱼 ', malayName: ' ikan baru ', suggestedPriceCents: 650, active: true }
+  it('persists a reusable master item and preserves sale snapshots after later master changes', async () => {
+    const created = await quickAddRetailFish(fishInput)
+    expect(created).toEqual({ id: 'auto-1', chineseName: '新鱼', malayName: 'ikan baru', suggestedPriceCents: 650, active: true })
+    expect(state.records.get(`retailFish/${created.id}`)).toMatchObject({ chineseName: '新鱼', malayName: 'ikan baru', suggestedPriceCents: 650, active: true, createdBy: 'u1', updatedBy: 'u1' })
+    const next = vi.fn()
+    watchRetailFish(next, vi.fn())
+    expect(next).toHaveBeenCalledWith([expect.objectContaining(created)])
+    await saveRetailSale('quick-sale', { ...input, lines: [makeRetailLine(created, '12.5', '6.50')] })
+    await saveRetailFish(created.id, { ...created, chineseName: '新名称', malayName: 'changed', suggestedPriceCents: 900 })
+    expect((await loadRetailSale('quick-sale')).lines[0]).toMatchObject({ fishId: created.id, chineseName: '新鱼', malayName: 'ikan baru', weightDeciKg: 125, unitPriceCents: 650, amountCents: 8125 })
+  })
+  it.each([
+    { chineseName: ' ' }, { malayName: ' ' }, { suggestedPriceCents: null },
+    { suggestedPriceCents: 0 }, { suggestedPriceCents: -1 }, { suggestedPriceCents: 6.5 },
+  ])('rejects incomplete or invalid quick-add data before any write: %j', async invalid => {
+    await expect(quickAddRetailFish({ ...fishInput, ...invalid })).rejects.toThrow()
+    expect(state.writes).not.toHaveBeenCalled()
+    expect(state.records.size).toBe(0)
+  })
+  it('still allows optional Malay name and suggested price from master administration', async () => {
+    await expect(saveRetailFish(null, { ...fishInput, malayName: '', suggestedPriceCents: null })).resolves.toMatchObject({ id: 'auto-1', malayName: '', suggestedPriceCents: null })
+    expect(state.records.get('retailFish/auto-1')).toMatchObject({ malayName: '', suggestedPriceCents: null })
+  })
+  it('propagates persistence failures instead of returning an unpersisted fish', async () => {
+    state.failPath = 'retailFish/auto-1'
+    await expect(quickAddRetailFish(fishInput)).rejects.toThrow('connection interrupted')
+    expect(state.records.size).toBe(0)
+  })
+})
 describe('retail persistence', () => {
   it('writes full snapshots and does not duplicate a repeated checkout even with reordered Firestore keys', async () => {
     const first = await saveRetailSale('sale', input)
