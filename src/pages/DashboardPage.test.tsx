@@ -11,6 +11,7 @@ describe('CCM 部门首页', () => {
     render(<MemoryRouter><DashboardPage vesselLoader={async () => vessels} /></MemoryRouter>)
     expect(screen.queryByText(/Vessel Trip/i)).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'CCM 首页' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '快速现金结算' })).toHaveAttribute('href', '/retail-sales')
     expect(screen.getByRole('heading', { name: '鱼头鱼仔部' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: '鱼头购入' })).toHaveAttribute('href', '/fish-head-purchase')
     expect(screen.getByRole('link', { name: '鱼仔购入' })).toHaveAttribute('href', '/fish-meal-purchase')

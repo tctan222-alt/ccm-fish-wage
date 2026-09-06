@@ -1,14 +1,74 @@
 import { readFile } from 'node:fs/promises'
-import { afterAll, beforeAll, describe, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch } from 'firebase/firestore'
+import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch, type DocumentReference } from 'firebase/firestore'
 import { createIceWorkRecord, createIceWorkSettlement } from './lib/iceWork'
+import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale } from './lib/retailSales'
+import retailSeed from './data/retailFishSeed.json'
 
 let environment: RulesTestEnvironment
 const vessel = { vesselCode: '978', displayName: '978', defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order: 0, notes: '', createdBy: 'u1', createdAt: serverTimestamp(), updatedBy: 'u1', updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }
 
 beforeAll(async () => { environment = await initializeTestEnvironment({ projectId: 'demo-ccm-rules', firestore: { rules: await readFile('firestore.rules', 'utf8') } }) })
 afterAll(async () => { if (environment) await environment.cleanup() })
+
+describe('Firestore Rules: retail cash sales', () => {
+  const line = makeRetailLine(retailSeed[0], '2', '6.15')
+  function sale(lines = [line]) {
+    return { ...prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines }), createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+  }
+  async function writeSale(ref: DocumentReference, input: Omit<ReturnType<typeof sale>, 'createdAt'> & { createdAt: unknown }) {
+    const { lines, ...header } = input
+    const lineGroups = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
+    for (const [key, items] of Object.entries(lineGroups)) await setDoc(doc(ref, 'groups', key), { lines: items, totalAmountCents: items.reduce<number>((sum, item) => sum + item.amountCents, 0), createdBy: 'u1', createdAt: serverTimestamp() })
+    return setDoc(ref, { ...header, lineGroups })
+  }
+  it('allows initial fish, subsequent edits and no suggested price, without rewriting sale snapshots', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    for (const { id, ...fish } of retailSeed) await assertSucceeds(setDoc(doc(db, 'retailFish', id), { ...fish, createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))
+    const fishRef = doc(db, 'retailFish', retailSeed[0].id), saleRef = doc(db, 'retailSales', 'retail-snapshot')
+    await assertSucceeds(writeSale(saleRef, sale()))
+    await assertSucceeds(updateDoc(fishRef, { chineseName: '新鱼名', malayName: '', suggestedPriceCents: null, active: false, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    expect((await getDoc(saleRef)).data()?.lineGroups.first[0]).toMatchObject({ chineseName: '甘丰', malayName: 'kembung', unitPriceCents: 615, amountCents: 1230 })
+    await assertFails(deleteDoc(fishRef))
+    await assertFails(updateDoc(fishRef, { createdBy: 'other', updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(fishRef, { suggestedPriceCents: -1, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(fishRef, { suggestedPriceCents: 6.15, updatedAt: serverTimestamp() }))
+  })
+  it('rejects anonymous reads/writes and all mutations of saved sales', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'retail-immutable')
+    await assertSucceeds(writeSale(ref, sale()))
+    await assertFails(updateDoc(ref, { vendorName: 'changed', updatedAt: serverTimestamp() }))
+    await assertFails(deleteDoc(ref))
+    await assertFails(updateDoc(doc(ref, 'groups', 'first'), { totalAmountCents: 1 }))
+    await assertFails(deleteDoc(doc(ref, 'groups', 'first')))
+    const anonymous = environment.unauthenticatedContext().firestore()
+    for (const collection of ['retailFish', 'retailSales']) {
+      await assertFails(getDoc(doc(anonymous, collection, 'any')))
+      await assertFails(setDoc(doc(anonymous, collection, 'any'), sale()))
+    }
+  })
+  it('checks every line up to the maximum and verifies the total', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const max = sale(Array.from({ length: MAX_RETAIL_LINES }, (_, index) => ({ ...line, chineseName: `鱼${index}` })))
+    await assertSucceeds(writeSale(doc(db, 'retailSales', 'retail-max'), max))
+    const lastTampered = max.lines.map((item, index) => index === MAX_RETAIL_LINES - 1 ? { ...item, amountCents: 1 } : item)
+    await assertFails(writeSale(doc(db, 'retailSales', 'retail-last-tampered'), { ...max, lines: lastTampered }))
+    await assertFails(writeSale(doc(db, 'retailSales', 'retail-total-tampered'), { ...max, totalAmountCents: 1 }))
+    await assertFails(writeSale(doc(db, 'retailSales', 'retail-over-limit'), { ...max, lines: [...max.lines, line], totalAmountCents: max.totalAmountCents + line.amountCents }))
+  })
+  it('rejects invalid dates, kg, prices, empty sales and forged audit fields', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const invalid = [
+      { businessDate: '29/02/2026', dateSortKey: 20260229 }, { dateSortKey: 20260907 }, { vendorName: '' }, { lines: [], totalAmountCents: 0 },
+      ...[0, 301, 1.5].map(weightKg => ({ lines: [{ ...line, weightKg, amountCents: weightKg * line.unitPriceCents }], totalAmountCents: weightKg * line.unitPriceCents })),
+      ...[0, -1, 1.5, 1000001].map(unitPriceCents => ({ lines: [{ ...line, unitPriceCents, amountCents: line.weightKg * unitPriceCents }], totalAmountCents: line.weightKg * unitPriceCents })),
+      { createdBy: 'other' }, { updatedBy: 'other' }, { createdAt: new Date('2020-01-01') }, { inventoryDeducted: true },
+    ]
+    for (let index = 0; index < invalid.length; index++) await assertFails(writeSale(doc(db, 'retailSales', `retail-invalid-${index}`), { ...sale(), ...invalid[index] }))
+    await assertFails(setDoc(doc(db, 'retailSales', 'retail-missing-groups'), { ...sale(), lineGroups: { first: [line], second: [] } }))
+  })
+})
 
 describe('Firestore Rules: vessels and ice-work audit', () => {
   it('allows authenticated vessel creation but rejects vessel-code tampering and deletion', async () => {

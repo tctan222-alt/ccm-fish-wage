@@ -1,0 +1,5 @@
+[
+  { "id": "initial-kembung", "chineseName": "甘丰", "malayName": "kembung", "suggestedPriceCents": 600, "active": true },
+  { "id": "initial-mabong", "chineseName": "马丰", "malayName": "mabong", "suggestedPriceCents": 800, "active": true },
+  { "id": "initial-kerabu", "chineseName": "上过", "malayName": "kerabu", "suggestedPriceCents": 3300, "active": true }
+]

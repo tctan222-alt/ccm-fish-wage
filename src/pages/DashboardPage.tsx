@@ -21,6 +21,7 @@ export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
       <nav aria-label="冰工船只" className="vessel-button-grid">{vessels.map(vessel => <Link key={vessel.id} to={`/ice-department/${vessel.id}`}>{vessel.vesselCode}</Link>)}</nav>
       <Link className="page-link" to="/ice-department">查看冰工部门</Link>
     </section>
+    <section className="department-card"><h2>门市销售</h2><Link className="page-link" to="/retail-sales">快速现金结算</Link></section>
     <section className="department-card muted-department"><h2>CCM 行政</h2><p>建设中</p><Link className="page-link" to="/ccm-admin">查看</Link></section>
     <section className="department-card master-data-dashboard"><Link className="primary-action" to="/master-data">主资料 Master Data</Link></section>
   </main>

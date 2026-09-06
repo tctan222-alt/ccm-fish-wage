@@ -33,6 +33,10 @@ const IceMonthlySettlementPage = lazy(() => import('./pages/IceMonthlySettlement
 const CcmAdminPage = lazy(() => import('./pages/CcmAdminPage').then(module => ({ default: module.CcmAdminPage })))
 const PurchaseWeighingPage = lazy(() => import('./pages/PurchaseWeighingPage').then(module => ({ default: module.PurchaseWeighingPage })))
 const PurchaseSettlementPage = lazy(() => import('./pages/PurchaseSettlementPage').then(module => ({ default: module.PurchaseSettlementPage })))
+const RetailSalesPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailSalesPage })))
+const RetailFishPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailFishPage })))
+const RetailHistoryPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailHistoryPage })))
+const RetailReceiptPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailReceiptPage })))
 
 function LoadingScreen() {
   return <main className="loading-screen" role="status"><strong>正在载入 CCM Fishery…</strong></main>
@@ -50,6 +54,10 @@ function AuthenticatedApp() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/retail-sales" element={<RetailSalesPage />} />
+        <Route path="/retail-sales/fish" element={<RetailFishPage />} />
+        <Route path="/retail-sales/history" element={<RetailHistoryPage />} />
+        <Route path="/retail-sales/history/:saleId" element={<RetailReceiptPage />} />
         <Route path="/fish-department" element={<FishDepartmentPage />} />
         <Route path="/fish-head-purchase" element={<PurchaseWeighingPage productType="fish_head" />} />
         <Route path="/fish-meal-purchase" element={<PurchaseWeighingPage productType="fish_meal" />} />

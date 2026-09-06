@@ -4,6 +4,84 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
 
+    function validRetailFish(data) {
+      return data.keys().hasOnly(['chineseName', 'malayName', 'suggestedPriceCents', 'active', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.chineseName is string && data.chineseName.size() > 0 && data.chineseName.size() <= 100
+        && data.malayName is string && data.malayName.size() <= 100
+        && (data.suggestedPriceCents == null || (data.suggestedPriceCents is int && data.suggestedPriceCents > 0 && data.suggestedPriceCents <= 1000000))
+        && data.active is bool && data.createdBy is string && data.createdAt is timestamp
+        && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+    }
+
+    function validRetailLine(line) {
+      let kg = line.weightKg;
+      let price = line.unitPriceCents;
+      let amount = line.amountCents;
+      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightKg', 'unitPriceCents', 'amountCents'])
+        && line.fishId.matches('^[^/]{1,100}$')
+        && line.chineseName.matches('^.{1,100}$')
+        && line.malayName.matches('^.{0,100}$')
+        && kg is int && kg >= 1 && kg <= 300
+        && price is int && price > 0 && price <= 1000000
+        && amount is int && amount == kg * price;
+    }
+
+    // Rules cannot iterate lists. Validate every supported slot, including the last.
+    function retailAmount(lines, index) { return lines.size() <= index ? 0 : (validRetailLine(lines[index]) ? lines[index].amountCents : null); }
+    function validRetailGroup(data) {
+      let lines = data.lines;
+      return data.keys().hasOnly(['lines', 'totalAmountCents', 'createdAt', 'createdBy'])
+        && lines is list && lines.size() <= 5
+        && data.createdAt == request.time && data.createdBy == request.auth.uid
+        && data.totalAmountCents is int && data.totalAmountCents == retailAmount(lines, 0) + retailAmount(lines, 1)
+          + retailAmount(lines, 2) + retailAmount(lines, 3) + retailAmount(lines, 4);
+    }
+    function retailGroupPath(saleId, groupId) {
+      return /databases/$(database)/documents/retailSales/$(saleId)/groups/$(groupId);
+    }
+    function validRetailSale(data, saleId) {
+      let first = get(retailGroupPath(saleId, 'first')).data;
+      let second = get(retailGroupPath(saleId, 'second')).data;
+      let third = get(retailGroupPath(saleId, 'third')).data;
+      let fourth = get(retailGroupPath(saleId, 'fourth')).data;
+      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+        && data.businessDate is string && validBusinessDate(data.businessDate)
+        && validWageDateKey(data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
+        && data.dateSortKey is int && data.dateSortKey == int(data.businessDate[6:10] + data.businessDate[3:5] + data.businessDate[0:2])
+        && data.vendorName is string && data.vendorName.size() > 0 && data.vendorName.size() <= 100
+        && data.lineGroups.keys().hasOnly(['first', 'second', 'third', 'fourth'])
+        && data.lineGroups.first == first.lines && data.lineGroups.second == second.lines
+        && data.lineGroups.third == third.lines && data.lineGroups.fourth == fourth.lines
+        && first.lines.size() > 0
+        && first.createdBy == request.auth.uid && second.createdBy == request.auth.uid
+        && third.createdBy == request.auth.uid && fourth.createdBy == request.auth.uid
+        && data.totalAmountCents is int && data.totalAmountCents == first.totalAmountCents + second.totalAmountCents + third.totalAmountCents + fourth.totalAmountCents
+        && data.createdBy == request.auth.uid && data.updatedBy == request.auth.uid
+        && data.createdAt == request.time && data.updatedAt == request.time;
+    }
+
+    match /retailFish/{fishId} {
+      allow read: if signedIn();
+      allow create: if signedIn() && validRetailFish(request.resource.data)
+        && request.resource.data.createdBy == request.auth.uid && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && validRetailFish(request.resource.data)
+        && request.resource.data.createdBy == resource.data.createdBy && request.resource.data.createdAt == resource.data.createdAt;
+      allow delete: if false;
+    }
+    match /retailSales/{saleId} {
+      allow read: if signedIn();
+      // Immutable prepared groups are validated separately within the expression
+      // budget. Only this final atomic document appears as a completed sale.
+      allow create: if signedIn() && validRetailSale(request.resource.data, saleId);
+      allow update, delete: if false;
+      match /groups/{groupId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && groupId in ['first', 'second', 'third', 'fourth']
+          && validRetailGroup(request.resource.data);
+        allow update, delete: if false;
+      }
+    }
+
     function monthPath(monthKey) {
       return /databases/$(database)/documents/fishHeadWageMonths/$(monthKey);
     }
