@@ -4,7 +4,7 @@
 .retail-page input:focus{outline:3px solid #7dd3fc}
 .retail-fields{border:0;padding:0;margin:0;min-width:0}
 .retail-fields:disabled{opacity:.7}
-.retail-nav{display:flex;gap:8px;flex-wrap:wrap}.retail-nav a{padding:12px 8px;color:#075985;font-weight:800}
+.retail-nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.retail-nav a{display:grid;place-items:center;min-height:48px;padding:8px 2px;color:#075985;font-size:.85rem;font-weight:800;text-align:center}
 .retail-context,.retail-numbers{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .retail-fish-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px;max-height:240px;overflow-y:auto}
 .retail-fish-grid button{padding:10px 4px;min-height:68px;overflow-wrap:anywhere}
@@ -14,7 +14,7 @@
 .retail-line-total{display:flex;justify-content:space-between;gap:8px}.retail-line-total strong{font-size:1.5rem}
 .retail-actions{display:grid;gap:8px}.retail-actions button{width:100%}
 .retail-lines{list-style:none;padding:0;display:grid;gap:12px}.retail-lines li{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;border-bottom:1px solid #bcccdc;padding-bottom:10px;overflow-wrap:anywhere}.retail-lines li span{display:block}.retail-lines button{grid-column:1/-1;min-height:44px;color:#a51111}
-.retail-checkout{position:sticky;bottom:60px;z-index:2;border:2px solid #087f5b}.retail-checkout div{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.retail-checkout strong{font-size:1.8rem;color:#075985}
+.retail-checkout{border:2px solid #087f5b}.retail-checkout div{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px}.retail-checkout strong{font-size:1.8rem;color:#075985}
 .retail-receipt{overflow-wrap:anywhere}.retail-receipt table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}.retail-receipt th,.retail-receipt td{padding:10px 4px;border-bottom:1px solid #bcccdc;text-align:right}.retail-receipt th:first-child,.retail-receipt td:first-child{text-align:left}.retail-receipt-total{font-size:1.4rem;font-weight:800}.retail-receipt-id{font-size:.8rem}
 @media(max-width:380px){.retail-context{grid-template-columns:1fr}.retail-receipt table{font-size:.8rem}}
 @media print{
