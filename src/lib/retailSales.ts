@@ -14,17 +14,20 @@ export interface RetailLine {
   fishId: string
   chineseName: string
   malayName: string
-  weightKg: number
+  weightDeciKg: number
   unitPriceCents: number
   amountCents: number
 }
+// Legacy snapshots are read and normalized in memory; persisted history is immutable.
+export type RetailLineInput = RetailLine | (Omit<RetailLine, 'weightDeciKg'> & { weightKg: number; weightDeciKg?: never })
 export interface RetailSaleInput {
   businessDate: string
   vendorName: string
-  lines: RetailLine[]
+  lines: RetailLineInput[]
 }
-export interface RetailSale extends RetailSaleInput {
+export interface RetailSale extends Omit<RetailSaleInput, 'lines'> {
   id: string
+  lines: RetailLine[]
   dateSortKey: number
   totalAmountCents: number
   createdAt?: { toDate: () => Date }
@@ -55,9 +58,29 @@ export function normalizeRetailFish(input: RetailFishInput): RetailFishInput {
 
 export function makeRetailLine(fish: RetailFish, weight: string, price: string): RetailLine {
   if (!fish.active) throw new Error('此鱼种已停用，请选择其他鱼种。')
-  if (!/^\d+$/.test(weight.trim()) || Number(weight) < 1 || Number(weight) > 300) throw new Error('重量须为 1–300 整数 kg。')
-  const unitPriceCents = retailPriceCents(price), weightKg = Number(weight)
-  return { fishId: fish.id, chineseName: fish.chineseName, malayName: fish.malayName, weightKg, unitPriceCents, amountCents: weightKg * unitPriceCents }
+  const cleanWeight = weight.trim()
+  if (!/^\d+(\.\d)?$/.test(cleanWeight)) throw new Error('重量须为 0.1–300 kg，最多一位小数。')
+  const [whole, fraction = '0'] = cleanWeight.split('.')
+  const weightDeciKg = Number(whole) * 10 + Number(fraction)
+  if (!Number.isSafeInteger(weightDeciKg) || weightDeciKg < 1 || weightDeciKg > 3000) throw new Error('重量须为 0.1–300 kg，最多一位小数。')
+  const unitPriceCents = retailPriceCents(price)
+  return { fishId: fish.id, chineseName: fish.chineseName, malayName: fish.malayName, weightDeciKg, unitPriceCents, amountCents: Math.floor((weightDeciKg * unitPriceCents + 5) / 10) }
+}
+
+export function retailWeightKg(line: RetailLine): string {
+  const fraction = line.weightDeciKg % 10
+  return `${Math.floor(line.weightDeciKg / 10)}${fraction ? `.${fraction}` : ''}`
+}
+
+export function normalizeRetailLine(line: RetailLineInput): RetailLine {
+  const weightDeciKg = 'weightKg' in line
+    ? (line.weightDeciKg === undefined && Number.isInteger(line.weightKg) ? line.weightKg * 10 : NaN)
+    : line.weightDeciKg
+  if (!line.fishId || line.fishId.length > 100 || !line.chineseName.trim() || line.chineseName.length > 100 || line.malayName.length > 100
+    || !Number.isSafeInteger(weightDeciKg) || weightDeciKg < 1 || weightDeciKg > 3000
+    || !Number.isSafeInteger(line.unitPriceCents) || line.unitPriceCents < 1 || line.unitPriceCents > MAX_RETAIL_PRICE_CENTS
+    || line.amountCents !== Math.floor((weightDeciKg * line.unitPriceCents + 5) / 10)) throw new Error('销售明细或金额无效，请重新录入。')
+  return { fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightDeciKg, unitPriceCents: line.unitPriceCents, amountCents: line.amountCents }
 }
 
 export function prepareRetailSale(input: RetailSaleInput): Omit<RetailSale, 'id' | 'createdAt'> {
@@ -65,13 +88,7 @@ export function prepareRetailSale(input: RetailSaleInput): Omit<RetailSale, 'id'
   assertBusinessDate(businessDate)
   if (!vendorName || vendorName.length > 100) throw new Error('请输入小贩名（最多 100 字）。')
   if (!input.lines.length || input.lines.length > MAX_RETAIL_LINES) throw new Error(`每单须有 1–${MAX_RETAIL_LINES} 条明细。`)
-  const lines = input.lines.map(line => {
-    if (!line.fishId || line.fishId.length > 100 || !line.chineseName.trim() || line.chineseName.length > 100 || line.malayName.length > 100
-      || !Number.isInteger(line.weightKg) || line.weightKg < 1 || line.weightKg > 300
-      || !Number.isSafeInteger(line.unitPriceCents) || line.unitPriceCents < 1 || line.unitPriceCents > MAX_RETAIL_PRICE_CENTS
-      || line.amountCents !== line.weightKg * line.unitPriceCents) throw new Error('销售明细或金额无效，请重新录入。')
-    return { fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightKg: line.weightKg, unitPriceCents: line.unitPriceCents, amountCents: line.amountCents }
-  })
+  const lines = input.lines.map(normalizeRetailLine)
   return { businessDate, vendorName, lines, dateSortKey: sortKeyFromBusinessDate(businessDate), totalAmountCents: lines.reduce((sum, line) => sum + line.amountCents, 0) }
 }
 

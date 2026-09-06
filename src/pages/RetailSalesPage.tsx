@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { businessDateFromLegacy, formatAuditTimestamp, legacyIsoDateFromBusinessDate } from '../lib/businessDate'
-import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
+import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, watchRetailFish } from '../services/retailSales'
 import './retailSales.css'
 
@@ -86,12 +86,12 @@ export function RetailSalesPage() {
         <div className="retail-fish-grid">{fish?.filter(item => item.active && `${item.chineseName} ${item.malayName}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())).map(item => <button key={item.id} type="button" aria-pressed={selected?.id === item.id} onClick={() => select(item)}><strong>{item.chineseName}</strong><small>{item.malayName || '　'}</small></button>)}</div>
         {fish?.length && !fish.some(item => item.active) ? <p>暂无启用鱼种，请在设置中启用或新增。</p> : null}
         <p className="retail-selected">{selected ? `已选：${selected.chineseName}` : '请选择品名'}</p>
-        <div className="retail-numbers"><label>重量 kg<input ref={weightInput} inputMode="numeric" value={weight} onChange={event => setWeight(event.target.value)} placeholder="1–300" /></label>
+        <div className="retail-numbers"><label>重量 kg<input ref={weightInput} inputMode="decimal" value={weight} onChange={event => setWeight(event.target.value)} placeholder="0.1–300，最多一位小数" /></label>
           <label>实际 RM/kg<input inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} placeholder="手动输入售价" /></label></div>
         <p className="retail-line-total">本行金额 <strong>{preview ? retailMoney(preview.amountCents) : '—'}</strong></p>
         <div className="retail-actions"><button className="primary-action" disabled={!fish || !selected}>加入明细</button><button type="button" onClick={() => { setSelected(null); setWeight(''); setPrice(''); setError('') }}>清除当前品名</button></div>
       </section></form>
-      <section><h2>本单明细（{lines.length}）</h2><ol className="retail-lines">{lines.map((line, index) => <li key={index}><div><strong>{line.chineseName}</strong><small>{line.malayName}</small><span>{line.weightKg} kg × {retailMoney(line.unitPriceCents)}/kg</span></div><strong>{retailMoney(line.amountCents)}</strong><button aria-label={`移除第 ${index + 1} 条明细`} onClick={() => setLines(current => current.filter((_, position) => position !== index))}>移除</button></li>)}</ol></section>
+      <section><h2>本单明细（{lines.length}）</h2><ol className="retail-lines">{lines.map((line, index) => <li key={index}><div><strong>{line.chineseName}</strong><small>{line.malayName}</small><span>{retailWeightKg(line)} kg × {retailMoney(line.unitPriceCents)}/kg</span></div><strong>{retailMoney(line.amountCents)}</strong><button aria-label={`移除第 ${index + 1} 条明细`} onClick={() => setLines(current => current.filter((_, position) => position !== index))}>移除</button></li>)}</ol></section>
     </fieldset>
     <section className="retail-checkout"><div>本次现金合计 <strong>{retailMoney(total)}</strong></div><button className="primary-action" disabled={busy || !lines.length || !!recoveryError} onClick={() => void checkout()}>{busy ? '正在保存…' : pending ? '重试结算' : '结算'}</button></section>
   </main>
@@ -159,7 +159,7 @@ export function RetailReceiptPage() {
 function RetailReceipt({ sale }: { sale: RetailSale }) {
   return <section className="retail-receipt" aria-label="现金结算单"><h2>CCM Fishery 门市现金结算单</h2><p>日期：{sale.businessDate}</p><p>小贩：{sale.vendorName}</p>
     {sale.createdAt && <p>结算时间：{formatAuditTimestamp(sale.createdAt)}</p>}<p className="retail-receipt-id">单号：{sale.id}</p>
-    <table><thead><tr><th>品名</th><th>kg</th><th>RM/kg</th><th>金额 RM</th></tr></thead><tbody>{sale.lines.map((line, index) => <tr key={index}><td>{line.chineseName}<small>{line.malayName}</small></td><td>{line.weightKg}</td><td>{(line.unitPriceCents / 100).toFixed(2)}</td><td>{(line.amountCents / 100).toFixed(2)}</td></tr>)}</tbody></table>
+    <table><thead><tr><th>品名</th><th>kg</th><th>RM/kg</th><th>金额 RM</th></tr></thead><tbody>{sale.lines.map((line, index) => <tr key={index}><td>{line.chineseName}<small>{line.malayName}</small></td><td>{retailWeightKg(line)}</td><td>{(line.unitPriceCents / 100).toFixed(2)}</td><td>{(line.amountCents / 100).toFixed(2)}</td></tr>)}</tbody></table>
     <p className="retail-receipt-total">现金合计：<strong>{retailMoney(sale.totalAmountCents)}</strong></p><p>内部 / 门市现金结算单</p>
   </section>
 }

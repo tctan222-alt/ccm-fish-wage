@@ -1,7 +1,7 @@
 import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import seed from '../data/retailFishSeed.json'
-import { normalizeRetailFish, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
+import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { sortKeyFromBusinessDate } from '../lib/businessDate'
 
 function userId() {
@@ -43,7 +43,7 @@ export const newRetailSaleId = () => doc(collection(db, 'retailSales')).id
 
 export interface PendingRetailSale { id: string; input: RetailSaleInput }
 const pendingKey = () => `ccm:retail-pending:${userId()}`
-export function loadPendingRetailSale(): PendingRetailSale | null {
+export function loadPendingRetailSale(): { id: string; input: Omit<RetailSale, 'id' | 'createdAt'> } | null {
   const value = sessionStorage.getItem(pendingKey())
   if (!value) return null
   const pending = JSON.parse(value) as PendingRetailSale
@@ -51,33 +51,37 @@ export function loadPendingRetailSale(): PendingRetailSale | null {
   return { id: pending.id, input: prepareRetailSale(pending.input) }
 }
 export function rememberPendingRetailSale(pending: PendingRetailSale) {
-  sessionStorage.setItem(pendingKey(), JSON.stringify(pending))
+  sessionStorage.setItem(pendingKey(), JSON.stringify({ id: pending.id, input: prepareRetailSale(pending.input) }))
 }
 export function clearPendingRetailSale() { sessionStorage.removeItem(pendingKey()) }
 
 function saleFromDocument(id: string, data: Record<string, unknown>): RetailSale {
-  const groups = data.lineGroups as Record<'first' | 'second' | 'third' | 'fourth', RetailLine[]>
-  return { ...data, id, lines: [...groups.first, ...groups.second, ...groups.third, ...groups.fourth] } as RetailSale
+  const groups = data.lineGroups as Record<'first' | 'second' | 'third' | 'fourth', RetailLineInput[]>
+  return { ...data, id, lines: [...groups.first, ...groups.second, ...groups.third, ...groups.fourth].map(normalizeRetailLine) } as RetailSale
 }
 
 export async function saveRetailSale(id: string, input: RetailSaleInput): Promise<RetailSale> {
   const uid = userId(), clean = prepareRetailSale(input), ref = doc(db, 'retailSales', id)
   const { lines, ...header } = clean
-  const lineGroups = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
+  const lineGroups: Record<'first' | 'second' | 'third' | 'fourth', RetailLineInput[]> = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
   // Preparing immutable groups separately keeps Rules within its evaluation
   // budget. A sale is visible only after the final complete snapshot is committed.
-  for (const [groupId, groupLines] of Object.entries(lineGroups)) {
+  for (const groupId of ['first', 'second', 'third', 'fourth'] as const) {
+    const groupLines = lineGroups[groupId]
     const groupRef = doc(ref, 'groups', groupId)
-    await runTransaction(db, async transaction => {
+    lineGroups[groupId] = await runTransaction(db, async transaction => {
       const snapshot = await transaction.get(groupRef)
       if (snapshot.exists()) {
         const data = snapshot.data()
         const stored = data.lines.length ? prepareRetailSale({ ...input, lines: data.lines }).lines : []
         const expected = groupLines
         if (data.createdBy !== uid || data.lines.length !== groupLines.length || JSON.stringify(stored) !== JSON.stringify(expected)) throw new Error('结算明细编号已使用，请从历史核对。')
-        return
+        // Resume a pre-upgrade pending checkout with the exact immutable group
+        // snapshot. Newly created groups always contain weightDeciKg.
+        return data.lines as RetailLineInput[]
       }
       transaction.set(groupRef, { lines: groupLines, totalAmountCents: groupLines.reduce<number>((sum, line) => sum + line.amountCents, 0), createdBy: uid, createdAt: serverTimestamp() })
+      return groupLines
     })
   }
   await runTransaction(db, async transaction => {
