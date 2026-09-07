@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react'
 import { signOut } from 'firebase/auth'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { auth } from './firebase'
 import { LoginPage } from './pages/LoginPage'
@@ -39,7 +39,13 @@ const RetailHistoryPage = lazy(() => import('./pages/RetailSalesPage').then(modu
 const RetailReceiptPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailReceiptPage })))
 
 function LoadingScreen() {
-  return <main className="loading-screen" role="status"><strong>正在载入 CCM Fishery…</strong></main>
+  const retail = /^\/retail-sales(?:\/|$)/.test(window.location.pathname)
+  return <main className="loading-screen" role="status"><strong>{retail ? '正在载入门市销售… Loading Retail Sales…' : '正在载入 CCM Fishery…'}</strong></main>
+}
+
+function SignOutButton() {
+  const retail = /^\/retail-sales(?:\/|$)/.test(useLocation().pathname)
+  return <button className="sign-out" type="button" data-navigation-leave onClick={() => void signOut(auth)}>{retail ? '退出登录 Sign Out' : '退出登录'}</button>
 }
 
 function AuthenticatedApp() {
@@ -48,7 +54,7 @@ function AuthenticatedApp() {
   if (!user) return <LoginPage />
 
   return <BrowserRouter>
-    <button className="sign-out" type="button" data-navigation-leave onClick={() => void signOut(auth)}>退出登录</button>
+    <SignOutButton />
     <BackButton />
     <Suspense fallback={<LoadingScreen />}>
       <Routes>

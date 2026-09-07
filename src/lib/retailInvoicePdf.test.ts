@@ -48,18 +48,21 @@ describe('retail invoice PDF', () => {
     const file = await createRetailInvoicePdf(sample)
     expect(file).toBeInstanceOf(File)
     expect(file.type).toBe('application/pdf')
-    expect(file.name).toBe('CCM-Retail-07-09-2026-小贩阿明.pdf')
+    expect(file.name).toBe('门市现金结算单-07-09-2026-小贩阿明.pdf')
     const pdf = await readPdf(file)
     expect(pdf.startsWith('%PDF-')).toBe(true)
     expect(pdf).toContain('/Type /Page')
     expect(pdf).toContain('%%EOF')
+    expect(pdf).not.toContain('CCM')
     expect(pageSizes).toEqual([[1588, 2246]])
+    expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['门市现金结算单', '日期 Date：07/09/2026', '小贩 Vendor：小贩阿明', '鱼名 Fish', '重量 Weight (kg)', '单价 Price/kg', '金额 Amount (RM)', '现金合计 Cash Total']))
+    expect(drawn.some(item => item.text.includes('CCM'))).toBe(false)
     expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['金线', 'Ikan kerisi', '80.5', '6.00', '483.00', 'RM483.00']))
   })
 
   it('removes filename path/control characters while retaining the vendor and PDF extension', async () => {
     const file = await createRetailInvoicePdf({ ...sample, vendorName: '阿明/鱼档:*?\n' })
-    expect(file.name).toMatch(/^CCM-Retail-07-09-2026-阿明-鱼档-+\.pdf$/)
+    expect(file.name).toMatch(/^门市现金结算单-07-09-2026-阿明-鱼档-+\.pdf$/)
     expect(file.name).not.toMatch(/[\\/:*?<>|\n]/)
   })
 

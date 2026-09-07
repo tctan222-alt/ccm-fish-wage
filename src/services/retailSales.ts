@@ -5,7 +5,7 @@ import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type Retai
 import { sortKeyFromBusinessDate } from '../lib/businessDate'
 
 function userId() {
-  if (!auth.currentUser) throw new Error('请先登录。')
+  if (!auth.currentUser) throw new Error('请先登录。 Please sign in.')
   return auth.currentUser.uid
 }
 
@@ -33,7 +33,7 @@ export async function saveRetailFish(id: string | null, input: RetailFishInput):
   const ref = id ? doc(db, 'retailFish', id) : doc(collection(db, 'retailFish'))
   await runTransaction(db, async transaction => {
     const snapshot = await transaction.get(ref)
-    if (id && !snapshot.exists()) throw new Error('鱼种已不存在，请刷新后重试。')
+    if (id && !snapshot.exists()) throw new Error('鱼种已不存在，请刷新后重试。 This fish no longer exists. Refresh and retry.')
     if (snapshot.exists()) transaction.update(ref, { ...clean, updatedBy: uid, updatedAt: serverTimestamp() })
     else transaction.set(ref, { ...clean, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
   })
@@ -42,8 +42,8 @@ export async function saveRetailFish(id: string | null, input: RetailFishInput):
 
 export async function quickAddRetailFish(input: RetailFishInput): Promise<RetailFish> {
   const clean = normalizeRetailFish(input)
-  if (!clean.malayName) throw new Error('请输入马来文鱼名。')
-  if (clean.suggestedPriceCents === null) throw new Error('请输入建议 RM/kg。')
+  if (!clean.malayName) throw new Error('请输入马来文鱼名。 Please enter the Malay fish name.')
+  if (clean.suggestedPriceCents === null) throw new Error('请输入建议 RM/kg。 Please enter the suggested price (RM/kg).')
   return saveRetailFish(null, clean)
 }
 
@@ -55,7 +55,7 @@ export function loadPendingRetailSale(): { id: string; input: Omit<RetailSale, '
   const value = sessionStorage.getItem(pendingKey())
   if (!value) return null
   const pending = JSON.parse(value) as PendingRetailSale
-  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id)) throw new Error('待确认结算编号无效，请从销售历史核对。')
+  if (!/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id)) throw new Error('待确认结算编号无效，请从销售历史核对。 Invalid pending invoice ID. Check Sales History.')
   return { id: pending.id, input: prepareRetailSale(pending.input) }
 }
 export function rememberPendingRetailSale(pending: PendingRetailSale) {
@@ -83,7 +83,7 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
         const data = snapshot.data()
         const stored = data.lines.length ? prepareRetailSale({ ...input, lines: data.lines }).lines : []
         const expected = groupLines
-        if (data.createdBy !== uid || data.lines.length !== groupLines.length || JSON.stringify(stored) !== JSON.stringify(expected)) throw new Error('结算明细编号已使用，请从历史核对。')
+        if (data.createdBy !== uid || data.lines.length !== groupLines.length || JSON.stringify(stored) !== JSON.stringify(expected)) throw new Error('结算明细编号已使用，请从历史核对。 This invoice item ID is already in use. Check Sales History.')
         // Resume a pre-upgrade pending checkout with the exact immutable group
         // snapshot. Newly created groups always contain weightDeciKg.
         return data.lines as RetailLineInput[]
@@ -96,7 +96,7 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
     const existing = await transaction.get(ref)
     if (existing.exists()) {
       const data = existing.data()
-      if (data.createdBy !== uid || JSON.stringify(prepareRetailSale(saleFromDocument(id, data))) !== JSON.stringify(clean)) throw new Error('结算编号已使用，请从历史核对。')
+      if (data.createdBy !== uid || JSON.stringify(prepareRetailSale(saleFromDocument(id, data))) !== JSON.stringify(clean)) throw new Error('结算编号已使用，请从历史核对。 This invoice ID is already in use. Check Sales History.')
       return
     }
     transaction.set(ref, { ...header, lineGroups, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() })
@@ -106,7 +106,7 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
 
 export async function loadRetailSale(id: string): Promise<RetailSale> {
   const snapshot = await getDoc(doc(db, 'retailSales', id))
-  if (!snapshot.exists()) throw new Error('找不到此现金结算单。')
+  if (!snapshot.exists()) throw new Error('找不到此现金结算单。 Cash invoice not found.')
   return saleFromDocument(snapshot.id, snapshot.data())
 }
 
@@ -114,4 +114,19 @@ export async function loadRetailSales(businessDate: string): Promise<RetailSale[
   const snapshot = await getDocs(query(collection(db, 'retailSales'), where('dateSortKey', '==', sortKeyFromBusinessDate(businessDate))))
   return snapshot.docs.map(item => saleFromDocument(item.id, item.data()))
     .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
+}
+
+export interface RetailHistorySnapshot { sales: RetailSale[]; fromCache: boolean }
+
+export function watchRetailSales(businessDate: string, next: (snapshot: RetailHistorySnapshot) => void, error: (problem: unknown) => void) {
+  const historyQuery = query(collection(db, 'retailSales'), where('dateSortKey', '==', sortKeyFromBusinessDate(businessDate)))
+  // Keep listening through initial cache/server synchronization. A one-shot getDocs
+  // hides cached rows while waiting online and cannot update its first result later.
+  return onSnapshot(historyQuery, { includeMetadataChanges: true }, snapshot => {
+    try {
+      const sales = snapshot.docs.map(item => saleFromDocument(item.id, item.data()))
+        .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
+      next({ sales, fromCache: snapshot.metadata.fromCache })
+    } catch (problem) { error(problem) }
+  }, error)
 }

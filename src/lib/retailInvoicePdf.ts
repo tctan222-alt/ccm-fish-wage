@@ -38,7 +38,7 @@ function wrapText(context: CanvasRenderingContext2D, text: string, width: number
 export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
   const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
-  pdf.setProperties({ title: `CCM 门市现金结算单 ${sale.businessDate}`, author: 'CCM Fishery' })
+  pdf.setProperties({ title: `门市现金结算单 ${sale.businessDate}`, author: '门市现金结算单' })
   // beginPage initializes both before any drawing; subsequent pages replace them together.
   let canvas!: HTMLCanvasElement, context!: CanvasRenderingContext2D
   let y = MARGIN, page = 0
@@ -66,8 +66,8 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
 
   function tableHeader() {
     font(16, true)
-    text('品名', MARGIN, y); text('kg', 463, y, 'right')
-    text('RM/kg', 591, y, 'right'); text('金额 RM', RIGHT, y, 'right')
+    text('鱼名 Fish', MARGIN, y); text('重量 Weight (kg)', 463, y, 'right')
+    text('单价 Price/kg', 591, y, 'right'); text('金额 Amount (RM)', RIGHT, y, 'right')
     y += 28
     rule(y); y += 12
   }
@@ -76,25 +76,25 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
     canvas = document.createElement('canvas')
     canvas.width = PAGE_WIDTH * SCALE; canvas.height = PAGE_HEIGHT * SCALE
     const canvasContext = canvas.getContext('2d')
-    if (!canvasContext) throw new Error('无法创建 PDF 画布')
+    if (!canvasContext) throw new Error('无法创建 PDF 画布 Unable to create the PDF canvas')
     context = canvasContext
     context.scale(SCALE, SCALE)
     context.fillStyle = '#ffffff'; context.fillRect(0, 0, PAGE_WIDTH, PAGE_HEIGHT)
     context.fillStyle = '#000000'; context.strokeStyle = '#a0a0a0'; context.lineWidth = 0.7
     context.textBaseline = 'top'
     y = MARGIN
-    font(25, true); text('CCM Fishery 门市现金结算单', MARGIN, y); y += 42
-    paragraph(`日期：${sale.businessDate}`)
-    paragraph(`小贩：${sale.vendorName}`)
-    if (sale.createdAt) paragraph(`结算时间：${formatAuditTimestamp(sale.createdAt)}`, 14, 22)
-    paragraph(`单号：${sale.id}`, 13, 20)
+    font(25, true); text('门市现金结算单', MARGIN, y); y += 42
+    paragraph(`日期 Date：${sale.businessDate}`)
+    paragraph(`小贩 Vendor：${sale.vendorName}`)
+    if (sale.createdAt) paragraph(`结算时间 Checkout Time：${formatAuditTimestamp(sale.createdAt)}`, 14, 22)
+    paragraph(`单号 Invoice No.：${sale.id}`, 13, 20)
     y += 12
     tableHeader()
   }
 
   function finishPage() {
     font(12)
-    text(`内部 / 门市现金结算单 · 第 ${page + 1} 页`, MARGIN, PAGE_HEIGHT - MARGIN)
+    text(`内部 / 门市现金结算单 Internal Cash Invoice · 第 ${page + 1} 页 Page ${page + 1}`, MARGIN, PAGE_HEIGHT - MARGIN)
     if (page > 0) pdf.addPage()
     // JPEG keeps multi-page invoices small enough for phone sharing; no blob URL is involved.
     pdf.addImage(canvas.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0, 210, 297)
@@ -126,9 +126,9 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
   if (y + 70 > CONTENT_BOTTOM) { finishPage(); beginPage() }
   y += 16
   font(23, true)
-  text('现金合计', MARGIN, y); text(retailMoney(sale.totalAmountCents), RIGHT, y, 'right')
+  text('现金合计 Cash Total', MARGIN, y); text(retailMoney(sale.totalAmountCents), RIGHT, y, 'right')
   finishPage()
   const pdfBlob = pdf.output('blob')
-  const filename = `CCM-Retail-${filenamePart(sale.businessDate)}-${filenamePart(sale.vendorName) || '未命名小贩'}.pdf`
+  const filename = `门市现金结算单-${filenamePart(sale.businessDate)}-${filenamePart(sale.vendorName) || '未命名小贩 Unnamed Vendor'}.pdf`
   return new File([pdfBlob], filename, { type: 'application/pdf' })
 }
