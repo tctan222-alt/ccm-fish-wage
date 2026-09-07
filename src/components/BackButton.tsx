@@ -11,6 +11,8 @@ function fallbackFor(pathname:string) {
 export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const retail = /^\/retail-sales(?:\/|$)/.test(location.pathname)
+  const leaveMessage = retail ? '还有未保存的资料，确定离开吗？ You have unsaved changes. Leave this page?' : '还有未保存的资料，确定离开吗？'
   const [detectedDirty,setDetectedDirty]=useState(false)
   const dirty=whenDirty??detectedDirty
   const historyIndex=useRef<number|null>(null)
@@ -53,7 +55,7 @@ export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
       const leavesByButton=target.closest('[data-navigation-leave]')
       if(!link&&!leavesByButton)return
       if(link&&link instanceof HTMLAnchorElement&&link.target&&link.target!=='_self')return
-      if(!window.confirm('还有未保存的资料，确定离开吗？')){
+      if(!window.confirm(leaveMessage)){
         event.preventDefault();event.stopPropagation();return
       }
       setDetectedDirty(false)
@@ -62,7 +64,7 @@ export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
       const nextIndex=typeof event.state?.idx==='number'?event.state.idx:null
       if(revertingPop.current){historyIndex.current=nextIndex;return}
       if(!dirty||nextIndex===null||historyIndex.current===null){historyIndex.current=nextIndex;return}
-      if(window.confirm('还有未保存的资料，确定离开吗？')){setDetectedDirty(false);historyIndex.current=nextIndex;return}
+      if(window.confirm(leaveMessage)){setDetectedDirty(false);historyIndex.current=nextIndex;return}
       const delta=historyIndex.current-nextIndex
       if(delta!==0){revertingPop.current=true;revertToLocationKey.current=previousLocationKey.current;window.history.go(delta)}
     }
@@ -80,12 +82,12 @@ export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
       window.removeEventListener('beforeunload',warnBeforeUnload)
       window.removeEventListener('popstate',guardPopState)
     }
-  },[dirty])
+  },[dirty,leaveMessage])
   function goBack() {
-    if (dirty && !window.confirm('还有未保存的资料，确定离开吗？')) return
+    if (dirty && !window.confirm(leaveMessage)) return
     const index = typeof window.history.state?.idx === 'number' ? window.history.state.idx : 0
     if (index > 0) navigate(-1)
     else navigate(fallbackFor(location.pathname))
   }
-  return <button type="button" className="back-button" aria-label="返回" onClick={goBack}>← 返回</button>
+  return <button type="button" className="back-button" aria-label={retail ? '返回 Back' : '返回'} onClick={goBack}>← {retail ? '返回 Back' : '返回'}</button>
 }
