@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { businessDateFromLegacy, formatAuditTimestamp, legacyIsoDateFromBusinessDate } from '../lib/businessDate'
+import { businessDateFromLegacy, legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, watchRetailFish } from '../services/retailSales'
 import { RetailFishPicker } from '../components/RetailFishPicker'
+import { RetailReceipt, RetailReceiptActions } from '../components/RetailReceipt'
 import './retailSales.css'
 
 function message(error: unknown) { return error instanceof Error ? error.message : '操作失败，请重试。' }
@@ -80,7 +81,7 @@ export function RetailSalesPage() {
     setSale(null); setLines([]); setVendor(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); saved()
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成" /><p className="success retail-no-print" role="status">现金结算已保存。</p>
-    <RetailReceipt sale={sale} /><div className="retail-no-print retail-actions"><button className="primary-action" onClick={() => window.print()}>打印结算单</button><button onClick={nextVendor}>下一位小贩</button></div></main>
+    <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩</button></div></main>
   return <main className="retail-page"><RetailHeader title="门市销售" />
     {(error || loadError || recoveryError) && <p className="error" role="alert">{error || loadError || recoveryError}</p>}
     {pending && <p className="notice">正在确认结算结果。失败时请点「重试结算」，系统会核对同一单号，避免重复保存。单号：{pending.id}</p>}
@@ -158,13 +159,5 @@ export function RetailHistoryPage() {
 export function RetailReceiptPage() {
   const { saleId = '' } = useParams(), [sale, setSale] = useState<RetailSale | null>(null), [error, setError] = useState('')
   useEffect(() => { let current = true; setSale(null); setError(''); void loadRetailSale(saleId).then(item => { if (current) setSale(item) }).catch(problem => { if (current) setError(message(problem)) }); return () => { current = false } }, [saleId])
-  return <main className="retail-page"><RetailHeader title="现金结算单" />{error ? <p className="error" role="alert">{error}</p> : !sale ? <p role="status">正在载入结算单…</p> : <><RetailReceipt sale={sale} /><button className="primary-action retail-no-print" onClick={() => window.print()}>打印结算单</button></>}</main>
-}
-
-function RetailReceipt({ sale }: { sale: RetailSale }) {
-  return <section className="retail-receipt" aria-label="现金结算单"><h2>CCM Fishery 门市现金结算单</h2><p>日期：{sale.businessDate}</p><p>小贩：{sale.vendorName}</p>
-    {sale.createdAt && <p>结算时间：{formatAuditTimestamp(sale.createdAt)}</p>}<p className="retail-receipt-id">单号：{sale.id}</p>
-    <table><thead><tr><th>品名</th><th>kg</th><th>RM/kg</th><th>金额 RM</th></tr></thead><tbody>{sale.lines.map((line, index) => <tr key={index}><td>{line.chineseName}<small>{line.malayName}</small></td><td>{retailWeightKg(line)}</td><td>{(line.unitPriceCents / 100).toFixed(2)}</td><td>{(line.amountCents / 100).toFixed(2)}</td></tr>)}</tbody></table>
-    <p className="retail-receipt-total">现金合计：<strong>{retailMoney(sale.totalAmountCents)}</strong></p><p>内部 / 门市现金结算单</p>
-  </section>
+  return <main className="retail-page"><RetailHeader title="现金结算单" />{error ? <p className="error" role="alert">{error}</p> : !sale ? <p role="status">正在载入结算单…</p> : <><RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /></>}</main>
 }

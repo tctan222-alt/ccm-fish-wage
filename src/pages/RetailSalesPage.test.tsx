@@ -7,6 +7,7 @@ import { legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { retailToday } from '../lib/retailSales'
 
 const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn() }))
+vi.mock('../lib/retailInvoicePdf', () => ({ createRetailInvoicePdf: vi.fn(async () => new File(['%PDF-1.4'], 'receipt.pdf', { type: 'application/pdf' })) }))
 vi.mock('../services/retailSales', () => ({ watchRetailFish: services.watch, saveRetailSale: services.save, saveRetailFish: services.saveFish, quickAddRetailFish: services.quickAdd, initializeRetailFish: services.initialize, loadRetailSales: services.history, loadRetailSale: services.detail, newRetailSaleId: services.id, loadPendingRetailSale: services.restore, rememberPendingRetailSale: services.remember, clearPendingRetailSale: services.clear }))
 const fish: RetailFish[] = [
   { id: 'a', chineseName: '甘丰', malayName: 'kembung', suggestedPriceCents: 600, active: true },
@@ -183,7 +184,8 @@ describe('mobile retail checkout', () => {
     expect(await screen.findByText('现金结算已保存。')).toBeInTheDocument()
     expect(services.save).toHaveBeenCalledOnce()
     expect(services.save.mock.calls[0][1]).toMatchObject({ vendorName: '阿明', businessDate: '05/09/2026', lines: [{ unitPriceCents: 615 }, { unitPriceCents: 800 }] })
-    fireEvent.click(screen.getByRole('button', { name: '打印结算单' })); expect(print).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'PDF / 分享' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打印' })); expect(print).toHaveBeenCalledOnce()
     fireEvent.click(screen.getByRole('button', { name: '下一位小贩' }))
     expect(screen.getByLabelText('小贩名')).toHaveValue('')
     expect(screen.getByText('RM0.00')).toBeInTheDocument()
@@ -267,6 +269,6 @@ describe('retail settings and history', () => {
     expect(within(receipt).getByText('历史甘丰')).toBeInTheDocument(); expect(within(receipt).getByText('old name')).toBeInTheDocument()
     expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()
     expect(within(receipt).getByRole('cell', { name: '58.40' })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '打印结算单' })); expect(print).toHaveBeenCalledOnce(); print.mockRestore()
+    fireEvent.click(screen.getByRole('button', { name: '打印' })); expect(print).toHaveBeenCalledOnce(); print.mockRestore()
   })
 })
