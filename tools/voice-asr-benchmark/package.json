@@ -1,0 +1,19 @@
+{
+  "name": "ccm-voice-asr-benchmark",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --experimental-strip-types server.ts",
+    "refresh:master": "node --env-file-if-exists=.env --experimental-strip-types scripts/refresh-master.ts",
+    "test": "node --experimental-strip-types --test test/*.check.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "build": "tsc --noEmit -p tsconfig.json && node --experimental-strip-types scripts/build-client.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.31.0", "@types/node": "^22.0.0", "esbuild": "^0.25.0", "eslint": "^9.31.0",
+    "globals": "^16.3.0", "typescript": "~5.8.3", "typescript-eslint": "^8.38.0"
+  }
+}
