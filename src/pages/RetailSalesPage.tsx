@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { businessDateFromLegacy, legacyIsoDateFromBusinessDate } from '../lib/businessDate'
+import { retailHistoryRange, shiftRetailWeek, type RetailHistoryRange } from '../lib/retailHistory'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, watchRetailFish, watchRetailSales, type RetailHistorySnapshot } from '../services/retailSales'
 import { RetailFishPicker } from '../components/RetailFishPicker'
@@ -25,8 +26,8 @@ function RetailHeader({ title }: { title: string }) {
   </header>
 }
 
-function DateField({ value, onChange }: { value: string; onChange: (date: string) => void }) {
-  return <label>日期 Date<input type="date" required value={value ? legacyIsoDateFromBusinessDate(value) : ''} onChange={event => onChange(event.target.value ? businessDateFromLegacy(event.target.value) : '')} /></label>
+function DateField({ value, onChange, label = '日期 Date' }: { value: string; onChange: (date: string) => void; label?: string }) {
+  return <label>{label}<input type="date" required value={value ? legacyIsoDateFromBusinessDate(value) : ''} onChange={event => onChange(event.target.value ? businessDateFromLegacy(event.target.value) : '')} /></label>
 }
 
 export function RetailSalesPage() {
@@ -85,12 +86,12 @@ export function RetailSalesPage() {
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成 Checkout Complete" /><p className="success retail-no-print" role="status">现金结算已保存。 Cash sale saved.</p>
     <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩 Next Vendor</button></div></main>
-  return <main className="retail-page"><RetailHeader title="门市销售 Retail Sales" />
+  return <main className="retail-page retail-compact retail-entry"><RetailHeader title="门市销售 Retail Sales" />
     {(error || loadError || recoveryError) && <p className="error" role="alert">{error || loadError || recoveryError}</p>}
     {pending && <p className="notice">正在确认结算结果。失败时请点「重试结算」，系统会核对同一单号，避免重复保存。 Confirming checkout. If it fails, choose Retry Checkout; the same invoice ID prevents duplicate saves. 单号 Invoice No.：{pending.id}</p>}
     <fieldset disabled={busy || quickBusy || !!pending} className="retail-fields">
       <section className="retail-context"><DateField value={businessDate} onChange={setDate} /><label>小贩 Vendor<input value={vendorName} maxLength={100} onChange={event => setVendor(event.target.value)} placeholder="直接输入小贩名 Enter vendor name" /></label></section>
-      <section><RetailFishPicker key={pickerVersion} fish={availableFish} query={search} inputRef={searchInput}
+      <section><RetailFishPicker key={pickerVersion} fish={availableFish} query={search} inputRef={searchInput} selectedFishId={selected?.id}
         onQueryChange={value => { setSearch(value); setSelected(null); setPrice(''); setWeight(''); setError('') }}
         onSelect={select} onCreated={item => setCreatedFish(current => [...current, item])} onBusyChange={setQuickBusy} />
         <p className="retail-selected">{selected ? <>{selected.chineseName} · {selected.malayName || '未填马来文名 No Malay Name'} · 建议 Suggested {selected.suggestedPriceCents === null ? '未设置 Not Set' : `${retailMoney(selected.suggestedPriceCents)}/kg`}</> : '输入鱼名，选择已有结果或直接新增。 Enter a fish name, then select a match or add a new fish.'}</p>
@@ -143,7 +144,7 @@ function RetailFishForm({ item, close }: { item: RetailFish | null; close: () =>
     </fieldset></form></section></div>
 }
 
-type HistoryState = { date: string } & (
+type HistoryState = { rangeKey: string } & (
   | { status: 'loading' }
   | { status: 'ready'; snapshot: RetailHistorySnapshot }
   | { status: 'error'; message: string }
@@ -158,29 +159,54 @@ function historyError(problem: unknown): string {
 }
 
 export function RetailHistoryPage() {
-  const [date, setDate] = useState(retailToday), [vendor, setVendor] = useState('')
-  const [history, setHistory] = useState<HistoryState>({ date, status: 'loading' }), [attempt, setAttempt] = useState(0)
+  const [mode, setMode] = useState<'today' | 'week' | 'range'>('today')
+  const [today, setToday] = useState(retailToday), [weekDate, setWeekDate] = useState(retailToday)
+  const [rangeFrom, setRangeFrom] = useState(retailToday), [rangeTo, setRangeTo] = useState(retailToday)
+  const [vendor, setVendor] = useState('')
+  let range: RetailHistoryRange | null = null, rangeError = ''
+  try { range = retailHistoryRange(mode, mode === 'week' ? weekDate : today, rangeFrom, rangeTo) }
+  catch (problem) { rangeError = message(problem) }
+  const fromDate = range?.fromDate ?? '', toDate = range?.toDate ?? ''
+  const rangeKey = `${fromDate}|${toDate}|${rangeError}`
+  const [history, setHistory] = useState<HistoryState>({ rangeKey, status: 'loading' }), [attempt, setAttempt] = useState(0)
   useEffect(() => {
     let current = true
-    setHistory({ date, status: 'loading' })
-    if (!date) { setHistory({ date, status: 'error', message: '请选择日期。 Please select a date.' }); return }
+    setHistory({ rangeKey, status: 'loading' })
+    if (rangeError) { setHistory({ rangeKey, status: 'error', message: rangeError }); return }
     let stop = () => {}
-    const fail = (problem: unknown) => { if (current) setHistory({ date, status: 'error', message: historyError(problem) }) }
+    const fail = (problem: unknown) => { if (current) setHistory({ rangeKey, status: 'error', message: historyError(problem) }) }
     try {
-      stop = watchRetailSales(date, snapshot => { if (current) setHistory({ date, status: 'ready', snapshot }) }, fail)
+      stop = watchRetailSales({ fromDate, toDate }, snapshot => { if (current) setHistory({ rangeKey, status: 'ready', snapshot }) }, fail)
     } catch (problem) { fail(problem) }
     return () => { current = false; stop() }
-  }, [date, attempt])
-  // A date change must never briefly show the previous date's rows or errors.
-  const state = history.date === date ? history : { status: 'loading' as const }
+  }, [fromDate, toDate, rangeKey, rangeError, attempt])
+  // Never show the previous range's rows or errors while a new subscription starts.
+  const state = history.rangeKey === rangeKey ? history : { status: 'loading' as const }
   const snapshot = state.status === 'ready' ? state.snapshot : null
   const filtered = snapshot?.sales.filter(item => item.vendorName.toLocaleLowerCase().includes(vendor.trim().toLocaleLowerCase())) ?? []
-  return <main className="retail-page"><RetailHeader title="销售历史 Sales History" /><section className="retail-context"><DateField value={date} onChange={setDate} /><label>搜索小贩 Search Vendor<input type="search" placeholder="输入小贩名 Enter vendor name" value={vendor} onChange={event => setVendor(event.target.value)} /></label></section>
-    {state.status === 'error' ? <><p className="error" role="alert">{state.message}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>重试 Retry</button></>
+  return <main className="retail-page retail-compact retail-history"><RetailHeader title="销售历史 Sales History" />
+    <section className="retail-history-filters" aria-label="历史筛选 History Filters">
+      <div className="retail-period-switch" role="group" aria-label="查询方式 History Period">
+        <button type="button" aria-pressed={mode === 'today'} onClick={() => { setToday(retailToday()); setMode('today') }}>今天 Today</button>
+        <button type="button" aria-pressed={mode === 'week'} onClick={() => setMode('week')}>按周 Week</button>
+        <button type="button" aria-pressed={mode === 'range'} aria-expanded={mode === 'range'} aria-controls="retail-history-range" onClick={() => setMode('range')}>范围 Range</button>
+      </div>
+      {mode === 'today' && <p className="retail-period-dates">日期 Date：{today}</p>}
+      {mode === 'week' && <div className="retail-week-nav"><button type="button" aria-label="上一周 Previous Week" onClick={() => setWeekDate(date => shiftRetailWeek(date, -1))}>‹</button>
+        <p className="retail-period-dates"><span>{fromDate} – {toDate}</span><small>周一至周日 Mon–Sun</small></p>
+        <button type="button" aria-label="下一周 Next Week" onClick={() => setWeekDate(date => shiftRetailWeek(date, 1))}>›</button></div>}
+      {mode === 'range' && <div className="retail-range-fields" id="retail-history-range"><DateField label="开始 From" value={rangeFrom} onChange={setRangeFrom} /><DateField label="结束 To" value={rangeTo} onChange={setRangeTo} /></div>}
+      <label className="retail-history-search">搜索小贩 Search Vendor<input type="search" placeholder="小贩名 Vendor name" value={vendor} onChange={event => setVendor(event.target.value)} /></label>
+    </section>
+    {state.status === 'error' ? <><p className="error" role="alert">{state.message}</p>{!rangeError && <button type="button" onClick={() => setAttempt(value => value + 1)}>重试 Retry</button>}</>
       : state.status === 'loading' ? <p role="status">正在载入历史… Loading sales history…</p>
-      : <>{snapshot?.fromCache && <p className="notice" role="status">{snapshot.sales.length ? '缓存 Cached：正在显示本机记录，服务器连接恢复后会自动更新。 Showing cached records; updates will arrive automatically when connected.' : '尚未取得服务器记录，连接恢复后会自动载入；目前不能确认当天无销售。 Waiting for server records; sales will load automatically when connected. An empty sales history is not yet confirmed.'}</p>}
+      : <>{snapshot?.fromCache && <p className="notice" role="status">{snapshot.sales.length ? '缓存 Cached：正在显示本机记录，服务器连接恢复后会自动更新。 Showing cached records; updates will arrive automatically when connected.' : '尚未取得服务器记录，连接恢复后会自动载入；目前不能确认所选范围内无销售。 Waiting for server records; sales will load automatically when connected. An empty sales history in this range is not yet confirmed.'}</p>}
         {!filtered.length ? (!snapshot?.fromCache || snapshot.sales.length > 0) && <p role="status">没有符合条件的销售。 No matching sales.</p>
-          : <><p>{filtered.length} 单 Sales · 合计 Total {retailMoney(filtered.reduce((sum, item) => sum + item.totalAmountCents, 0))}</p>{filtered.map(item => <article className="master-card" key={item.id}><h2>{item.vendorName}</h2><p>{item.businessDate} · {item.lines.length} 项 Items · {retailMoney(item.totalAmountCents)}</p><Link className="page-link" to={`/retail-sales/history/${item.id}`}>查看并打印 View / Print {item.vendorName}</Link></article>)}</>}
+          : <><p className="retail-history-summary">{filtered.length} 单 Sales · 合计 Total <strong>{retailMoney(filtered.reduce((sum, item) => sum + item.totalAmountCents, 0))}</strong></p>
+            <div className="retail-history-columns" aria-hidden="true"><span>日期 Date</span><span>小贩 Vendor</span><span>总额 Total</span><span /></div>
+            <ul className="retail-history-list" aria-label="销售记录 Sales Records">{filtered.map(item => <li key={item.id}><Link className="retail-history-row" to={`/retail-sales/history/${item.id}`} aria-label={`查看结算单 View Invoice ${item.businessDate} ${item.vendorName} ${retailMoney(item.totalAmountCents)}`}>
+              <time dateTime={legacyIsoDateFromBusinessDate(item.businessDate)} title={item.businessDate}>{item.businessDate.slice(0, 5)}</time><span className="retail-history-vendor">{item.vendorName}</span><strong>{retailMoney(item.totalAmountCents)}</strong><span aria-hidden="true">›</span>
+            </Link></li>)}</ul></>}
       </>}
   </main>
 }
