@@ -307,7 +307,7 @@ describe('retail settings and history', () => {
     fill('开始 From', '2026-09-06'); fill('结束 To', '2026-09-06')
     await waitFor(() => expect(services.history).toHaveBeenCalledWith({ fromDate: '06/09/2026', toDate: '06/09/2026' }))
     fill('搜索小贩 Search Vendor', '阿明'); expect(screen.queryByRole('link', { name: /查看结算单 View Invoice.*阿华/ })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('link', { name: '查看结算单 View Invoice 06/09/2026 阿明 RM58.40' }))
+    fireEvent.click(screen.getByRole('link', { name: '查看结算单 View Invoice 06092026 星期日 Sun 阿明 RM58.40' }))
     const receipt = await screen.findByRole('region', { name: '门市现金结算单' })
     expect(within(receipt).getByText('历史甘丰')).toBeInTheDocument(); expect(within(receipt).getByText('old name')).toBeInTheDocument()
     expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()

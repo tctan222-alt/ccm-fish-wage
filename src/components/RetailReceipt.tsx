@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { formatAuditTimestamp } from '../lib/businessDate'
+import { formatRetailAuditTimestamp, formatRetailDate } from '../lib/retailDate'
 import { retailMoney, retailWeightKg, type RetailSale } from '../lib/retailSales'
 import { createRetailInvoicePdf } from '../lib/retailInvoicePdf'
 
 export function RetailReceipt({ sale }: { sale: RetailSale }) {
-  return <section className="retail-receipt" aria-label="门市现金结算单"><h2>门市现金结算单</h2><p>日期 Date：{sale.businessDate}</p><p>小贩 Vendor：{sale.vendorName}</p>
-    {sale.createdAt && <p>结算时间 Checkout Time：{formatAuditTimestamp(sale.createdAt)}</p>}<p className="retail-receipt-id">单号 Invoice No.：{sale.id}</p>
+  return <section className="retail-receipt" aria-label="门市现金结算单"><h2>门市现金结算单</h2><p>日期 Date：{formatRetailDate(sale.businessDate)}</p><p>小贩 Vendor：{sale.vendorName}</p>
+    {sale.createdAt && <p>结算时间 Checkout Time：{formatRetailAuditTimestamp(sale.createdAt)}</p>}<p className="retail-receipt-id">单号 Invoice No.：{sale.invoiceNumber ?? sale.id}</p>
     <table><colgroup><col className="retail-receipt-name" /><col className="retail-receipt-weight" /><col className="retail-receipt-price" /><col className="retail-receipt-amount" /></colgroup><thead><tr><th scope="col">鱼名 Fish</th><th scope="col">重量 Weight (kg)</th><th scope="col">单价 Unit Price (RM/kg)</th><th scope="col">金额 Amount (RM)</th></tr></thead><tbody>{sale.lines.map((line, index) => <tr key={index}><td>{line.chineseName}<small>{line.malayName}</small></td><td>{retailWeightKg(line)}</td><td>{(line.unitPriceCents / 100).toFixed(2)}</td><td>{(line.amountCents / 100).toFixed(2)}</td></tr>)}</tbody></table>
-    <p className="retail-receipt-total">现金合计 Cash Total：<strong>{retailMoney(sale.totalAmountCents)}</strong></p><p>内部 / 门市现金结算单 Internal Cash Invoice</p>
+    <p className="retail-receipt-total">现金合计 Cash Total：<strong>{retailMoney(sale.totalAmountCents)}</strong></p>
+    {sale.remark && <p>备注 Remark：{sale.remark}</p>}<p>内部 / 门市现金结算单 Internal Cash Invoice</p>
   </section>
 }
 

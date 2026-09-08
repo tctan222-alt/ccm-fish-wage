@@ -24,6 +24,7 @@ export interface RetailSaleInput {
   businessDate: string
   vendorName: string
   lines: RetailLineInput[]
+  remark?: string
 }
 export interface RetailSale extends Omit<RetailSaleInput, 'lines'> {
   id: string
@@ -31,6 +32,12 @@ export interface RetailSale extends Omit<RetailSaleInput, 'lines'> {
   dateSortKey: number
   totalAmountCents: number
   createdAt?: { toDate: () => Date }
+  updatedAt?: { toDate: () => Date }
+  createdBy?: string
+  updatedBy?: string
+  invoiceNumber?: string
+  invoiceSequence?: number
+  revision?: number
 }
 
 export function retailPriceCents(value: string): number {
@@ -85,11 +92,13 @@ export function normalizeRetailLine(line: RetailLineInput): RetailLine {
 
 export function prepareRetailSale(input: RetailSaleInput): Omit<RetailSale, 'id' | 'createdAt'> {
   const businessDate = input.businessDate.trim(), vendorName = input.vendorName.trim()
+  const remark = (input.remark ?? '').trim()
   assertBusinessDate(businessDate)
   if (!vendorName || vendorName.length > 100) throw new Error('请输入小贩名（最多 100 字）。 Enter a vendor name (up to 100 characters).')
+  if (remark.length > 500) throw new Error('备注最多 500 字。 Remark must be no longer than 500 characters.')
   if (!input.lines.length || input.lines.length > MAX_RETAIL_LINES) throw new Error(`每单须有 1–${MAX_RETAIL_LINES} 条明细。 Each sale must have 1–${MAX_RETAIL_LINES} lines.`)
   const lines = input.lines.map(normalizeRetailLine)
-  return { businessDate, vendorName, lines, dateSortKey: sortKeyFromBusinessDate(businessDate), totalAmountCents: lines.reduce((sum, line) => sum + line.amountCents, 0) }
+  return { businessDate, vendorName, remark, lines, dateSortKey: sortKeyFromBusinessDate(businessDate), totalAmountCents: lines.reduce((sum, line) => sum + line.amountCents, 0) }
 }
 
 export const retailToday = () => malaysiaBusinessDate()

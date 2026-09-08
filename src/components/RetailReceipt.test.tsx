@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RetailReceipt, RetailReceiptActions } from './RetailReceipt'
 import { createRetailInvoicePdf } from '../lib/retailInvoicePdf'
 import type { RetailSale } from '../lib/retailSales'
+import { formatRetailAuditTimestamp, formatRetailDate } from '../lib/retailDate'
 import { readFileSync } from 'node:fs'
 
 const retailCss = readFileSync('src/pages/retailSales.css', 'utf8')
 
 vi.mock('../lib/retailInvoicePdf', () => ({ createRetailInvoicePdf: vi.fn() }))
 const sale: RetailSale = { id: 'receipt-1', businessDate: '07/09/2026', dateSortKey: 20260907, vendorName: '阿明', totalAmountCents: 5840, lines: [{ fishId: 'fish', chineseName: '历史鱼名', malayName: 'old name', weightDeciKg: 73, unitPriceCents: 800, amountCents: 5840 }] }
-const file = new File(['%PDF-1.4'], '门市现金结算单-07-09-2026-阿明.pdf', { type: 'application/pdf' })
+const file = new File(['%PDF-1.4'], '门市现金结算单-07092026 星期一 Mon-阿明.pdf', { type: 'application/pdf' })
 const generate = vi.mocked(createRetailInvoicePdf)
 const share = vi.fn(), canShare = vi.fn(), createUrl = vi.fn(), revokeUrl = vi.fn()
 
@@ -135,7 +136,8 @@ describe('Retail invoice output', () => {
     await ready(); render(<RetailReceipt sale={sale} />)
     expect(screen.getByRole('heading', { name: '门市现金结算单' })).toBeInTheDocument()
     expect(screen.queryByText(/CCM Fishery/)).not.toBeInTheDocument()
-    expect(screen.getByText('日期 Date：07/09/2026')).toBeInTheDocument()
+    expect(screen.getByText(`日期 Date：${formatRetailDate(sale.businessDate)}`)).toBeInTheDocument()
+    expect(screen.getByText('单号 Invoice No.：receipt-1')).toBeInTheDocument()
     expect(screen.getByText('小贩 Vendor：阿明')).toBeInTheDocument()
     expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['鱼名 Fish', '重量 Weight (kg)', '单价 Unit Price (RM/kg)', '金额 Amount (RM)'])
     expect(screen.getByRole('cell', { name: '历史鱼名 old name' })).toBeInTheDocument()
@@ -147,5 +149,15 @@ describe('Retail invoice output', () => {
     expect(printRules).toContain('.retail-no-print,.retail-page>.retail-no-print{display:none!important}')
     expect(printRules).toContain('.retail-page:has(>.retail-receipt)>:not(.retail-receipt){display:none!important}')
     expect(printRules).toContain('break-inside:avoid')
+  })
+
+  it('renders the issued number and edited remark without substituting the document ID', () => {
+    const createdAt = { toDate: () => new Date('2026-09-07T04:30:00Z') }
+    render(<RetailReceipt sale={{ ...sale, invoiceNumber: '07092026001', createdAt, remark: '现金已收' }} />)
+    expect(screen.getByText('单号 Invoice No.：07092026001')).toBeInTheDocument()
+    expect(screen.queryByText(/receipt-1/)).not.toBeInTheDocument()
+    expect(screen.getByText('备注 Remark：现金已收')).toBeInTheDocument()
+    expect(screen.getByText(`结算时间 Checkout Time：${formatRetailAuditTimestamp(createdAt)}`)).toBeInTheDocument()
+    expect(screen.getByText(`日期 Date：${formatRetailDate(sale.businessDate)}`)).toBeInTheDocument()
   })
 })
