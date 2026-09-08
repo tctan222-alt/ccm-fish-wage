@@ -5,13 +5,14 @@ import { RetailFishPage, RetailHistoryPage, RetailReceiptPage, RetailSalesPage }
 import { prepareRetailSale, type RetailFish, type RetailSale } from '../lib/retailSales'
 import { legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { retailToday } from '../lib/retailSales'
+import type { RetailHistoryRange } from '../lib/retailHistory'
 
 const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn() }))
 vi.mock('../lib/retailInvoicePdf', () => ({ createRetailInvoicePdf: vi.fn(async () => new File(['%PDF-1.4'], 'receipt.pdf', { type: 'application/pdf' })) }))
 vi.mock('../services/retailSales', () => ({ watchRetailFish: services.watch, saveRetailSale: services.save, saveRetailFish: services.saveFish, quickAddRetailFish: services.quickAdd, initializeRetailFish: services.initialize, loadRetailSales: services.history, loadRetailSale: services.detail, newRetailSaleId: services.id, loadPendingRetailSale: services.restore, rememberPendingRetailSale: services.remember, clearPendingRetailSale: services.clear,
-  watchRetailSales: (date: string, next: (snapshot: { sales: RetailSale[]; fromCache: boolean }) => void, error: (problem: unknown) => void) => {
+  watchRetailSales: (range: RetailHistoryRange, next: (snapshot: { sales: RetailSale[]; fromCache: boolean }) => void, error: (problem: unknown) => void) => {
     let current = true
-    void services.history(date).then((sales: RetailSale[]) => { if (current) next({ sales, fromCache: false }) }).catch(error)
+    void services.history(range).then((sales: RetailSale[]) => { if (current) next({ sales, fromCache: false }) }).catch(error)
     return () => { current = false }
   },
 }))
@@ -205,6 +206,40 @@ describe('mobile retail checkout', () => {
     fireEvent.click(screen.getByRole('button', { name: '移除第 1 条明细 Remove Item 1' }))
     expect(screen.getByRole('button', { name: '结算 Checkout' })).toBeDisabled()
   })
+  it('uses Master names and default price but keeps this invoice price override out of Master Data', async () => {
+    const original = JSON.stringify(fish)
+    mount(); fill('小贩 Vendor', '阿明')
+    fireEvent.click(screen.getByRole('option', { name: /甘丰/ }))
+    expect(screen.getByRole('combobox')).toHaveValue('甘丰')
+    expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('6.00')
+    expect(screen.getByText(/甘丰 · kembung · 建议 Suggested/)).toBeInTheDocument()
+    fill('重量 Weight (kg)', '2'); fill('单价 Unit Price (RM/kg)', '5.25')
+    fireEvent.click(screen.getByRole('button', { name: '加入明细 Add Item' }))
+    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.save.mock.calls[0][1].lines[0]).toMatchObject({ chineseName: '甘丰', malayName: 'kembung', unitPriceCents: 525, amountCents: 1050 })
+    expect(services.saveFish).not.toHaveBeenCalled()
+    expect(services.quickAdd).not.toHaveBeenCalled()
+    expect(JSON.stringify(fish)).toBe(original)
+  })
+  it('opens Other without leaving the previous fish available to add accidentally', async () => {
+    mount(); fill('小贩 Vendor', '阿明'); add()
+    fireEvent.click(screen.getByRole('option', { name: /马丰/ }))
+    fill('重量 Weight (kg)', '3')
+    fireEvent.click(screen.getByRole('button', { name: '其他 Other' }))
+    expect(screen.getByLabelText('重量 Weight (kg)')).toHaveValue('')
+    expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('')
+    expect(screen.getByRole('button', { name: '加入明细 Add Item' })).toBeDisabled()
+    expect(screen.getByRole('heading', { name: '本单明细 Items (1)' })).toBeInTheDocument()
+    fill('新鱼中文正式名 New Fish Chinese Name', '红鱼')
+    fill('新鱼马来文名 New Fish Malay Name', 'Merah')
+    fill('新鱼建议单价 New Fish Suggested Price (RM/kg)', '12.05')
+    fireEvent.click(screen.getByRole('button', { name: '保存并使用新鱼 Save and Use Fish' }))
+    await waitFor(() => expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('12.05'))
+    expect(screen.getByRole('combobox')).toHaveValue('红鱼')
+    expect(screen.getByLabelText('小贩 Vendor')).toHaveValue('阿明')
+    expect(services.save).not.toHaveBeenCalled()
+  })
   it('keeps added snapshots through live changes and makes newly added fish available immediately', () => {
     let next: (items: RetailFish[]) => void = () => {}
     services.watch.mockImplementation(callback => { next = callback; callback(fish); return vi.fn() })
@@ -267,10 +302,12 @@ describe('retail settings and history', () => {
     services.history.mockResolvedValue([sale, { ...sale, id: 'other', vendorName: '阿华' }]); services.detail.mockResolvedValue(sale)
     const print = vi.spyOn(window, 'print').mockImplementation(() => {})
     render(<MemoryRouter initialEntries={['/retail-sales/history']}><Routes><Route path="/retail-sales/history" element={<RetailHistoryPage />} /><Route path="/retail-sales/history/:saleId" element={<RetailReceiptPage />} /></Routes></MemoryRouter>)
-    await screen.findByRole('heading', { name: '阿华' }); fill('日期 Date', '2026-09-06')
-    await waitFor(() => expect(services.history).toHaveBeenCalledWith('06/09/2026'))
-    fill('搜索小贩 Search Vendor', '阿明'); expect(screen.queryByRole('heading', { name: '阿华' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('link', { name: '查看并打印 View / Print 阿明' }))
+    await screen.findByRole('link', { name: /查看结算单 View Invoice.*阿华/ })
+    fireEvent.click(screen.getByRole('button', { name: '范围 Range' }))
+    fill('开始 From', '2026-09-06'); fill('结束 To', '2026-09-06')
+    await waitFor(() => expect(services.history).toHaveBeenCalledWith({ fromDate: '06/09/2026', toDate: '06/09/2026' }))
+    fill('搜索小贩 Search Vendor', '阿明'); expect(screen.queryByRole('link', { name: /查看结算单 View Invoice.*阿华/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('link', { name: '查看结算单 View Invoice 06/09/2026 阿明 RM58.40' }))
     const receipt = await screen.findByRole('region', { name: '门市现金结算单' })
     expect(within(receipt).getByText('历史甘丰')).toBeInTheDocument(); expect(within(receipt).getByText('old name')).toBeInTheDocument()
     expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()

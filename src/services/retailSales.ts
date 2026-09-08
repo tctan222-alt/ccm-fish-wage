@@ -3,6 +3,7 @@ import { auth, db } from '../firebase'
 import seed from '../data/retailFishSeed.json'
 import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { sortKeyFromBusinessDate } from '../lib/businessDate'
+import { retailHistoryRange, type RetailHistoryRange } from '../lib/retailHistory'
 
 function userId() {
   if (!auth.currentUser) throw new Error('请先登录。 Please sign in.')
@@ -118,14 +119,19 @@ export async function loadRetailSales(businessDate: string): Promise<RetailSale[
 
 export interface RetailHistorySnapshot { sales: RetailSale[]; fromCache: boolean }
 
-export function watchRetailSales(businessDate: string, next: (snapshot: RetailHistorySnapshot) => void, error: (problem: unknown) => void) {
-  const historyQuery = query(collection(db, 'retailSales'), where('dateSortKey', '==', sortKeyFromBusinessDate(businessDate)))
+export function watchRetailSales(range: RetailHistoryRange, next: (snapshot: RetailHistorySnapshot) => void, error: (problem: unknown) => void) {
+  const { fromDate, toDate } = retailHistoryRange('range', '', range.fromDate, range.toDate)
+  const historyQuery = query(collection(db, 'retailSales'),
+    where('dateSortKey', '>=', sortKeyFromBusinessDate(fromDate)),
+    where('dateSortKey', '<=', sortKeyFromBusinessDate(toDate)))
   // Keep listening through initial cache/server synchronization. A one-shot getDocs
   // hides cached rows while waiting online and cannot update its first result later.
   return onSnapshot(historyQuery, { includeMetadataChanges: true }, snapshot => {
     try {
       const sales = snapshot.docs.map(item => saleFromDocument(item.id, item.data()))
-        .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
+        .sort((a, b) => b.dateSortKey - a.dateSortKey
+          || (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0)
+          || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
       next({ sales, fromCache: snapshot.metadata.fromCache })
     } catch (problem) { error(problem) }
   }, error)

@@ -6,17 +6,19 @@ interface Props {
   fish: RetailFish[] | null
   query: string
   inputRef: RefObject<HTMLInputElement | null>
+  selectedFishId?: string
   onQueryChange: (query: string) => void
   onSelect: (fish: RetailFish) => void
   onCreated: (fish: RetailFish) => void
   onBusyChange: (busy: boolean) => void
 }
 
-export function RetailFishPicker({ fish, query, inputRef, onQueryChange, onSelect, onCreated, onBusyChange }: Props) {
+export function RetailFishPicker({ fish, query, inputRef, selectedFishId, onQueryChange, onSelect, onCreated, onBusyChange }: Props) {
   const [expanded, setExpanded] = useState(false), [highlighted, setHighlighted] = useState(-1)
   const [newName, setNewName] = useState<string | null>(null), [malay, setMalay] = useState(''), [price, setPrice] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
-  const saving = useRef(false), composing = useRef(false), malayInput = useRef<HTMLInputElement>(null)
+  const [otherEntry, setOtherEntry] = useState(false)
+  const saving = useRef(false), composing = useRef(false), malayInput = useRef<HTMLInputElement>(null), nameInput = useRef<HTMLInputElement>(null)
   const cleanQuery = query.trim(), keyword = cleanQuery.toLocaleLowerCase()
   const activeFish = fish?.filter(item => item.active) ?? []
   const matches = activeFish.filter(item => `${item.chineseName} ${item.malayName}`.toLocaleLowerCase().includes(keyword))
@@ -24,14 +26,19 @@ export function RetailFishPicker({ fish, query, inputRef, onQueryChange, onSelec
     const names = [item.chineseName, item.malayName].map(name => name.toLocaleLowerCase())
     return names.includes(keyword) ? 0 : names.some(name => name.startsWith(keyword)) ? 1 : 2
   }
-  const suggestions = matches.sort((a, b) => rank(a) - rank(b)).slice(0, 8)
+  const suggestions = keyword ? matches.sort((a, b) => rank(a) - rank(b)).slice(0, 8) : activeFish
   const activeIndex = Math.min(highlighted, suggestions.length - 1)
   const canCreate = fish !== null && !!cleanQuery && !activeFish.some(item => item.chineseName.toLocaleLowerCase() === keyword || item.malayName.toLocaleLowerCase() === keyword)
   const showSuggestions = expanded && newName === null && suggestions.length > 0
-  useEffect(() => { if (newName !== null) malayInput.current?.focus(); else inputRef.current?.focus() }, [newName, inputRef])
+  const creating = newName !== null
+  useEffect(() => {
+    if (creating) (otherEntry ? nameInput : malayInput).current?.focus()
+    else inputRef.current?.focus()
+  }, [creating, otherEntry, inputRef])
 
   function select(item: RetailFish) { setExpanded(false); setHighlighted(-1); onSelect(item) }
-  function startCreate() { setNewName(cleanQuery); setMalay(''); setPrice(''); setError(''); setExpanded(false) }
+  function startCreate() { setOtherEntry(false); setNewName(cleanQuery); setMalay(''); setPrice(''); setError(''); setExpanded(false) }
+  function startOther() { onQueryChange(''); setOtherEntry(true); setNewName(''); setMalay(''); setPrice(''); setError(''); setExpanded(false) }
   function keyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.nativeEvent.isComposing || composing.current || event.keyCode === 229) return
     if (event.key === 'Escape') { event.preventDefault(); setExpanded(false); setHighlighted(-1) }
@@ -50,10 +57,16 @@ export function RetailFishPicker({ fish, query, inputRef, onQueryChange, onSelec
     if (saving.current || newName === null) return
     setError('')
     try {
+      const chineseName = newName.trim()
+      if (!chineseName) throw new Error('请输入新鱼的中文正式名。 Enter the new fish Chinese name.')
+      if (activeFish.some(item => item.chineseName.toLocaleLowerCase() === chineseName.toLocaleLowerCase()
+        || item.malayName.toLocaleLowerCase() === chineseName.toLocaleLowerCase())) {
+        throw new Error('此鱼种已存在，请取消新增并选择已有鱼种。 This fish already exists. Cancel and select the existing fish.')
+      }
       if (!malay.trim()) throw new Error('请补齐新鱼的马来文名。 Enter the new fish Malay name.')
       const suggestedPriceCents = retailPriceCents(price)
       saving.current = true; setBusy(true); onBusyChange(true)
-      const created = await quickAddRetailFish({ chineseName: newName, malayName: malay, suggestedPriceCents, active: true })
+      const created = await quickAddRetailFish({ chineseName, malayName: malay, suggestedPriceCents, active: true })
       setNewName(null); setMalay(''); setPrice(''); onCreated(created); select(created)
     } catch (problem) { setError(problem instanceof Error ? problem.message : '新增鱼种失败，请重试。 Could not add the fish. Please try again.') }
     finally { saving.current = false; setBusy(false); onBusyChange(false) }
@@ -70,15 +83,20 @@ export function RetailFishPicker({ fish, query, inputRef, onQueryChange, onSelec
     {fish === null ? <p role="status">正在载入鱼种… Loading fish…</p> : !fish.length ? <p className="notice">直接输入鱼名，即可在这里新增并开始销售。 Enter a fish name to add it and start selling.</p> : null}
     {showSuggestions && <div className="retail-fish-suggestions" id="retail-fish-suggestions" role="listbox" aria-label="鱼名建议 Fish Suggestions">
       {suggestions.map((item, index) => <button key={item.id} id={`retail-fish-option-${index}`} type="button" role="option" tabIndex={-1}
-        aria-selected={index === activeIndex} onMouseDown={event => event.preventDefault()} onClick={() => select(item)}>
-        <span><strong>{item.chineseName}</strong><small>{item.malayName || '未填马来文名 No Malay Name'}</small></span>
-        <span>{item.suggestedPriceCents === null ? '未设建议价 No Suggested Price' : `${retailMoney(item.suggestedPriceCents)}/kg`}</span>
+        aria-selected={item.id === selectedFishId} data-highlighted={index === activeIndex || undefined}
+        onMouseDown={event => event.preventDefault()} onClick={() => select(item)}>
+        <strong>{item.chineseName}</strong>
+        <small className="retail-fish-meta"><span>{item.malayName.trim() || '—'}</span><span className="retail-fish-price" aria-label={item.suggestedPriceCents === null ? undefined : `${retailMoney(item.suggestedPriceCents)}/kg`}>{item.suggestedPriceCents === null ? '—' : <>{retailMoney(item.suggestedPriceCents)}<wbr />/kg</>}</span></small>
       </button>)}
     </div>}
-    {newName === null && canCreate && <button type="button" className="retail-new-fish" onClick={startCreate}>新增 Add「{cleanQuery}」</button>}
-    {newName !== null && <section className="retail-quick-add" aria-label="新增门市鱼种 Add Retail Fish"><h2>新增 Add「{newName}」</h2>
+    {newName === null && <div className="retail-fish-create-actions">
+      <button type="button" className="retail-other-fish" disabled={fish === null} onClick={startOther}>其他 Other</button>
+      {canCreate && <button type="button" className="retail-new-fish" onClick={startCreate}>新增 Add「{cleanQuery}」</button>}
+    </div>}
+    {newName !== null && <section className="retail-quick-add" aria-label="新增门市鱼种 Add Retail Fish"><h2>{otherEntry ? '其他鱼种 Other Fish' : `新增 Add「${newName}」`}</h2>
       <p>补齐后会保存为鱼种，并直接带入本次销售。 Save these details to add the fish and use it in this sale.</p>
       <form onSubmit={event => { event.preventDefault(); void create() }}><fieldset disabled={busy} className="retail-fields">
+        {otherEntry && <label>新鱼中文正式名 New Fish Chinese Name<input ref={nameInput} required maxLength={100} value={newName} onChange={event => setNewName(event.target.value)} /></label>}
         <label>新鱼马来文名 New Fish Malay Name<input ref={malayInput} required maxLength={100} value={malay} onChange={event => setMalay(event.target.value)} /></label>
         <label>新鱼建议单价 New Fish Suggested Price (RM/kg)<input required inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} /></label>
         {error && <p className="error" role="alert">{error}</p>}
