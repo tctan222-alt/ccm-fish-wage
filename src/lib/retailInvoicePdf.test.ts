@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createRetailInvoicePdf } from './retailInvoicePdf'
 import type { RetailSale } from './retailSales'
+import { formatRetailDate, formatRetailAuditTimestamp } from './retailDate'
 
 const sample: RetailSale = {
   id: 'retail-sample', businessDate: '07/09/2026', dateSortKey: 20260907, vendorName: '小贩阿明',
@@ -48,21 +49,21 @@ describe('retail invoice PDF', () => {
     const file = await createRetailInvoicePdf(sample)
     expect(file).toBeInstanceOf(File)
     expect(file.type).toBe('application/pdf')
-    expect(file.name).toBe('门市现金结算单-07-09-2026-小贩阿明.pdf')
+    expect(file.name).toBe('门市现金结算单-07092026 星期一 Mon-小贩阿明.pdf')
     const pdf = await readPdf(file)
     expect(pdf.startsWith('%PDF-')).toBe(true)
     expect(pdf).toContain('/Type /Page')
     expect(pdf).toContain('%%EOF')
     expect(pdf).not.toContain('CCM')
     expect(pageSizes).toEqual([[1588, 2246]])
-    expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['门市现金结算单', '日期 Date：07/09/2026', '小贩 Vendor：小贩阿明', '鱼名 Fish', '重量 Weight (kg)', '单价 Price/kg', '金额 Amount (RM)', '现金合计 Cash Total']))
+    expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['门市现金结算单', `日期 Date：${formatRetailDate(sample.businessDate)}`, '小贩 Vendor：小贩阿明', '单号 Invoice No.：retail-sample', '鱼名 Fish', '重量 Weight (kg)', '单价 Price/kg', '金额 Amount (RM)', '现金合计 Cash Total']))
     expect(drawn.some(item => item.text.includes('CCM'))).toBe(false)
     expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['金线', 'Ikan kerisi', '80.5', '6.00', '483.00', 'RM483.00']))
   })
 
   it('removes filename path/control characters while retaining the vendor and PDF extension', async () => {
     const file = await createRetailInvoicePdf({ ...sample, vendorName: '阿明/鱼档:*?\n' })
-    expect(file.name).toMatch(/^门市现金结算单-07-09-2026-阿明-鱼档-+\.pdf$/)
+    expect(file.name).toMatch(/^门市现金结算单-07092026 星期一 Mon-阿明-鱼档-+\.pdf$/)
     expect(file.name).not.toMatch(/[\\/:*?<>|\n]/)
   })
 
@@ -73,6 +74,24 @@ describe('retail invoice PDF', () => {
     await createRetailInvoicePdf(sale)
     expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining(['77.77', 'RM99.99']))
     expect(JSON.stringify(sale)).toBe(before)
+  })
+
+  it('renders the immutable invoice number, saved remark and shared timestamp format', async () => {
+    const createdAt = { toDate: () => new Date('2026-09-07T04:30:00Z') }
+    await createRetailInvoicePdf({ ...sample, invoiceNumber: '07092026001', createdAt, remark: '现金已收' })
+    expect(drawn.map(item => item.text)).toEqual(expect.arrayContaining([
+      '单号 Invoice No.：07092026001', '备注 Remark：现金已收',
+      `日期 Date：${formatRetailDate(sample.businessDate)}`,
+      `结算时间 Checkout Time：${formatRetailAuditTimestamp(createdAt)}`,
+    ]))
+    expect(drawn.some(item => item.text.includes('retail-sample'))).toBe(false)
+  })
+
+  it('keeps a long saved remark inside the page boundaries', async () => {
+    await createRetailInvoicePdf({ ...sample, remark: '备注内容'.repeat(250) })
+    expect(drawn.map(item => item.text).join('')).toContain('备注 Remark：')
+    expect(drawn.filter(item => item.text.includes('备注内容')).map(item => item.text).join('').match(/备注内容/g)).toHaveLength(250)
+    expect(drawn.every(item => item.y >= 0 && item.y < 1100)).toBe(true)
   })
 
   it('wraps long names and paginates all 20 rows, with the total kept on the final page', async () => {

@@ -1,4 +1,4 @@
-import { formatAuditTimestamp } from './businessDate'
+import { formatRetailAuditTimestamp, formatRetailDate } from './retailDate'
 import { retailMoney, retailWeightKg, type RetailSale } from './retailSales'
 
 const PAGE_WIDTH = 794, PAGE_HEIGHT = 1123, SCALE = 2
@@ -38,7 +38,8 @@ function wrapText(context: CanvasRenderingContext2D, text: string, width: number
 export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
   const { jsPDF } = await import('jspdf')
   const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4', compress: true })
-  pdf.setProperties({ title: `门市现金结算单 ${sale.businessDate}`, author: '门市现金结算单' })
+  const displayDate = formatRetailDate(sale.businessDate)
+  pdf.setProperties({ title: `门市现金结算单 ${displayDate}`, author: '门市现金结算单' })
   // beginPage initializes both before any drawing; subsequent pages replace them together.
   let canvas!: HTMLCanvasElement, context!: CanvasRenderingContext2D
   let y = MARGIN, page = 0
@@ -84,10 +85,10 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
     context.textBaseline = 'top'
     y = MARGIN
     font(25, true); text('门市现金结算单', MARGIN, y); y += 42
-    paragraph(`日期 Date：${sale.businessDate}`)
+    paragraph(`日期 Date：${displayDate}`)
     paragraph(`小贩 Vendor：${sale.vendorName}`)
-    if (sale.createdAt) paragraph(`结算时间 Checkout Time：${formatAuditTimestamp(sale.createdAt)}`, 14, 22)
-    paragraph(`单号 Invoice No.：${sale.id}`, 13, 20)
+    if (sale.createdAt) paragraph(`结算时间 Checkout Time：${formatRetailAuditTimestamp(sale.createdAt)}`, 14, 22)
+    paragraph(`单号 Invoice No.：${sale.invoiceNumber ?? sale.id}`, 13, 20)
     y += 12
     tableHeader()
   }
@@ -127,8 +128,16 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
   y += 16
   font(23, true)
   text('现金合计 Cash Total', MARGIN, y); text(retailMoney(sale.totalAmountCents), RIGHT, y, 'right')
+  if (sale.remark) {
+    y += 42
+    font(16)
+    for (const value of wrapText(context, `备注 Remark：${sale.remark}`, RIGHT - MARGIN)) {
+      if (y + 24 > CONTENT_BOTTOM) { finishPage(); beginPage() }
+      font(16); text(value, MARGIN, y); y += 24
+    }
+  }
   finishPage()
   const pdfBlob = pdf.output('blob')
-  const filename = `门市现金结算单-${filenamePart(sale.businessDate)}-${filenamePart(sale.vendorName) || '未命名小贩 Unnamed Vendor'}.pdf`
+  const filename = `门市现金结算单-${filenamePart(displayDate)}-${filenamePart(sale.vendorName) || '未命名小贩 Unnamed Vendor'}.pdf`
   return new File([pdfBlob], filename, { type: 'application/pdf' })
 }

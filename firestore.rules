@@ -44,14 +44,18 @@ service cloud.firestore {
     function retailGroupPath(saleId, groupId) {
       return /databases/$(database)/documents/retailSales/$(saleId)/groups/$(groupId);
     }
+    function retailSalePath(saleId) { return /databases/$(database)/documents/retailSales/$(saleId); }
+    function retailActionPath(saleId, actionId) { return /databases/$(database)/documents/retailSales/$(saleId)/actions/$(actionId); }
+    function retailCounterPath(dateKey) { return /databases/$(database)/documents/retailInvoiceCounters/$(dateKey); }
     function validRetailSale(data, saleId) {
-      let first = get(retailGroupPath(saleId, 'first')).data;
-      let second = get(retailGroupPath(saleId, 'second')).data;
-      let third = get(retailGroupPath(saleId, 'third')).data;
-      let fourth = get(retailGroupPath(saleId, 'fourth')).data;
-      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
-        && data.businessDate is string && validBusinessDate(data.businessDate)
-        && validWageDateKey(data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
+      let prefix = data.groupSetId == 'initial' ? '' : data.groupSetId + '_';
+      let first = get(retailGroupPath(saleId, prefix + 'first')).data;
+      let second = get(retailGroupPath(saleId, prefix + 'second')).data;
+      let third = get(retailGroupPath(saleId, prefix + 'third')).data;
+      let fourth = get(retailGroupPath(saleId, prefix + 'fourth')).data;
+      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'invoiceNumber', 'invoiceSequence', 'revision', 'remark', 'groupSetId', 'lastActionId'])
+        && validBusinessDate(data.businessDate)
+        && timestamp.date(int(data.businessDate[6:10]), int(data.businessDate[3:5]), int(data.businessDate[0:2])) is timestamp
         && data.dateSortKey is int && data.dateSortKey == int(data.businessDate[6:10] + data.businessDate[3:5] + data.businessDate[0:2])
         && data.vendorName is string && data.vendorName.size() > 0 && data.vendorName.size() <= 100
         && data.lineGroups.keys().hasOnly(['first', 'second', 'third', 'fourth'])
@@ -61,8 +65,60 @@ service cloud.firestore {
         && first.createdBy == request.auth.uid && second.createdBy == request.auth.uid
         && third.createdBy == request.auth.uid && fourth.createdBy == request.auth.uid
         && data.totalAmountCents is int && data.totalAmountCents == first.totalAmountCents + second.totalAmountCents + third.totalAmountCents + fourth.totalAmountCents
-        && data.createdBy == request.auth.uid && data.updatedBy == request.auth.uid
-        && data.createdAt == request.time && data.updatedAt == request.time;
+        && data.remark is string && data.remark.size() <= 500
+        && data.lastActionId.matches('^[A-Za-z0-9_-]{1,100}$')
+        && data.revision is int && data.revision >= 1
+        && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+    }
+    function retailEditOpen(data) {
+      return data.createdAt is timestamp && request.time >= data.createdAt
+        && request.time < data.createdAt + duration.value(72, 'h');
+    }
+    function retailNumber(data) {
+      return data.businessDate[0:2] + data.businessDate[3:5] + data.businessDate[6:10]
+        + (data.invoiceSequence < 10 ? '00' : (data.invoiceSequence < 100 ? '0' : '')) + string(data.invoiceSequence);
+    }
+    function retailNewSale(data, saleId) {
+      let counter = getAfter(retailCounterPath(string(data.dateSortKey))).data;
+      return data.createdBy == request.auth.uid && data.createdAt == request.time
+        && data.groupSetId == 'initial' && data.lastActionId == saleId && data.revision == 1
+        && data.invoiceSequence is int && data.invoiceSequence >= 1
+        && data.invoiceNumber == retailNumber(data)
+        && counter.lastSaleId == saleId && counter.lastSequence == data.invoiceSequence && counter.updatedAt == request.time;
+    }
+    function retailUpdatedSale(data) {
+      let old = existingData();
+      return retailEditOpen(old)
+        && data.diff(old).affectedKeys().hasOnly(['vendorName', 'lineGroups', 'totalAmountCents', 'remark', 'updatedBy', 'updatedAt', 'revision', 'groupSetId', 'lastActionId'])
+        && data.revision == old.get('revision', 1) + 1
+        && data.groupSetId == data.lastActionId && data.groupSetId != 'initial';
+    }
+    function retailHasAction(data, saleId) {
+      return getAfter(retailActionPath(saleId, data.lastActionId)).data.afterSnapshot == data
+        && !exists(retailActionPath(saleId, data.lastActionId));
+    }
+    function validRetailAction(data, saleId, actionId) {
+      let parent = retailSalePath(saleId);
+      let after = getAfter(parent).data;
+      return data.keys().hasOnly(['type', 'saleId', 'performedBy', 'performedAt', 'revision', 'clientOperationId', 'beforeSnapshot', 'afterSnapshot'])
+        && data.saleId == saleId && data.clientOperationId == actionId
+        && data.performedBy == request.auth.uid && data.performedAt == request.time
+        && data.revision == after.revision && after.lastActionId == actionId && after.updatedAt == request.time
+        && data.afterSnapshot == after
+        && (exists(parent)
+          ? data.type == 'update' && data.beforeSnapshot == get(parent).data && after.revision == get(parent).data.get('revision', 1) + 1
+          : data.type == 'create' && data.beforeSnapshot == null && after.revision == 1);
+    }
+    function validRetailCounter(data, dateKey) {
+      let parent = retailSalePath(data.lastSaleId);
+      let sale = getAfter(parent).data;
+      return data.keys().hasOnly(['dateSortKey', 'lastSequence', 'lastSaleId', 'updatedBy', 'updatedAt'])
+        && data.dateSortKey is int && string(data.dateSortKey) == dateKey
+        && data.lastSequence is int && data.lastSequence >= 1
+        && data.lastSaleId.matches('^[A-Za-z0-9_-]{1,100}$')
+        && data.updatedBy == request.auth.uid && data.updatedAt == request.time
+        && !exists(parent) && sale.dateSortKey == data.dateSortKey
+        && sale.invoiceSequence == data.lastSequence && sale.createdAt == request.time;
     }
 
     match /retailFish/{fishId} {
@@ -77,14 +133,29 @@ service cloud.firestore {
       allow read: if signedIn();
       // Immutable prepared groups are validated separately within the expression
       // budget. Only this final atomic document appears as a completed sale.
-      allow create: if signedIn() && validRetailSale(incomingData(), saleId);
-      allow update, delete: if false;
+      allow create, update: if signedIn() && validRetailSale(incomingData(), saleId)
+        && (request.method == 'create' ? retailNewSale(incomingData(), saleId) : retailUpdatedSale(incomingData()))
+        && retailHasAction(incomingData(), saleId);
+      allow delete: if false;
       match /groups/{groupId} {
         allow read: if signedIn();
-        allow create: if signedIn() && groupId in ['first', 'second', 'third', 'fourth']
+        allow create: if signedIn() && groupId.matches('^([A-Za-z0-9_-]{1,100}_)?(first|second|third|fourth)$')
           && validRetailGroup(incomingData());
         allow update, delete: if false;
       }
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validRetailAction(incomingData(), saleId, actionId);
+        allow update, delete: if false;
+      }
+    }
+    match /retailInvoiceCounters/{dateKey} {
+      allow read: if signedIn();
+      // Use the actual operation, not a separate exists() read that can race
+      // another device's first allocation before transaction conflict retries.
+      allow create, update: if signedIn() && validRetailCounter(incomingData(), dateKey)
+        && incomingData().lastSequence == (request.method == 'create' ? 1 : existingData().lastSequence + 1);
+      allow delete: if false;
     }
 
     function monthPath(monthKey) {

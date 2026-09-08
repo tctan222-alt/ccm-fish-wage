@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch, type DocumentReference } from 'firebase/firestore'
+import { deleteDoc, doc, getDoc, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch, type DocumentData, type DocumentReference } from 'firebase/firestore'
 import { createIceWorkRecord, createIceWorkSettlement } from './lib/iceWork'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale } from './lib/retailSales'
 import retailSeed from './data/retailFishSeed.json'
@@ -17,11 +17,41 @@ describe('Firestore Rules: retail cash sales', () => {
   function sale(lines = [line]) {
     return { ...prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines }), createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
   }
+  async function finalizeSale(ref: DocumentReference, header: DocumentData, uid = 'u1') {
+    const counterRef = doc(ref.firestore, 'retailInvoiceCounters', String(header.dateSortKey))
+    return runTransaction(ref.firestore, async transaction => {
+      await transaction.get(ref)
+      await transaction.get(doc(ref, 'actions', ref.id))
+      const counter = await transaction.get(counterRef)
+      const invoiceSequence = (counter.data()?.lastSequence ?? 0) + 1
+      const data = { remark: '', ...header, invoiceSequence, invoiceNumber: header.businessDate.replaceAll('/', '') + String(invoiceSequence).padStart(3, '0'), revision: 1, groupSetId: 'initial', lastActionId: ref.id }
+      transaction.set(ref, data)
+      transaction.set(counterRef, { dateSortKey: header.dateSortKey, lastSequence: invoiceSequence, lastSaleId: ref.id, updatedBy: uid, updatedAt: serverTimestamp() })
+      transaction.set(doc(ref, 'actions', ref.id), { type: 'create', saleId: ref.id, clientOperationId: ref.id, performedBy: uid, performedAt: serverTimestamp(), revision: 1, beforeSnapshot: null, afterSnapshot: data })
+    })
+  }
   async function writeSale(ref: DocumentReference, input: Omit<ReturnType<typeof sale>, 'createdAt'> & { createdAt: unknown }) {
     const { lines, ...header } = input
     const lineGroups = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
     for (const [key, items] of Object.entries(lineGroups)) await setDoc(doc(ref, 'groups', key), { lines: items, totalAmountCents: items.reduce<number>((sum, item) => sum + item.amountCents, 0), createdBy: 'u1', createdAt: serverTimestamp() })
-    return setDoc(ref, { ...header, lineGroups })
+    return finalizeSale(ref, { ...header, lineGroups })
+  }
+  async function prepareEdit(ref: DocumentReference, operationId: string, changes: DocumentData = {}, uid = 'u1') {
+    const old = (await getDoc(ref)).data()!
+    const lineGroups = changes.lineGroups ?? old.lineGroups
+    for (const [key, items] of Object.entries(lineGroups) as [string, typeof line[]][]) {
+      await setDoc(doc(ref, 'groups', operationId + '_' + key), { lines: items, totalAmountCents: items.reduce<number>((sum, item) => sum + item.amountCents, 0), createdBy: uid, createdAt: serverTimestamp() })
+    }
+    const next = { ...old, remark: '', ...changes, lineGroups, revision: (old.revision ?? 1) + 1, groupSetId: operationId, lastActionId: operationId, updatedBy: uid, updatedAt: serverTimestamp() }
+    const action = { type: 'update', saleId: ref.id, clientOperationId: operationId, performedBy: uid, performedAt: serverTimestamp(), revision: next.revision, beforeSnapshot: old, afterSnapshot: next }
+    return { old, next, action, actionRef: doc(ref, 'actions', operationId) }
+  }
+  async function writeEdit(ref: DocumentReference, operationId: string, changes: DocumentData = {}) {
+    const { next, action, actionRef } = await prepareEdit(ref, operationId, changes)
+    const batch = writeBatch(ref.firestore)
+    batch.set(ref, next)
+    batch.set(actionRef, action)
+    return batch.commit()
   }
   it('allows initial fish, subsequent edits and no suggested price, without rewriting sale snapshots', async () => {
     const db = environment.authenticatedContext('u1').firestore()
@@ -35,7 +65,7 @@ describe('Firestore Rules: retail cash sales', () => {
     await assertFails(updateDoc(fishRef, { suggestedPriceCents: -1, updatedAt: serverTimestamp() }))
     await assertFails(updateDoc(fishRef, { suggestedPriceCents: 6.15, updatedAt: serverTimestamp() }))
   })
-  it('rejects anonymous reads/writes and all mutations of saved sales', async () => {
+  it('rejects anonymous reads/writes, unaudited updates and hard deletion', async () => {
     const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'retail-immutable')
     await assertSucceeds(writeSale(ref, sale()))
     await assertFails(updateDoc(ref, { vendorName: 'changed', updatedAt: serverTimestamp() }))
@@ -43,7 +73,7 @@ describe('Firestore Rules: retail cash sales', () => {
     await assertFails(updateDoc(doc(ref, 'groups', 'first'), { totalAmountCents: 1 }))
     await assertFails(deleteDoc(doc(ref, 'groups', 'first')))
     const anonymous = environment.unauthenticatedContext().firestore()
-    for (const collection of ['retailFish', 'retailSales']) {
+    for (const collection of ['retailFish', 'retailSales', 'retailInvoiceCounters']) {
       await assertFails(getDoc(doc(anonymous, collection, 'any')))
       await assertFails(setDoc(doc(anonymous, collection, 'any'), sale()))
     }
@@ -88,7 +118,7 @@ describe('Firestore Rules: retail cash sales', () => {
       lineGroups: { first: [legacyLine], second: [], third: [], fourth: [] } }
     await assertFails(setDoc(doc(environment.authenticatedContext('other').firestore(), 'retailSales', ref.id), { ...header, createdBy: 'other', updatedBy: 'other' }))
     await assertFails(setDoc(ref, { ...header, lineGroups: { ...header.lineGroups, first: [line] } }))
-    await assertSucceeds(setDoc(ref, header))
+    await assertSucceeds(finalizeSale(ref, header))
     expect((await getDoc(doc(ref, 'groups', 'first'))).data()?.lines).toEqual([legacyLine])
   })
   it('rejects invalid dates, kg, prices, empty sales and forged audit fields', async () => {
@@ -103,8 +133,158 @@ describe('Firestore Rules: retail cash sales', () => {
     for (let index = 0; index < invalid.length; index++) await assertFails(writeSale(doc(db, 'retailSales', `retail-invalid-${index}`), { ...sale(), ...invalid[index] }))
     await assertFails(setDoc(doc(db, 'retailSales', 'retail-missing-groups'), { ...sale(), lineGroups: { first: [line], second: [] } }))
   })
+  it('allocates the first, second and next-day numbers with a transactional daily counter', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const cases = [['daily-first', '08/09/2026', 20260908, '08092026001'], ['daily-second', '08/09/2026', 20260908, '08092026002'], ['daily-next', '09/09/2026', 20260909, '09092026001']] as const
+    for (const [id, businessDate, dateSortKey, invoiceNumber] of cases) {
+      const ref = doc(db, 'retailSales', id)
+      await assertSucceeds(writeSale(ref, { ...sale(), businessDate, dateSortKey }))
+      expect((await getDoc(ref)).data()).toMatchObject({ invoiceNumber, revision: 1 })
+      expect((await getDoc(doc(ref, 'actions', id))).data()).toMatchObject({ type: 'create', revision: 1, beforeSnapshot: null })
+    }
+  })
+  it('keeps at least three sequence digits and continues past 999 without rollover', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'retailInvoiceCounters', '20260913'), {
+      dateSortKey: 20260913, lastSequence: 998, lastSaleId: 'older-sale', updatedBy: 'u1', updatedAt: serverTimestamp(),
+    }))
+    for (const sequence of [999, 1000]) {
+      const ref = doc(db, 'retailSales', 'sequence-' + sequence)
+      await assertSucceeds(writeSale(ref, { ...sale(), businessDate: '13/09/2026', dateSortKey: 20260913 }))
+      expect((await getDoc(ref)).data()?.invoiceNumber).toBe('13092026' + sequence)
+    }
+  })
+  it('concurrent devices receive distinct invoice numbers and the counter cannot be advanced alone', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const refs = ['concurrent-a', 'concurrent-b'].map(id => doc(environment.authenticatedContext('u1').firestore(), 'retailSales', id))
+    await assertSucceeds(Promise.all(refs.map(ref => writeSale(ref, { ...sale(), businessDate: '10/09/2026', dateSortKey: 20260910 }))))
+    const numbers = await Promise.all(refs.map(async ref => (await getDoc(ref)).data()?.invoiceNumber))
+    expect(numbers.sort()).toEqual(['10092026001', '10092026002'])
+    const counter = doc(db, 'retailInvoiceCounters', '20260910')
+    await assertFails(updateDoc(counter, { lastSequence: 3, updatedAt: serverTimestamp() }))
+    await assertFails(deleteDoc(counter))
+    await assertFails(setDoc(doc(db, 'retailInvoiceCounters', '20260911'), { dateSortKey: 20260911, lastSequence: 1, lastSaleId: 'missing-invoice', updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    expect((await getDoc(counter)).data()?.lastSequence).toBe(2)
+  })
+  it('rejects a duplicate or malformed number and rolls back the header, counter and audit together', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const source = doc(db, 'retailSales', 'counter-source')
+    await assertSucceeds(writeSale(source, { ...sale(), businessDate: '12/09/2026', dateSortKey: 20260912 }))
+    const old = (await getDoc(source)).data()!
+    const counterRef = doc(db, 'retailInvoiceCounters', '20260912')
+    for (const [index, invoiceNumber] of ['12092026001', '120920262', '13092026002'].entries()) {
+      const id = 'bad-number-' + index, ref = doc(db, 'retailSales', id)
+      for (const [key, items] of Object.entries(old.lineGroups) as [string, typeof line[]][]) {
+        await setDoc(doc(ref, 'groups', key), { lines: items, totalAmountCents: items.reduce<number>((sum, item) => sum + item.amountCents, 0), createdBy: 'u1', createdAt: serverTimestamp() })
+      }
+      const data = { ...old, invoiceNumber, invoiceSequence: 2, lastActionId: id, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+      const batch = writeBatch(db)
+      batch.set(ref, data)
+      batch.set(counterRef, { dateSortKey: 20260912, lastSequence: 2, lastSaleId: id, updatedBy: 'u1', updatedAt: serverTimestamp() })
+      batch.set(doc(ref, 'actions', id), { type: 'create', saleId: id, clientOperationId: id, performedBy: 'u1', performedAt: serverTimestamp(), revision: 1, beforeSnapshot: null, afterSnapshot: data })
+      await assertFails(batch.commit())
+      expect((await getDoc(ref)).exists()).toBe(false)
+      expect((await getDoc(doc(ref, 'actions', id))).exists()).toBe(false)
+      expect((await getDoc(counterRef)).data()?.lastSequence).toBe(1)
+    }
+  })
+  it('updates the existing invoice within 72h, retaining number/date/createdAt with a full immutable audit', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'editable-invoice')
+    await assertSucceeds(writeSale(ref, sale()))
+    const before = (await getDoc(ref)).data()!
+    const changed = makeRetailLine({ ...retailSeed[0], chineseName: '金线', malayName: 'Kerisi' }, '80.5', '2.05')
+    await assertSucceeds(writeEdit(ref, 'edit-once', { vendorName: 'Ah Seng', remark: '现金 Cash', lineGroups: { first: [changed], second: [], third: [], fourth: [] }, totalAmountCents: changed.amountCents }))
+    const after = (await getDoc(ref)).data()!
+    expect(after).toMatchObject({ vendorName: 'Ah Seng', remark: '现金 Cash', revision: 2, invoiceNumber: before.invoiceNumber, businessDate: before.businessDate, totalAmountCents: 16503 })
+    expect(after.createdAt.isEqual(before.createdAt)).toBe(true)
+    expect(after.updatedAt.toMillis()).toBeGreaterThanOrEqual(before.updatedAt.toMillis())
+    const actionRef = doc(ref, 'actions', 'edit-once'), action = (await getDoc(actionRef)).data()!
+    expect(action.beforeSnapshot).toEqual(before)
+    expect(action.afterSnapshot).toEqual(after)
+    await assertFails(updateDoc(actionRef, { type: 'create' }))
+    await assertFails(deleteDoc(actionRef))
+    await assertFails(deleteDoc(ref))
+    await assertSucceeds(writeEdit(ref, 'edit-twice', { remark: '修订 Revision' }))
+    expect((await getDoc(ref)).data()?.revision).toBe(3)
+  })
+  it('accepts a maximum-size 20-line edit and checks the last prepared line without exceeding the Rules budget', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'edit-max-lines')
+    const lines = Array.from({ length: MAX_RETAIL_LINES }, (_, index) => ({ ...line, chineseName: '鱼' + index }))
+    await assertSucceeds(writeSale(ref, sale(lines)))
+    const edited = lines.map(item => ({ ...item, malayName: 'Edited Malay' }))
+    const lineGroups = { first: edited.slice(0, 5), second: edited.slice(5, 10), third: edited.slice(10, 15), fourth: edited.slice(15) }
+    await assertSucceeds(writeEdit(ref, 'max-edit', { lineGroups, remark: '全部二十行 All twenty lines' }))
+    expect((await getDoc(ref)).data()).toMatchObject({ revision: 2, lineGroups })
+    const badFourth = lineGroups.fourth.map((item, index) => index === 4 ? { ...item, amountCents: item.amountCents + 1 } : item)
+    await assertFails(writeEdit(ref, 'max-tampered', { lineGroups: { ...lineGroups, fourth: badFourth } }))
+    expect((await getDoc(ref)).data()?.revision).toBe(2)
+  })
+  it('allows another authenticated operator to edit while preserving the original creator', async () => {
+    const ref = doc(environment.authenticatedContext('u1').firestore(), 'retailSales', 'editable-other-operator')
+    await assertSucceeds(writeSale(ref, sale()))
+    const otherRef = doc(environment.authenticatedContext('u2').firestore(), 'retailSales', ref.id)
+    const { next, action, actionRef } = await prepareEdit(otherRef, 'operator-edit', { vendorName: '第二位操作员' }, 'u2')
+    const batch = writeBatch(otherRef.firestore)
+    batch.set(otherRef, next); batch.set(actionRef, action)
+    await assertSucceeds(batch.commit())
+    expect((await getDoc(ref)).data()).toMatchObject({ createdBy: 'u1', updatedBy: 'u2', revision: 2 })
+  })
+  it('enforces 72h using the stored timestamp, independently of business date and client time', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const cases = [['inside', 71 * 3600000, true], ['boundary', 72 * 3600000, false], ['expired', 73 * 3600000, false], ['future', -3600000, false]] as const
+    for (const [id, elapsed, allowed] of cases) {
+      const ref = doc(db, 'retailSales', 'window-' + id)
+      await writeSale(ref, { ...sale(), businessDate: '01/01/2020', dateSortKey: 20200101 })
+      await environment.withSecurityRulesDisabled(async context => updateDoc(doc(context.firestore(), 'retailSales', ref.id), { createdAt: Timestamp.fromMillis(Date.now() - elapsed) }))
+      if (allowed) await assertSucceeds(writeEdit(ref, id + '-edit', { vendorName: '编辑后' }))
+      else await assertFails(writeEdit(ref, id + '-edit', { vendorName: '不可编辑' }))
+      await assertSucceeds(getDoc(ref))
+    }
+  })
+  it('locks missing legacy timestamps and preserves absent legacy invoice numbers when editing', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    for (const timestamp of [Timestamp.now(), null]) {
+      const ref = doc(db, 'retailSales', timestamp ? 'legacy-editable' : 'legacy-no-time')
+      const { lines, ...header } = sale()
+      const legacy = { ...header, createdAt: timestamp, lineGroups: { first: lines, second: [], third: [], fourth: [] } }
+      await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'retailSales', ref.id), legacy))
+      if (timestamp) {
+        await assertSucceeds(writeEdit(ref, 'legacy-update', { vendorName: '旧单编辑' }))
+        const updated = (await getDoc(ref)).data()!
+        expect(updated.revision).toBe(2)
+        expect(updated).not.toHaveProperty('invoiceNumber')
+        expect(updated).not.toHaveProperty('invoiceSequence')
+      } else await assertFails(writeEdit(ref, 'legacy-update', { vendorName: '没有可信时间' }))
+    }
+  })
+  it('rejects changes to number, date, creator, createdAt and skipped revision even with matching audit', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'edit-immutable-fields')
+    await writeSale(ref, sale())
+    const mutations: DocumentData[] = [{ invoiceNumber: '06092026999' }, { invoiceSequence: 999 }, { businessDate: '07/09/2026', dateSortKey: 20260907 }, { createdAt: serverTimestamp() }, { createdBy: 'other' }, { remark: 'x'.repeat(501) }]
+    for (const [index, mutation] of mutations.entries()) await assertFails(writeEdit(ref, 'immutable-' + index, mutation))
+    const { next, action, actionRef } = await prepareEdit(ref, 'skip-revision')
+    next.revision = 3; action.revision = 3
+    const batch = writeBatch(db)
+    batch.set(ref, next); batch.set(actionRef, action)
+    await assertFails(batch.commit())
+    expect((await getDoc(ref)).data()?.revision).toBe(1)
+  })
+  it('requires an atomic action for every edit and rejects fabricated before/after snapshots', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'edit-audit-required')
+    await writeSale(ref, sale())
+    const { next, action, actionRef } = await prepareEdit(ref, 'audit-edit', { vendorName: '新小贩' })
+    await assertFails(setDoc(ref, next))
+    await assertFails(setDoc(actionRef, action))
+    for (const tamper of [{ beforeSnapshot: null }, { afterSnapshot: { ...next, vendorName: '伪造' } }, { performedBy: 'other' }, { revision: 1 }]) {
+      const batch = writeBatch(db)
+      batch.set(ref, next); batch.set(actionRef, { ...action, ...tamper })
+      await assertFails(batch.commit())
+    }
+    const batch = writeBatch(db)
+    batch.set(ref, next); batch.set(actionRef, action)
+    await assertSucceeds(batch.commit())
+  })
 })
-
 describe('Firestore Rules: vessels and ice-work audit', () => {
   it('allows authenticated vessel creation but rejects vessel-code tampering and deletion', async () => {
     const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'vessels', 'v978')
