@@ -10,6 +10,7 @@ import {
   activeFishSpecies,
   applyEntryCreated,
   applyEntryReplacement,
+  canModifyWeighing,
   buildWeighingEntry,
   formatMalaysiaDate,
   formatWeightKg,
@@ -133,7 +134,7 @@ export function WeighingEntryPage({
   const latestIndividual=activeContextEntries.find(item=>item.entryMode==='individual')
   const latest=activeContextEntries[0]
   const selectedVessel=vessels.find(item=>item.id===vesselId)
-  const locked=Boolean(session&&session.status!=='weighing')
+  const locked=Boolean(session&&(session.status!=='weighing'||!canModifyWeighing(session,new Date(now()))))
 
   useEffect(()=>{if(fixedProductType)setProductType(fixedProductType)},[fixedProductType])
 
@@ -156,7 +157,7 @@ export function WeighingEntryPage({
       setSpeciesId(visibleFishSpecies(sourceSpecies).find(item=>item.active)?.id??'')
       const preferred=store?await store.getMeta('lastVesselId'):undefined
       if(cancelled)return
-      setVesselId(availableVessels.some(item=>item.id===preferred)?preferred!:availableVessels[0]?.id??'')
+      if(!sessionId)setVesselId(availableVessels.some(item=>item.id===preferred)?preferred!:availableVessels[0]?.id??'')
       if(vesselResult.status==='fulfilled'&&DEFAULT_VESSELS.some(item=>!sourceVessels.some(row=>row.vesselCode===item.vesselCode))){
         void vesselInitializer().then(next=>{if(!cancelled)setVessels(visibleVessels(next))}).catch(()=>undefined)
       }
@@ -168,21 +169,26 @@ export function WeighingEntryPage({
       }
     })()
     return()=>{cancelled=true}
-  },[vesselLoader,speciesLoader,store,referenceAttempt,vesselInitializer,speciesInitializer])
+  },[vesselLoader,speciesLoader,store,referenceAttempt,vesselInitializer,speciesInitializer,sessionId])
 
   useEffect(()=>{
+    let cancelled=false
     if(sessionId){
+      setContextLoading(true);setSession(null);setEntries([]);setPending(0)
       void bundleLoader(sessionId).then(async bundle=>{
+        if(cancelled)return
         if(store){
           await store.putSession(bundle.session)
           for(const entry of bundle.entries)await store.putEntry(entry)
           await store.putMeta(weighingDraftKey(bundle.session.productType??'fish_head',bundle.session.weighingDate,bundle.session.vesselId),bundle.session.id)
         }
+        if(cancelled)return
         setSession(bundle.session);setEntries(bundle.entries);setVesselId(bundle.session.vesselId)
         setDate(bundle.session.weighingDate);setExternalSlipNo(bundle.session.externalSlipNo)
         if(bundle.session.productType)setProductType(bundle.session.productType)
-      }).catch(()=>setError('无法载入现场称重单。'))
+      }).catch(()=>{if(!cancelled)setError('无法载入现场称重单。')}).finally(()=>{if(!cancelled)setContextLoading(false)})
     }
+    return()=>{cancelled=true}
   },[sessionId,bundleLoader,store])
 
   useEffect(()=>{
@@ -329,6 +335,7 @@ export function WeighingEntryPage({
 
   async function queueVoid(entry:WeighingEntry,reason:string){
     if(!store||!session)return
+    if(!canModifyWeighing(session,new Date(now()))){setError('已超过首次完成称重后的 7 天修改期。');return}
     const result=softVoidWeighingEntry(session,entry,reason),operationId=`entry_void_${entry.id}_${result.entry.revision}`
     await store.commitOperation({session:result.session,entry:{...result.entry,syncStatus:'syncing'},
       operation:{id:operationId,type:'entry_void',sessionId:session.id,entryId:entry.id,
@@ -345,6 +352,7 @@ export function WeighingEntryPage({
 
   async function updateEntry(before:WeighingEntry,after:WeighingEntry){
     if(!store||!session)return
+    if(!canModifyWeighing(session,new Date(now()))){setError('已超过首次完成称重后的 7 天修改期。');return}
     const nextSession=applyEntryReplacement(session,before,after),operationId=`entry_update_${after.id}_${after.revision}`
     await store.commitOperation({session:nextSession,entry:{...after,syncStatus:'syncing'},
       operation:{id:operationId,type:'entry_update',sessionId:session.id,entryId:after.id,
@@ -433,7 +441,7 @@ export function WeighingEntryPage({
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
-      session?.status==='processed'?'已结单，现场录入已锁定。':'现场单已作废。'}</p>}
+      session?.status==='processed'?'已结单，现场录入已锁定。':session?.status==='voided'?'现场单已作废。':'已超过首次完成称重后的 7 天修改期，只能查看。'}</p>}
 
     <section className="weighing-history"><h2>完整历史记录</h2>
       <div className="weighing-entry-list">{entries.map(item=><button type="button" key={item.id}
@@ -443,8 +451,9 @@ export function WeighingEntryPage({
         <em>{item.voided?'已作废':item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
       </button>)}</div>
     </section>
-    {!locked&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
-    {session?.status==='completed'&&<Link className="primary-action settlement-link" to={productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>去结单</Link>}
+    {session?.status==='weighing'&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
+    {session?.status==='completed'&&<div className="settlement-actions">{pending===0?<><Link className="primary-action settlement-link" to={productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>查看{productType==='fish_head'?'鱼头':'鱼仔'}结单</Link>
+      <Link className="page-link" to={`/weighing/${session.id}/review`}>修改称重（完成后 7 天内）</Link></>:<p className="notice">称重尚未同步完成，请先重新同步后查看结单。</p>}</div>}
     {showComplete&&session&&<CompleteDialog session={session} pending={pending} close={()=>setShowComplete(false)} confirm={()=>void complete()}/>}
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
       save={after=>updateEntry(editing,after)} voidEntry={reason=>queueVoid(editing,reason)}/>}

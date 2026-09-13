@@ -2,6 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   FISH_HEAD_SPECIES,
   buildWeighingEntry,
+  canEditCompletedWeighing,
+  canModifyWeighing,
+  applyEntryCreated,
+  applyEntryReplacement,
+  softVoidWeighingEntry,
+  completedWeighingEditDeadline,
   completeWeighingSession,
   buildReceiptLinesFromWeighing,
   formatMalaysiaDate,
@@ -155,8 +161,45 @@ describe('现场称重记录规则', () => {
     expect(() => completeWeighingSession(session({ status:'completed' }))).toThrow('只有称重中的现场单')
   })
 
+  it('完成称重后只在七天内允许重开修改',()=>{
+    const completed={...session({status:'completed'}),completedAt:new Date('2026-09-01T01:00:00Z')}
+    expect(canEditCompletedWeighing(completed,new Date('2026-09-08T01:00:00Z'))).toBe(true)
+    expect(canEditCompletedWeighing(completed,new Date('2026-09-08T01:00:00.001Z'))).toBe(false)
+    expect(completedWeighingEditDeadline(completed)?.toISOString()).toBe('2026-09-08T01:00:00.000Z')
+    expect(canEditCompletedWeighing({...completed,completedAt:null},new Date('2026-09-02T00:00:00Z'))).toBe(false)
+  })
+
   it('日期统一显示为 DD/MM/YYYY', () => {
     expect(formatMalaysiaDate('2026-07-30')).toBe('30/07/2026')
+  })
+
+  it('重开和再次完成不能重置首次完成后的七天期限',()=>{
+    const completedAt=new Date('2026-09-01T01:00:00Z')
+    const reopened=session({status:'weighing',completedAt})
+    expect(canEditCompletedWeighing(reopened,completedAt)).toBe(false)
+    expect(canModifyWeighing(reopened,new Date('2026-09-08T01:00:00Z'))).toBe(true)
+    expect(canModifyWeighing(reopened,new Date('2026-09-08T01:00:00.001Z'))).toBe(false)
+    const completedAgain=completeWeighingSession(reopened)
+    expect(completedAgain.completedAt).toBe(completedAt)
+    expect(completedWeighingEditDeadline(completedAgain)?.toISOString()).toBe('2026-09-08T01:00:00.000Z')
+  })
+
+  it('过期的重开单不允许新增、修改或作废篮重，但新单仍能称重',()=>{
+    const expired=session({completedAt:new Date(Date.now()-8*24*60*60*1000)})
+    expect(()=>applyEntryCreated(expired,entry())).toThrow('7 天')
+    expect(()=>applyEntryReplacement(expired,entry(),entry({weightGrams:5_000}))).toThrow('7 天')
+    expect(()=>softVoidWeighingEntry(expired,entry(),'修正记录')).toThrow('7 天')
+    expect(canModifyWeighing(session())).toBe(true)
+    expect(canModifyWeighing(session({status:'processed',completedAt:new Date()}))).toBe(false)
+    expect(canModifyWeighing(session({status:'completed'}))).toBe(false)
+  })
+
+  it('修改一篮后递增现场单版本，保证汇总与 Firestore 并发检查一致',()=>{
+    const before=entry({weightGrams:10_000}),base=applyEntryCreated(session(),before)
+    const after=applyEntryReplacement(base,before,{...before,weightGrams:12_000,revision:before.revision+1})
+    expect(after.revision).toBe(base.revision+1)
+    expect(after.totalWeightGrams).toBe(base.totalWeightGrams+2_000)
+    expect(after.fishHeadBasketCount).toBe(base.fishHeadBasketCount)
   })
 
   it('生成采购单时按鱼种及鱼仔品质汇总，不复制每篮为采购 line',()=>{

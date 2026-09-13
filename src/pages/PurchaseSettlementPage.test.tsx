@@ -1,24 +1,25 @@
-import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
+import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
 import { MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import type { PurchaseSettlementSource } from '../services/purchaseSettlements'
 import type { WeighingEntry,WeighingSession } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
+import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice } from '../lib/purchaseSettlement'
 
 const vessel:Vessel={id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:0,notes:''}
 const otherVessel:Vessel={id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:1,notes:''}
 const session:WeighingSession={id:'session-978',sessionCode:'FH-978-20260803-01',productType:'fish_head',weighingDate:'03/08/2026',monthKey:'08/2026',dateSortKey:20260803,monthSortKey:202608,
   externalSlipNo:'',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'978',status:'completed',lastSequenceNo:2,fishHeadBasketCount:2,fishHeadWeightGrams:160500,
   fishMealBucketBasketCount:0,fishMealBucketWeightGrams:0,fishMealBagBasketCount:0,fishMealBagWeightGrams:0,fishMealTotalWeightGrams:0,totalWeightGrams:160500,
-  processedReceiptId:null,processedReceiptCode:null,notes:'',revision:1,voidReason:null}
+  processedReceiptId:null,processedReceiptCode:null,notes:'',revision:1,voidReason:null,completedAt:new Date('2026-08-03T02:00:00Z')}
 const headEntry=(id:string,name='金线',code='jin_xian',weight=160500):WeighingEntry=>({id,clientEntryId:id,sessionId:session.id,weighingDate:'03/08/2026',businessDate:'03/08/2026',monthKey:'08/2026',dateSortKey:20260803,monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',productType:'fish_head',
   fishSpeciesId:code,fishSpeciesCodeSnapshot:code,fishSpeciesNameSnapshot:name,fishMealQuality:null,displayNameSnapshot:name,entryMode:'individual',sequenceNo:1,weightGrams:weight,remark:'',recordedAtClient:'2026-08-03T10:00:00+08:00',recordedAt:'2026-08-03T10:00:00+08:00',recordedBy:'u1',syncStatus:'synced',voided:false,voidReason:null,revision:1})
 
 function renderPage(productType:'fish_head'|'fish_meal',entries:WeighingEntry[],saver=vi.fn(async draft=>draft)){
   const sourceSession=productType==='fish_meal'?{...session,id:'meal-session',sessionCode:'FM-978-20260803-01',productType:'fish_meal' as const,fishHeadBasketCount:0,fishHeadWeightGrams:0,fishMealTotalWeightGrams:300000,totalWeightGrams:300000}:session
   const sourceLoader=vi.fn(async():Promise<PurchaseSettlementSource>=>({session:sourceSession,bundle:{session:sourceSession,entries}}))
-  return {saver,sourceLoader,...render(<MemoryRouter><PurchaseSettlementPage productType={productType} vesselLoader={async()=>[vessel]} sourceLoader={sourceLoader} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'}/></MemoryRouter>)}
+  return {saver,sourceLoader,...render(<MemoryRouter><PurchaseSettlementPage productType={productType} vesselLoader={async()=>[vessel]} sourceLoader={sourceLoader} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-04T00:00:00Z')}/></MemoryRouter>)}
 }
 
 afterEach(()=>cleanup())
@@ -82,7 +83,7 @@ describe('purchase settlement MVP pages',()=>{
     fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
     await waitFor(()=>expect(saver).toHaveBeenCalledTimes(2))
     expect(saver.mock.calls[0][0]).toMatchObject({productType:'fish_head',dateSortKey:20260803,vesselId:'v978'})
-    expect(saver.mock.calls[1][0]).toMatchObject({productType:'fish_head',dateSortKey:20260803,vesselId:'v978'})
+    expect(saver.mock.calls[1][0]).toMatchObject({productType:'fish_head',dateSortKey:20260803,vesselId:'v978',revision:1,sourceSessionId:session.id,sourceSessionRevision:1})
   })
 
   it('shows the required empty-data message when the current vessel and date have no weighing records',async()=>{
@@ -99,5 +100,59 @@ describe('purchase settlement MVP pages',()=>{
     expect(screen.getByLabelText('船号')).toBeDisabled()
     expect(screen.getByLabelText('日期')).toBeDisabled()
     expect(sourceLoader).not.toHaveBeenCalled()
+  })
+
+  it('keeps expired settlements visible while locking prices, slip number and saving',async()=>{
+    const saver=vi.fn(async draft=>draft)
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-10T02:00:00.001Z')}/></MemoryRouter>)
+    expect(await screen.findByRole('table')).toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(screen.getByLabelText('单号')).toBeDisabled()
+    expect(screen.getByRole('button',{name:'保存结单草稿'})).toBeDisabled()
+    expect(screen.queryByRole('link',{name:'修改称重（7 天内）'})).not.toBeInTheDocument()
+    expect(saver).not.toHaveBeenCalled()
+  })
+
+  it('refuses invalid price text without saving a previous valid value',async()=>{
+    const {saver}=renderPage('fish_head',[headEntry('jin')])
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'bad'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(saver).not.toHaveBeenCalled()
+  })
+
+  it('reads legacy dates and source vessel snapshots even when the master vessel is absent',async()=>{
+    const legacy={...session,weighingDate:'2026-08-03'}
+    const loader=vi.fn(async()=>null)
+    render(<MemoryRouter initialEntries={['/fish-head-settlement/session-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[]} bundleLoader={async()=>({session:legacy,entries:[headEntry('jin')]})} draftLoader={loader}/>} /></Routes></MemoryRouter>)
+    await screen.findByRole('table')
+    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByLabelText('日期')).toHaveValue('2026-08-03')
+    expect(loader).toHaveBeenCalledWith('fish_head',20260803,'v978')
+  })
+
+  it('refreshes saved settlement weights while preserving edited prices and revision',async()=>{
+    const saved=makeSettlementDraft({...session,businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,productType:'fish_head',receiptNo:'FH-001',
+      lines:buildPurchaseSettlementLines([asSettlementSourceEntry(headEntry('jin'))],'fish_head','978').map(line=>updateSettlementLinePrice(line,'1.20')),sourceEntryIds:['jin'],revision:4})
+    const saver=vi.fn(async draft=>({...draft,revision:5}))
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin','金线','jin_xian',200000)]}})} draftLoader={async()=>saved} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-04T00:00:00Z')}/></MemoryRouter>)
+    await screen.findByRole('table')
+    expect(screen.getByText('200 kg')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('1.20')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await waitFor(()=>expect(saver).toHaveBeenCalledWith(expect.objectContaining({revision:4,totalAmountCents:24000,receiptNo:'FH-001'})))
+  })
+
+  it('ignores a late source response after switching vessel',async()=>{
+    let finishFirst!:(value:PurchaseSettlementSource)=>void
+    const sourceLoader=vi.fn((id:string)=>id==='v978'?new Promise<PurchaseSettlementSource>(resolve=>{finishFirst=resolve}):Promise.resolve({session:{...session,vesselId:'v833',vesselCodeSnapshot:'833'},bundle:{session:{...session,vesselId:'v833',vesselCodeSnapshot:'833'},entries:[headEntry('other','来戈','lai_ge')]}}))
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel,otherVessel]} sourceLoader={sourceLoader} draftLoader={async()=>null} today={()=>'03/08/2026'}/></MemoryRouter>)
+    await waitFor(()=>expect(sourceLoader).toHaveBeenCalledWith('v978','03/08/2026','fish_head'))
+    fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
+    expect(await screen.findByText('来戈')).toBeInTheDocument()
+    await act(async()=>finishFirst({session,bundle:{session,entries:[headEntry('jin')]}}))
+    expect(screen.queryByText('金线')).not.toBeInTheDocument()
+    expect(screen.getByText('来戈')).toBeInTheDocument()
   })
 })

@@ -7,6 +7,8 @@ import {
   DEFAULT_FISH_SPECIES,
   applyEntryCreated,
   applyEntryReplacement,
+  canEditCompletedWeighing,
+  canModifyWeighing,
   completeWeighingSession,
   defaultFishSpeciesToCreate,
   softVoidWeighingEntry,
@@ -160,7 +162,7 @@ export async function saveFishSpecies(value:FishSpeciesRecord){
 
 export async function loadWeighingSessions(){
   const snapshot=await getDocs(collection(db,'weighingSessions'))
-  return snapshot.docs.map(item=>sessionFrom(item.id,item.data())).sort((a,b)=>b.weighingDate.localeCompare(a.weighingDate)||b.sessionCode.localeCompare(a.sessionCode))
+  return snapshot.docs.map(item=>sessionFrom(item.id,item.data())).sort((a,b)=>sortKeyFromBusinessDate(businessDateFromLegacy(b.weighingDate))-sortKeyFromBusinessDate(businessDateFromLegacy(a.weighingDate))||b.sessionCode.localeCompare(a.sessionCode))
 }
 
 export async function loadWeighingBundle(sessionId:string):Promise<WeighingBundle>{
@@ -261,11 +263,12 @@ export async function syncWeighingOperation(operation:PendingWeighingOperation){
     const current=sessionFrom(sessionRef.id,snapshot.data())
     if(current.status==='completed')return {session:current}
     const completed=completeWeighingSession(current)
-    transaction.set(sessionRef,storedSession({...completed,completedBy:user.uid,completedAt:timestamp},user.uid,timestamp,actionId,false),{merge:false})
+    const completion={completedBy:current.completedBy??user.uid,completedAt:current.completedAt??timestamp}
+    transaction.set(sessionRef,storedSession({...completed,...completion},user.uid,timestamp,actionId,false),{merge:false})
     transaction.set(doc(sessionRef,'actions',actionId),{type:'complete',sessionId:sessionRef.id,entryId:null,reason:null,
       performedBy:user.uid,performedAt:timestamp,beforeSnapshot:{status:'weighing',revision:current.revision},
       afterSnapshot:{status:'completed',revision:completed.revision},clientOperationId:operation.id})
-    return {session:{...completed,completedBy:user.uid,completedAt:timestamp,lastActionId:actionId}}
+    return {session:{...completed,...completion,lastActionId:actionId}}
   })
 }
 
@@ -278,7 +281,8 @@ export async function reopenWeighingSession(sessionId:string,reason:string){
     const current=sessionFrom(sessionId,snapshot.data())
     if(current.status==='processed')throw new Error('已处理的现场单不能重开。')
     if(current.status!=='completed')throw new Error('只有已完成的现场单可以重开。')
-    const next={...current,status:'weighing' as const,revision:current.revision+1,completedBy:null,completedAt:null,lastActionId:actionRef.id}
+    if(!canEditCompletedWeighing(current))throw new Error('已超过完成称重后的 7 天修改期。')
+    const next={...current,status:'weighing' as const,revision:current.revision+1,lastActionId:actionRef.id}
     transaction.set(sessionRef,storedSession(next,user.uid,timestamp,actionRef.id,false),{merge:false})
     transaction.set(actionRef,{type:'reopen',sessionId,entryId:null,reason:clean,performedBy:user.uid,performedAt:timestamp,
       beforeSnapshot:{status:current.status,revision:current.revision},afterSnapshot:{status:next.status,revision:next.revision},
@@ -309,6 +313,7 @@ export async function updateWeighingSessionDetails(input:{
     if(!current.productType)throw new Error('旧格式现场单只能查看；请先在后台建立调整单。')
     if(current.status==='processed')throw new Error('已结单的现场单必须先建立调整单，不能直接修改。')
     if(current.status==='voided')throw new Error('已作废的现场单不能修改。')
+    if(!canModifyWeighing(current))throw new Error('已超过首次完成称重后的 7 天修改期。')
     if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('单号前缀必须与产品类型一致。')
     if(!vesselSnapshot.exists()||vesselSnapshot.data().active!==true)throw new Error('船号已停用或不存在。')
     const weighingDate=businessDateFromLegacy(input.weighingDate),monthKey=monthKeyFromBusinessDate(weighingDate)
@@ -336,6 +341,7 @@ export async function voidWeighingSession(sessionId:string,reason:string){
     const current=sessionFrom(sessionId,snapshot.data())
     if(current.status==='processed')throw new Error('已处理的现场单不能作废。')
     if(current.status==='voided')throw new Error('现场单已经作废。')
+    if(!canModifyWeighing(current))throw new Error('已超过首次完成称重后的 7 天修改期。')
     const next={...current,status:'voided' as const,revision:current.revision+1,voidReason:clean,
       voidedBy:user.uid,voidedAt:timestamp,lastActionId:actionRef.id}
     transaction.set(sessionRef,storedSession(next,user.uid,timestamp,actionRef.id,false),{merge:false})

@@ -4,6 +4,7 @@ import {
   assertValidPurchaseSettlementDraft,
   calculateSettlementLineAmount,
   makeSettlementDraft,
+  reconcileSettlementLines,
   parseSettlementPrice,
   updateSettlementLinePrice,
   type SettlementSourceEntry,
@@ -93,5 +94,16 @@ describe('purchase settlement pricing',()=>{
     expect(lines[0].sourceEntryIds).toEqual(['entry-1'])
     expect(()=>assertValidPurchaseSettlementDraft({...draft,totalAmountCents:1})).toThrow()
     expect(draft.totalAmountCents).toBe(draft.lines.reduce((sum,line)=>sum+line.amountCents,0))
+  })
+
+  it('rebuilds changed weights with the saved price snapshot, even when entry IDs stay the same',()=>{
+    const saved=buildPurchaseSettlementLines([entry()],'fish_head','978').map(line=>updateSettlementLinePrice(line,'1.20'))
+    const current=buildPurchaseSettlementLines([entry({weightGrams:200_000})],'fish_head','833')
+    expect(reconcileSettlementLines(current,saved)).toEqual([expect.objectContaining({
+      totalWeightGrams:200_000,sourceEntryIds:['entry-1'],unitPriceCentsPerKg:120,
+      defaultUnitPriceCentsPerKg:210,priceWasEdited:true,amountCents:24000,
+    })])
+    expect(reconcileSettlementLines([],saved)).toEqual([])
+    expect(saved[0].totalWeightGrams).toBe(160_500)
   })
 })

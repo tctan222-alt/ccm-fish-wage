@@ -345,6 +345,8 @@ describe('iPhone 现场称重单页',()=>{
     await waitFor(()=>expect(screen.getByText('已完成，等待同步')).toBeInTheDocument())
     expect(screen.getByLabelText('重量（kg）')).toBeDisabled()
     expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
+    expect(screen.getByRole('link',{name:'查看鱼头结单'})).toHaveAttribute('href','/fish-head-settlement/session-v978-20260730')
+    expect(screen.getByRole('link',{name:'修改称重（完成后 7 天内）'})).toHaveAttribute('href','/weighing/session-v978-20260730/review')
   })
 
   it('曾在线载入后，离线重开仍可使用缓存的船号和鱼名继续录入',async()=>{

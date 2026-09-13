@@ -1,13 +1,40 @@
 import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, updateDoc, writeBatch, type DocumentReference } from 'firebase/firestore'
+import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch, type DocumentData, type DocumentReference } from 'firebase/firestore'
 import { createIceWorkRecord, createIceWorkSettlement } from './lib/iceWork'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale } from './lib/retailSales'
 import retailSeed from './data/retailFishSeed.json'
 
 let environment: RulesTestEnvironment
 const vessel = { vesselCode: '978', displayName: '978', defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order: 0, notes: '', createdBy: 'u1', createdAt: serverTimestamp(), updatedBy: 'u1', updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }
+
+function weighingRecord(daysAgo=1,overrides:DocumentData={}) {
+  const completedAt=Timestamp.fromMillis(Date.now()-daysAgo*24*60*60*1000)
+  return {
+    sessionCode:'FH-978-13092026-01',productType:'fish_head',weighingDate:'13/09/2026',monthKey:'09/2026',dateSortKey:20260913,monthSortKey:202609,
+    externalSlipNo:'',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'978',status:'completed',lastSequenceNo:1,
+    fishHeadBasketCount:1,fishHeadWeightGrams:1000,fishMealBucketBasketCount:0,fishMealBucketWeightGrams:0,
+    fishMealBagBasketCount:0,fishMealBagWeightGrams:0,fishMealTotalWeightGrams:0,totalWeightGrams:1000,
+    processedReceiptId:null,processedReceiptCode:null,notes:'',revision:2,voidReason:null,createdBy:'u1',createdAt:completedAt,
+    updatedBy:'u1',updatedAt:completedAt,completedBy:'u1',completedAt,processedBy:null,processedAt:null,voidedBy:null,voidedAt:null,lastActionId:'complete-1',...overrides,
+  }
+}
+
+async function seedWeighing(id:string,data=weighingRecord()) {
+  await environment.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'weighingSessions',id),data))
+  return doc(environment.authenticatedContext('u1').firestore(),'weighingSessions',id)
+}
+
+async function changeWeighing(ref:DocumentReference,type:string,patch:DocumentData) {
+  const before=(await getDoc(ref)).data()!,actionId=`${type}-${before.revision+1}`
+  const after={...before,...patch,revision:before.revision+1,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:actionId}
+  const batch=writeBatch(ref.firestore)
+  batch.set(ref,after)
+  batch.set(doc(ref,'actions',actionId),{type,sessionId:ref.id,entryId:null,reason:'修正记录',performedBy:'u1',performedAt:serverTimestamp(),
+    beforeSnapshot:before,afterSnapshot:after,clientOperationId:actionId})
+  return batch.commit()
+}
 
 beforeAll(async () => { environment = await initializeTestEnvironment({ projectId: 'demo-ccm-rules', firestore: { rules: await readFile('firestore.rules', 'utf8') } }) })
 afterAll(async () => { if (environment) await environment.cleanup() })
@@ -106,6 +133,94 @@ describe('Firestore Rules: retail cash sales', () => {
 })
 
 describe('Firestore Rules: vessels and ice-work audit', () => {
+  it('allows reopening a completed weighing session only during its seven-day edit window',async()=>{
+    const within=await seedWeighing('within-window',weighingRecord(6)),expired=await seedWeighing('expired-window',weighingRecord(8))
+    await assertFails(changeWeighing(within,'reopen',{status:'weighing',completedAt:null,completedBy:null}))
+    await assertFails(changeWeighing(within,'reopen',{status:'weighing',completedAt:serverTimestamp()}))
+    await assertSucceeds(changeWeighing(within,'reopen',{status:'weighing'}))
+    await assertFails(changeWeighing(expired,'reopen',{status:'weighing'}))
+    await assertSucceeds(getDoc(expired))
+  })
+
+  it('preserves the first completion on re-completion, including sessions left open past the deadline',async()=>{
+    const source=weighingRecord(8,{status:'weighing'}),ref=await seedWeighing('recomplete',source)
+    await assertFails(changeWeighing(ref,'complete',{status:'completed',completedAt:serverTimestamp()}))
+    await assertSucceeds(changeWeighing(ref,'complete',{status:'completed'}))
+    expect((await getDoc(ref)).data()?.completedAt).toEqual(source.completedAt)
+    await assertFails(changeWeighing(ref,'reopen',{status:'weighing'}))
+    const initial=await seedWeighing('first-completion',weighingRecord(0,{status:'weighing',completedBy:null,completedAt:null}))
+    await assertSucceeds(changeWeighing(initial,'complete',{status:'completed',completedBy:'u1',completedAt:serverTimestamp()}))
+  })
+
+  it('allows audited basket create/update/void within the original window and rejects delayed offline writes',async()=>{
+    for(const daysAgo of [6,8]) {
+      const ref=await seedWeighing(`basket-window-${daysAgo}`,weighingRecord(daysAgo,{status:'weighing'}))
+      const entryRef=doc(ref,'entries','basket')
+      const initial={clientEntryId:'basket',sessionId:ref.id,productType:'fish_head',fishSpeciesId:'custom_test',fishSpeciesCodeSnapshot:'custom_test',fishSpeciesNameSnapshot:'测试鱼',
+        fishMealQuality:null,displayNameSnapshot:'测试鱼',entryMode:'individual',sequenceNo:2,weightGrams:500,remark:'',recordedAtClient:'2026-09-13T10:00:00Z',
+        recordedAt:serverTimestamp(),recordedBy:'u1',voided:false,voidReason:null,voidedBy:null,voidedAt:null,revision:1,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:'basket-create'}
+      const write=async(type:string,patch:DocumentData,delta:number,countDelta=0,parentPatch:DocumentData={})=>{
+        const parent=(await getDoc(ref)).data()!,old=(await getDoc(entryRef)).data()??null,actionId=`${type}-${parent.revision+1}`
+        const next={...(old??initial),...patch,revision:old?old.revision+1:1,updatedAt:serverTimestamp(),lastActionId:actionId}
+        const batch=writeBatch(ref.firestore)
+        batch.set(entryRef,next)
+        batch.update(ref,{revision:parent.revision+1,lastSequenceNo:2,fishHeadBasketCount:parent.fishHeadBasketCount+countDelta,
+          fishHeadWeightGrams:parent.fishHeadWeightGrams+delta,totalWeightGrams:parent.totalWeightGrams+delta,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:actionId,...parentPatch})
+        batch.set(doc(ref,'actions',actionId),{type,sessionId:ref.id,entryId:entryRef.id,reason:'修正记录',performedBy:'u1',performedAt:serverTimestamp(),
+          beforeSnapshot:old,afterSnapshot:next,clientOperationId:actionId})
+        return batch.commit()
+      }
+      if(daysAgo===6) {
+        await assertFails(write('entry_create',{weightGrams:-500},-500,1))
+        await assertFails(write('entry_create',{},500,1,{totalWeightGrams:1}))
+        await assertFails(write('entry_create',{},500,1,{completedAt:null,completedBy:null}))
+        await expect(write('entry_create',{},500,1)).resolves.toBeUndefined()
+        await assertFails(write('entry_create',{},500,1))
+        await assertFails(write('entry_update',{weightGrams:700},200,0,{completedAt:serverTimestamp()}))
+        await assertFails(write('entry_update',{weightGrams:700},200,0,{vesselId:'v833'}))
+        await expect(write('entry_update',{weightGrams:700},200)).resolves.toBeUndefined()
+        expect((await getDoc(ref)).data()?.totalWeightGrams).toBe(1700)
+        await expect(write('entry_void',{voided:true,voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()},-700,-1)).resolves.toBeUndefined()
+        expect((await getDoc(ref)).data()?.completedAt).toEqual((await getDoc(ref)).data()?.createdAt)
+      } else {
+        await assertFails(write('entry_create',{},500,1))
+        await environment.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'weighingSessions',ref.id,'entries',entryRef.id),initial))
+        await assertFails(write('entry_update',{weightGrams:700},200))
+        await assertFails(write('entry_update',{weightGrams:700},200,0,{completedAt:serverTimestamp()}))
+        await assertFails(write('entry_void',{voided:true,voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()},-500,-1))
+      }
+    }
+  })
+
+  it('still accepts a new weighing session and its first audited basket atomically',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'weighingSessions','new-weighing'),actionId='first-basket'
+    await environment.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'vessels','initial-v978'),vessel))
+    const first={clientEntryId:'first',sessionId:ref.id,productType:'fish_head',fishSpeciesId:'custom_test',fishSpeciesCodeSnapshot:'custom_test',fishSpeciesNameSnapshot:'测试鱼',
+      fishMealQuality:null,displayNameSnapshot:'测试鱼',entryMode:'individual',sequenceNo:1,weightGrams:1000,remark:'',recordedAtClient:'2026-09-13T10:00:00Z',
+      recordedAt:serverTimestamp(),recordedBy:'u1',voided:false,voidReason:null,voidedBy:null,voidedAt:null,revision:1,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:actionId}
+    const initial=weighingRecord(0,{status:'weighing',completedAt:null,completedBy:null,vesselId:'initial-v978',createdAt:serverTimestamp(),updatedAt:serverTimestamp(),lastActionId:actionId})
+    const batch=writeBatch(db)
+    batch.set(ref,initial);batch.set(doc(ref,'entries','first'),first)
+    batch.set(doc(ref,'actions',actionId),{type:'entry_create',sessionId:ref.id,entryId:'first',reason:null,performedBy:'u1',performedAt:serverTimestamp(),beforeSnapshot:null,afterSnapshot:first,clientOperationId:actionId})
+    await assertSucceeds(batch.commit())
+  })
+
+  it('enforces the deadline for audited metadata and void actions on both completed and reopened sessions',async()=>{
+    await environment.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'vessels','window-v978'),vessel))
+    for(const status of ['completed','weighing']) {
+      const valid=await seedWeighing(`metadata-${status}`,weighingRecord(6,{status,vesselId:'window-v978'})),expired=await seedWeighing(`metadata-expired-${status}`,weighingRecord(8,{status,vesselId:'window-v978'}))
+      for(const patch of [{sessionCode:''},{totalWeightGrams:1},{completedAt:serverTimestamp()},{dateSortKey:20260914},{vesselCodeSnapshot:'833'}]) {
+        await assertFails(changeWeighing(valid,'session_update',patch))
+      }
+      await assertSucceeds(changeWeighing(valid,'session_update',{externalSlipNo:'FH-001',notes:'修正说明'}))
+      await assertFails(changeWeighing(expired,'session_update',{externalSlipNo:'FH-001'}))
+      await assertFails(changeWeighing(expired,'session_update',{externalSlipNo:'FH-001',completedAt:serverTimestamp()}))
+      const voidPatch={status:'voided',voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()}
+      await assertFails(changeWeighing(expired,'session_void',voidPatch))
+      await assertSucceeds(changeWeighing(valid,'session_void',voidPatch))
+    }
+  })
+
   it('allows authenticated vessel creation but rejects vessel-code tampering and deletion', async () => {
     const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'vessels', 'v978')
     await assertSucceeds(setDoc(ref, vessel))
@@ -142,15 +257,40 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     const line = { lineType: 'fish_head', nameSnapshot: '金线', totalWeightGrams: 160500, basketCount: 1, totalWeightEntryCount: 1,
       defaultUnitPriceCentsPerKg: 210, unitPriceCentsPerKg: 210, priceWasEdited: false, amountCents: 33705, sourceEntryIds: ['entry-1'],
       fishSpeciesId: 'jin_xian', fishSpeciesCodeSnapshot: 'jin_xian', fishSpeciesNameSnapshot: '金线' }
+    await seedWeighing('settlement-source',weighingRecord(1,{weighingDate:'03/08/2026',monthKey:'08/2026',dateSortKey:20260803,monthSortKey:202608}))
     const draft = { productType: 'fish_head', businessDate: '03/08/2026', dateSortKey: 20260803, monthKey: '08/2026', monthSortKey: 202608,
       vesselId: 'v978', vesselCodeSnapshot: '978', receiptNo: '', status: 'settlement_draft', lines: [line], totalAmountCents: 33705,
-      sourceEntryIds: ['entry-1'], createdAt: serverTimestamp(), createdBy: 'u1', updatedAt: serverTimestamp(), updatedBy: 'u1', revision: 1, voided: false }
-    await assertSucceeds(setDoc(draftRef, draft))
-    await assertSucceeds(updateDoc(draftRef, { receiptNo: 'FH-001', totalAmountCents: 33705, revision: 2, updatedBy: 'u1', updatedAt: serverTimestamp() }))
-    await assertFails(updateDoc(draftRef, { vesselId: 'v833', monthKey: '08/2026', monthSortKey: 202608, revision: 3, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+      sourceEntryIds: ['entry-1'],sourceSessionId:'settlement-source',sourceSessionRevision:2, createdAt: serverTimestamp(), createdBy: 'u1', updatedAt: serverTimestamp(), updatedBy: 'u1', revision: 1, voided: false }
+    const write=async(patch:DocumentData={},audit=true)=>{
+      const existing=await getDoc(draftRef),before=existing.exists()?existing.data()!:null
+      const next={...(before??draft),receiptNo:'FH-001',...patch,revision:before?before.revision+1:1,updatedAt:serverTimestamp()}
+      const batch=writeBatch(db)
+      batch.set(draftRef,next)
+      if(audit)batch.set(doc(draftRef,'actions',String(next.revision)),{beforeSnapshot:before,afterSnapshot:next,performedBy:'u1',performedAt:serverTimestamp()})
+      return batch.commit()
+    }
+    await assertFails(write({},false))
+    await assertFails(write({sourceSessionRevision:1}))
+    await assertFails(write({status:'settlement_confirmed'}))
+    await assertFails(write({voided:true}))
+    await assertFails(write({vesselId:'v833'}))
+    await assertSucceeds(write())
+    await assertSucceeds(write({receiptNo:'FH-002'}))
+    expect((await getDoc(doc(draftRef,'actions','2'))).data()?.beforeSnapshot.receiptNo).toBe('FH-001')
+    await assertFails(write({vesselId:'v833'}))
+    await assertFails(write({},false))
+    await assertFails(updateDoc(doc(draftRef,'actions','1'),{performedBy:'other'}))
+    await assertFails(deleteDoc(doc(draftRef,'actions','1')))
     await assertFails(deleteDoc(draftRef))
-    await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'invalid-settlement'), { ...draft, status: 'settlement_confirmed' }))
-    await assertFails(setDoc(doc(db, 'purchaseSettlementDrafts', 'voided-settlement'), { ...draft, voided: true }))
+    await seedWeighing('settlement-source',weighingRecord(8,{weighingDate:'03/08/2026'}))
+    await assertFails(write())
+    await assertSucceeds(getDoc(draftRef))
+    await seedWeighing('settlement-source',weighingRecord(8,{status:'weighing',weighingDate:'03/08/2026'}))
+    await assertFails(write())
+    for(const status of ['processed','voided']) {
+      await seedWeighing('settlement-source',weighingRecord(1,{status,weighingDate:'03/08/2026'}))
+      await assertFails(write())
+    }
   })
 
   it('allows an atomic draft record and immutable create action, but rejects action changes', async () => {
