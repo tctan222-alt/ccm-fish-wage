@@ -1,4 +1,4 @@
-import { cleanup,render,screen,waitFor,within } from '@testing-library/react'
+import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
@@ -8,12 +8,13 @@ import { WeighingReviewPage } from './WeighingReviewPage'
 import { WeighingSessionsPage } from './WeighingSessionsPage'
 
 const session:WeighingSession={
-  id:'ws1',sessionCode:'978-20260730-01',weighingDate:'2026-07-30',monthKey:'2026-07',
+  id:'ws1',sessionCode:'978-20260730-01',productType:'fish_head',weighingDate:'2026-07-30',monthKey:'2026-07',
   externalSlipNo:'C3988',vesselId:'v978',vesselCodeSnapshot:'978',vesselNameSnapshot:'船 978',
   status:'completed',lastSequenceNo:3,fishHeadBasketCount:2,fishHeadWeightGrams:150_000,
   fishMealBucketBasketCount:1,fishMealBucketWeightGrams:50_000,fishMealBagBasketCount:0,
   fishMealBagWeightGrams:200_000,fishMealTotalWeightGrams:250_000,totalWeightGrams:400_000,
   processedReceiptId:null,processedReceiptCode:null,notes:'',revision:5,voidReason:null,
+  completedAt:new Date('2026-07-30T02:00:00Z'),
 }
 
 function entry(overrides:Partial<WeighingEntry>):WeighingEntry{
@@ -71,6 +72,39 @@ describe('现场称重电脑端复核',()=>{
     const audit=screen.getByRole('region',{name:'修改与作废历史'})
     expect(within(audit).getByText('作废称重')).toBeInTheDocument()
     expect(within(audit).getByText('原因：重复')).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'查看鱼头结单'})).toHaveAttribute('href','/fish-head-settlement/ws1')
+    expect(screen.getByRole('button',{name:'修改称重（7 天内）'})).toBeInTheDocument()
+  })
+
+  it('日期筛选同时匹配 DD/MM/YYYY 与历史 ISO 日期',async()=>{
+    render(<MemoryRouter><WeighingSessionsPage loader={async()=>[session,{...session,id:'new-date',sessionCode:'FH-new-date',weighingDate:'30/07/2026'}]}/></MemoryRouter>)
+    await screen.findByText('FH-new-date')
+    fireEvent.change(screen.getByLabelText('日期'),{target:{value:'2026-07-30'}})
+    expect(screen.getByText('FH-new-date')).toBeInTheDocument()
+    expect(screen.getByText(session.sessionCode)).toBeInTheDocument()
+  })
+
+  it('重开成功后直接进入原单的篮重修改页',async()=>{
+    vi.spyOn(window,'prompt').mockReturnValue('修正篮重')
+    renderReview()
+    await userEvent.click(await screen.findByRole('button',{name:'修改称重（7 天内）'}))
+    expect(await screen.findByText('原单篮重修改页')).toBeInTheDocument()
+  })
+
+  it('已重开但超过原始期限的称重单也只能查看',async()=>{
+    renderReview(undefined,{...session,status:'weighing'},undefined,()=>new Date('2026-08-07T02:00:00Z'))
+    await screen.findByText(session.sessionCode)
+    expect(screen.queryByRole('link',{name:'修改原始篮记录'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'后台修改本单'})).not.toBeInTheDocument()
+  })
+
+  it('超过七天仍可查看结单和原始记录，但不能再修改或作废',async()=>{
+    renderReview(undefined,session,undefined,()=>new Date('2026-08-07T02:00:00.001Z'))
+    expect(await screen.findByRole('link',{name:'查看鱼头结单'})).toHaveAttribute('href','/fish-head-settlement/ws1')
+    expect(screen.getByText('已超过完成称重后的 7 天修改期，只能查看结单和原始记录。')).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'修改称重（7 天内）'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'后台修改本单'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'作废现场单'})).not.toBeInTheDocument()
   })
 
   it('桶鱼仔和包鱼仔可使用不同单价并只生成一张 Draft Purchase Receipt',async()=>{
@@ -117,8 +151,10 @@ function renderReview(
   processor=vi.fn().mockResolvedValue({receiptId:'r1',receiptCode:'RC-12345678',alreadyProcessed:false}),
   current=session,
   sessionUpdater=vi.fn().mockResolvedValue(current),
+  now=()=>new Date('2026-08-01T00:00:00Z'),
 ){
   render(<MemoryRouter initialEntries={['/weighing/ws1/review']}><Routes>
+    <Route path="/weighing/:sessionId" element={<p>原单篮重修改页</p>}/>
     <Route path="/weighing/:sessionId/review" element={<WeighingReviewPage
       bundleLoader={async()=>({session:current,entries,actions:[{id:'a1',type:'entry_void',entryId:'e5',reason:'重复',
         performedAt:null,beforeSnapshot:{revision:1,voided:false},afterSnapshot:{revision:2,voided:true}}]})}
@@ -128,6 +164,7 @@ function renderReview(
       reopener={vi.fn().mockResolvedValue({...current,status:'weighing'})}
       voider={vi.fn().mockResolvedValue({...current,status:'voided'})}
       sessionUpdater={sessionUpdater}
+      now={now}
     />}/>
   </Routes></MemoryRouter>)
 }

@@ -6,6 +6,9 @@ export type WeighingEntryMode = 'individual' | 'total'
 export type WeighingSessionStatus = 'weighing' | 'completed' | 'processed' | 'voided'
 export type WeighingSyncStatus = 'syncing' | 'synced' | 'failed'
 
+export const COMPLETED_WEIGHING_EDIT_WINDOW_DAYS = 7
+const COMPLETED_WEIGHING_EDIT_WINDOW_MS = COMPLETED_WEIGHING_EDIT_WINDOW_DAYS * 24 * 60 * 60 * 1000
+
 export interface FishSpecies {
   id:string
   name:string
@@ -64,6 +67,41 @@ export interface WeighingSession {
   voidedBy?:string|null
   voidedAt?:unknown|null
   lastActionId?:string
+}
+
+function timestampMillis(value:unknown):number|null {
+  if(value instanceof Date)return Number.isFinite(value.getTime())?value.getTime():null
+  if(value&&typeof value==='object'){
+    const timestamp=value as {toMillis?:()=>number;toDate?:()=>Date;seconds?:number}
+    if(typeof timestamp.toMillis==='function'){
+      const millis=timestamp.toMillis()
+      return Number.isFinite(millis)?millis:null
+    }
+    if(typeof timestamp.toDate==='function'){
+      const millis=timestamp.toDate().getTime()
+      return Number.isFinite(millis)?millis:null
+    }
+    if(typeof timestamp.seconds==='number'&&Number.isFinite(timestamp.seconds))return timestamp.seconds*1000
+  }
+  return null
+}
+
+export function completedWeighingEditDeadline(session:Pick<WeighingSession,'status'|'completedAt'>):Date|null {
+  const completedMillis=timestampMillis(session.completedAt)
+  return completedMillis===null?null:new Date(completedMillis+COMPLETED_WEIGHING_EDIT_WINDOW_MS)
+}
+
+export function canEditCompletedWeighing(session:Pick<WeighingSession,'status'|'completedAt'>,now=new Date()):boolean {
+  const deadline=completedWeighingEditDeadline(session)
+  return session.status==='completed'&&deadline!==null&&now.getTime()<=deadline.getTime()
+}
+
+/** The first server completion is retained across every reopen/re-completion. */
+export function canModifyWeighing(session:Pick<WeighingSession,'status'|'completedAt'>,now=new Date()):boolean {
+  if(session.status!=='weighing'&&session.status!=='completed')return false
+  if(session.completedAt==null)return session.status==='weighing'
+  const deadline=completedWeighingEditDeadline(session)
+  return deadline!==null&&now.getTime()<=deadline.getTime()
 }
 
 export interface WeighingEntry {
@@ -417,6 +455,7 @@ function entryAggregate(entry:WeighingEntry,multiplier=1) {
 
 export function applyEntryCreated(session:WeighingSession,entry:WeighingEntry):WeighingSession {
   if(session.status!=='weighing')throw new Error('现场单已锁定，不能继续录入。')
+  if(!canModifyWeighing(session))throw new Error('已超过首次完成称重后的 7 天修改期。')
   if(entry.voided)throw new Error('不能建立已作废的称重记录。')
   const delta=entryAggregate(entry)
   return {
@@ -446,13 +485,14 @@ export function applyEntryReplacement(session:WeighingSession,before:WeighingEnt
     fishMealBagWeightGrams:session.fishMealBagWeightGrams+removed.fishMealBagWeightGrams,
     fishMealTotalWeightGrams:session.fishMealTotalWeightGrams+removed.fishMealTotalWeightGrams,
     totalWeightGrams:session.totalWeightGrams+removed.totalWeightGrams,
-    revision:session.revision-1,
+    revision:session.revision,
   },after)
 }
 
 export function softVoidWeighingEntry(session:WeighingSession,entry:WeighingEntry,reason:string) {
   const clean=reason.trim()
   if(session.status!=='weighing')throw new Error('只有称重中的现场单可以修改或作废记录。')
+  if(!canModifyWeighing(session))throw new Error('已超过首次完成称重后的 7 天修改期。')
   if(entry.voided)throw new Error('这笔记录已经作废。')
   if(clean.length<3||clean.length>100)throw new Error('作废原因必须为 3 至 100 个字符。')
   const after={...entry,voided:true,voidReason:clean,revision:entry.revision+1}

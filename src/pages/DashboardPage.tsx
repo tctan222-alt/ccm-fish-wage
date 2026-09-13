@@ -13,7 +13,9 @@ export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
     <section className="department-card">
       <h2>鱼头鱼仔部</h2>
       <nav aria-label="鱼头鱼仔部入口" className="department-links">
-        <Link to="/fish-head-purchase">鱼头购入</Link><Link to="/fish-meal-purchase">鱼仔购入</Link><Link to="/fish-head-wages">切鱼头工钱计算</Link>
+        <Link to="/fish-head-purchase">鱼头购入</Link><Link to="/fish-head-settlement">鱼头结单</Link>
+        <Link to="/fish-meal-purchase">鱼仔购入</Link><Link to="/fish-meal-settlement">鱼仔结单</Link>
+        <Link to="/fish-head-wages">切鱼头工钱计算</Link>
       </nav>
     </section>
     <section className="department-card">

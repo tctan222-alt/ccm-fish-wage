@@ -475,7 +475,7 @@ service cloud.firestore {
           'vesselId', 'vesselCodeSnapshot', 'receiptNo', 'status', 'lines',
           'totalAmountCents', 'sourceEntryIds', 'createdAt', 'createdBy',
           'updatedAt', 'updatedBy', 'revision', 'voided', 'voidReason',
-          'voidedBy', 'voidedAt'
+          'voidedBy', 'voidedAt', 'sourceSessionId', 'sourceSessionRevision'
         ])
         && data.keys().hasAll([
           'productType', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey',
@@ -529,6 +529,26 @@ service cloud.firestore {
             ])
             && incomingData().voidedBy == request.auth.uid
             && incomingData().voidedAt == request.time));
+    }
+
+    function validSettlementSource() {
+      let data = incomingData();
+      let source = getAfter(weighingSessionPath(data.sourceSessionId)).data;
+      return data.sourceSessionId is string && data.sourceSessionRevision == source.revision
+        && source.productType == data.productType && source.vesselId == data.vesselId
+        && source.vesselCodeSnapshot == data.vesselCodeSnapshot
+        && validBusinessDate(data.businessDate)
+        && data.dateSortKey == int(data.businessDate[6:10] + data.businessDate[3:5] + data.businessDate[0:2])
+        && (source.weighingDate == data.businessDate
+          || source.weighingDate == data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
+        && weighingCanModify(source);
+    }
+
+    function validSettlementAudit(draftId) {
+      let action = getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)/actions/$(string(incomingData().revision))).data;
+      return action.afterSnapshot == incomingData()
+        && action.beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) ? existingData() : null)
+        && action.performedBy == request.auth.uid && action.performedAt == request.time;
     }
 
     function validLinkedPurchaseAction(receiptId, actionType) {
@@ -650,6 +670,12 @@ service cloud.firestore {
         && (data.inactiveAt == null || data.inactiveAt is timestamp)
         && ((data.active && data.inactiveBy == null && data.inactiveAt == null)
           || (!data.active && data.inactiveBy is string && data.inactiveAt is timestamp));
+    }
+
+    function weighingCanModify(data) {
+      return data.status in ['weighing', 'completed']
+        && ((data.status == 'weighing' && data.completedAt == null)
+          || (data.completedAt is timestamp && request.time <= data.completedAt + duration.value(7, 'd')));
     }
 
     function validWeighingSession(data) {
@@ -844,7 +870,9 @@ service cloud.firestore {
     }
 
     function validWeighingIdentityUnchanged() {
-      return incomingData().diff(existingData()).affectedKeys().hasOnly([
+      return ((existingData().status == 'weighing' && incomingData().status == 'completed' && existingData().completedAt == null)
+          || (incomingData().completedAt == existingData().completedAt && incomingData().completedBy == existingData().completedBy))
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'status', 'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams',
           'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
           'fishMealBagBasketCount', 'fishMealBagWeightGrams', 'fishMealTotalWeightGrams',
@@ -860,18 +888,86 @@ service cloud.firestore {
     }
 
     function validWeighingControlledMetadataUpdate() {
-      return incomingData().diff(existingData()).affectedKeys().hasOnly([
+      let before = existingData();
+      let data = incomingData();
+      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      return data.diff(before).affectedKeys().hasOnly([
           'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey',
           'externalSlipNo', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
           'notes', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
         ])
-        && incomingData().status == existingData().status
-        && incomingData().productType == existingData().productType
-        && incomingData().revision == existingData().revision + 1
-        && incomingData().createdBy == existingData().createdBy
-        && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time;
+        && data.status == before.status && data.productType == before.productType
+        && data.revision == before.revision + 1
+        && data.updatedBy == request.auth.uid && data.updatedAt == request.time
+        && data.sessionCode is string && data.sessionCode.size() >= 5 && data.sessionCode.size() <= 80
+        && data.weighingDate is string && validBusinessDate(data.weighingDate)
+        && data.monthKey == data.weighingDate[3:10]
+        && data.dateSortKey is int && data.dateSortKey == int(data.weighingDate[6:10] + data.weighingDate[3:5] + data.weighingDate[0:2])
+        && data.monthSortKey is int && data.monthSortKey == int(data.monthKey[3:7] + data.monthKey[0:2])
+        && data.externalSlipNo is string && data.externalSlipNo.size() <= 100
+        && data.notes is string && data.notes.size() <= 500
+        && data.vesselId is string && data.vesselId.size() > 0
+        && data.vesselCodeSnapshot is string && data.vesselCodeSnapshot.size() > 0
+        && data.vesselNameSnapshot is string && data.vesselNameSnapshot.size() > 0
+        && vessel.active == true && vessel.vesselCode == data.vesselCodeSnapshot && vessel.displayName == data.vesselNameSnapshot;
+    }
+
+    function validWeighingMetadataAudit(sessionId) {
+      let before = existingData();
+      let after = incomingData();
+      let action = getAfter(weighingActionPath(sessionId, after.lastActionId)).data;
+      let old = action.beforeSnapshot;
+      let next = action.afterSnapshot;
+      return validLinkedWeighingAction(sessionId, 'session_update') && action.entryId == null
+        && old.sessionCode == before.sessionCode && next.sessionCode == after.sessionCode
+        && old.weighingDate == before.weighingDate && next.weighingDate == after.weighingDate
+        && old.monthKey == before.monthKey && next.monthKey == after.monthKey
+        && old.get('dateSortKey', null) == before.get('dateSortKey', null) && next.dateSortKey == after.dateSortKey
+        && old.get('monthSortKey', null) == before.get('monthSortKey', null) && next.monthSortKey == after.monthSortKey
+        && old.vesselId == before.vesselId && next.vesselId == after.vesselId
+        && old.vesselCodeSnapshot == before.vesselCodeSnapshot && next.vesselCodeSnapshot == after.vesselCodeSnapshot
+        && old.vesselNameSnapshot == before.vesselNameSnapshot && next.vesselNameSnapshot == after.vesselNameSnapshot
+        && old.externalSlipNo == before.externalSlipNo && next.externalSlipNo == after.externalSlipNo
+        && old.notes == before.notes && next.notes == after.notes;
+    }
+
+    // Only aggregate fields and the handwritten slip may change here. The linked
+    // entry has its own complete schema validation in this same atomic write.
+    function validWeighingEntrySessionUpdate(sessionId) {
+      let before = existingData();
+      let after = incomingData();
+      let action = getAfter(weighingActionPath(sessionId, after.lastActionId)).data;
+      let entryPath = weighingEntryPath(sessionId, action.entryId);
+      let entry = getAfter(entryPath).data;
+      return after.diff(before).affectedKeys().hasOnly([
+          'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams', 'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
+          'fishMealBagBasketCount', 'fishMealBagWeightGrams', 'fishMealTotalWeightGrams', 'totalWeightGrams',
+          'externalSlipNo', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
+        ])
+        && after.revision == before.revision + 1 && after.updatedBy == request.auth.uid && after.updatedAt == request.time
+        && after.externalSlipNo is string && after.externalSlipNo.size() <= 100
+        && after.fishMealTotalWeightGrams == after.fishMealBucketWeightGrams + after.fishMealBagWeightGrams
+        && after.totalWeightGrams == after.fishHeadWeightGrams + after.fishMealTotalWeightGrams
+        && action.type in ['entry_create', 'entry_update', 'entry_void']
+        && action.sessionId == sessionId && action.performedBy == request.auth.uid && action.performedAt == request.time
+        && entry.lastActionId == after.lastActionId && entry.updatedAt == request.time
+        && ((action.type == 'entry_create' && !exists(entryPath) && validWeighingCreateDelta(before, after, entry))
+          || (after.lastSequenceNo == before.lastSequenceNo
+            && ((action.type == 'entry_update' && validWeighingAggregateDelta(before, after, get(entryPath).data, entry))
+              || (action.type == 'entry_void' && validWeighingAggregateDelta(before, after, get(entryPath).data,
+                {'productType': 'fish_meal', 'entryMode': 'total', 'weightGrams': 0, 'fishMealQuality': null})))));
+    }
+
+    function validWeighingFirstBasket(sessionId) {
+      let data = incomingData();
+      let action = getAfter(weighingActionPath(sessionId, data.lastActionId)).data;
+      let entry = getAfter(weighingEntryPath(sessionId, action.entryId)).data;
+      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      return vessel.active == true && vessel.vesselCode == data.vesselCodeSnapshot && vessel.displayName == data.vesselNameSnapshot
+        && validLinkedWeighingAction(sessionId, 'entry_create') && action.entryId is string
+        && entry.sessionId == sessionId && entry.productType == data.productType && data.totalWeightGrams == entry.weightGrams
+        && validWeighingCreateDelta({'lastSequenceNo': 0, 'fishHeadBasketCount': 0, 'fishHeadWeightGrams': 0,
+          'fishMealBucketBasketCount': 0, 'fishMealBucketWeightGrams': 0, 'fishMealBagBasketCount': 0, 'fishMealBagWeightGrams': 0}, data, entry);
     }
 
     function validLegacyIceWorkRecord(data) {
@@ -1525,180 +1621,54 @@ service cloud.firestore {
         && incomingData().processedReceiptId == null && incomingData().processedReceiptCode == null
         && incomingData().voidedBy == null && incomingData().voidedAt == null
         && incomingData().voidReason == null
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
-          == incomingData().vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
-          == incomingData().vesselNameSnapshot
-        && validLinkedWeighingAction(sessionId, 'entry_create')
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId is string
-        && getAfter(weighingEntryPath(
-            sessionId,
-            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-          )).data.sessionId == sessionId
-        && getAfter(weighingEntryPath(
-            sessionId,
-            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-          )).data.productType == incomingData().productType
-        && incomingData().fishHeadBasketCount
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.productType == 'fish_head'
-            && getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.entryMode == 'individual' ? 1 : 0)
-        && incomingData().totalWeightGrams
-          == getAfter(weighingEntryPath(
-            sessionId,
-            getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-          )).data.weightGrams
-        && incomingData().lastSequenceNo
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.entryMode == 'individual'
-            ? getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.sequenceNo : 0)
-        && incomingData().fishHeadWeightGrams
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.productType == 'fish_head'
-            ? incomingData().totalWeightGrams : 0)
-        && incomingData().fishMealBucketWeightGrams
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.fishMealQuality == 'bucket'
-            ? incomingData().totalWeightGrams : 0)
-        && incomingData().fishMealBagWeightGrams
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.fishMealQuality == 'bag'
-            ? incomingData().totalWeightGrams : 0)
-        && incomingData().fishMealBucketBasketCount
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.fishMealQuality == 'bucket'
-            && getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.entryMode == 'individual' ? 1 : 0)
-        && incomingData().fishMealBagBasketCount
-          == (getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.fishMealQuality == 'bag'
-            && getAfter(weighingEntryPath(
-              sessionId,
-              getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-            )).data.entryMode == 'individual' ? 1 : 0);
-      allow update: if signedIn() && validWeighingSession(incomingData())
+        && validWeighingFirstBasket(sessionId);
+      allow update: if signedIn() && existingData().status == incomingData().status && weighingCanModify(existingData())
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.type == 'session_update'
+        && validWeighingMetadataAudit(sessionId)
         && validWeighingControlledMetadataUpdate()
-        && existingData().status in ['weighing', 'completed']
-        && validLinkedWeighingAction(sessionId, 'session_update')
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId == null
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.sessionCode == existingData().sessionCode
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.weighingDate == existingData().weighingDate
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.monthKey == existingData().monthKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.dateSortKey == existingData().dateSortKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.monthSortKey == existingData().monthSortKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselId == existingData().vesselId
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselCodeSnapshot == existingData().vesselCodeSnapshot
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.vesselNameSnapshot == existingData().vesselNameSnapshot
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.externalSlipNo == existingData().externalSlipNo
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.beforeSnapshot.notes == existingData().notes
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.sessionCode == incomingData().sessionCode
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.weighingDate == incomingData().weighingDate
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.monthKey == incomingData().monthKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.dateSortKey == incomingData().dateSortKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.monthSortKey == incomingData().monthSortKey
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselId == incomingData().vesselId
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselCodeSnapshot == incomingData().vesselCodeSnapshot
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.vesselNameSnapshot == incomingData().vesselNameSnapshot
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.externalSlipNo == incomingData().externalSlipNo
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.afterSnapshot.notes == incomingData().notes
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
-          == incomingData().vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
-          == incomingData().vesselNameSnapshot;
-      allow update: if signedIn() && validWeighingSession(incomingData())
+        && existingData().status in ['weighing', 'completed'];
+      // Reopening is the only gateway to changing completed basket records.
+      // Keep this transition compact so it remains below Firestore's per-request
+      // expression limit, while the unchanged-field guard preserves the audit.
+      allow update: if signedIn()
+        && existingData().status == 'completed' && incomingData().status == 'weighing'
+        && existingData().completedAt is timestamp
+        && request.time <= existingData().completedAt + duration.value(7, 'd')
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
+          'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
+        ])
+        && incomingData().revision == existingData().revision + 1
+        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().completedBy == existingData().completedBy && incomingData().completedAt == existingData().completedAt
+        && validLinkedWeighingAction(sessionId, 'reopen');
+      allow update: if signedIn() && incomingData().status == 'voided' && weighingCanModify(existingData())
+        && incomingData().diff(existingData()).affectedKeys().hasOnly([
+          'status', 'revision', 'updatedBy', 'updatedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
+        ])
+        && incomingData().revision == existingData().revision + 1
+        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+        && incomingData().voidReason is string && incomingData().voidReason.size() >= 3 && incomingData().voidReason.size() <= 100
+        && validLinkedWeighingAction(sessionId, 'session_void')
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.reason == incomingData().voidReason;
+      allow update: if signedIn() && existingData().status == 'weighing' && incomingData().status == 'weighing'
+        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.type in ['entry_create', 'entry_update', 'entry_void']
+        && weighingCanModify(existingData()) && validWeighingEntrySessionUpdate(sessionId);
+      allow update: if signedIn()
+        && incomingData().status in ['completed', 'processed']
+        && (existingData().status == 'weighing' || incomingData().status == 'processed')
+        && (incomingData().status in ['completed', 'processed'] || weighingCanModify(existingData()))
+        && validWeighingSession(incomingData())
         && validWeighingIdentityUnchanged()
         && (
-          (existingData().status == 'weighing' && incomingData().status == 'weighing'
-            && validLinkedWeighingAction(sessionId, 'entry_create')
-            && validWeighingCreateDelta(
-              existingData(),
-              incomingData(),
-              getAfter(weighingEntryPath(
-                sessionId,
-                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-              )).data
-            ))
-          ||
-          (existingData().status == 'weighing' && incomingData().status == 'weighing'
-            && validLinkedWeighingAction(sessionId, 'entry_update')
-            && validWeighingAggregateDelta(
-              existingData(),
-              incomingData(),
-              get(weighingEntryPath(
-                sessionId,
-                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-              )).data,
-              getAfter(weighingEntryPath(
-                sessionId,
-                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-              )).data
-            )
-            && incomingData().lastSequenceNo == existingData().lastSequenceNo)
-          ||
-          (existingData().status == 'weighing' && incomingData().status == 'weighing'
-            && validLinkedWeighingAction(sessionId, 'entry_void')
-            && validWeighingAggregateDelta(
-              existingData(),
-              incomingData(),
-              get(weighingEntryPath(
-                sessionId,
-                getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId
-              )).data,
-              {
-                'productType': 'fish_meal', 'entryMode': 'total', 'weightGrams': 0,
-                'fishMealQuality': null
-              }
-            )
-            && incomingData().lastSequenceNo == existingData().lastSequenceNo)
-          ||
           (existingData().status == 'weighing' && incomingData().status == 'completed'
             && existingData().totalWeightGrams > 0
             && validLinkedWeighingAction(sessionId, 'complete')
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
             ])
-            && incomingData().completedBy == request.auth.uid
-            && incomingData().completedAt == request.time)
-          ||
-          (existingData().status == 'completed' && incomingData().status == 'weighing'
-            && validLinkedWeighingAction(sessionId, 'reopen')
-            && incomingData().diff(existingData()).affectedKeys().hasOnly([
-              'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
-            ])
-            && incomingData().completedBy == null && incomingData().completedAt == null)
-          ||
-          (existingData().status in ['weighing', 'completed'] && incomingData().status == 'voided'
-            && validLinkedWeighingAction(sessionId, 'session_void')
-            && incomingData().diff(existingData()).affectedKeys().hasOnly([
-              'status', 'revision', 'updatedBy', 'updatedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
-            ])
-            && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
-            && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.reason
-              == incomingData().voidReason)
+            && ((existingData().completedAt == null && incomingData().completedBy == request.auth.uid && incomingData().completedAt == request.time)
+              || (existingData().completedAt is timestamp && incomingData().completedAt == existingData().completedAt && incomingData().completedBy == existingData().completedBy)))
           ||
           (existingData().status == 'completed' && incomingData().status == 'processed'
             && validLinkedWeighingAction(sessionId, 'process')
@@ -2054,6 +2024,9 @@ service cloud.firestore {
     match /purchaseSettlementDrafts/{draftId} {
       allow read: if signedIn();
       allow create: if signedIn() && validPurchaseSettlementDraft(incomingData())
+        && incomingData().revision == 1
+        && draftId == incomingData().productType + '_' + string(incomingData().dateSortKey) + '_' + incomingData().vesselId
+        && validSettlementSource() && validSettlementAudit(draftId)
         && incomingData().productType in ['fish_head', 'fish_meal']
         && incomingData().createdBy == request.auth.uid
         && incomingData().createdAt == request.time
@@ -2063,9 +2036,21 @@ service cloud.firestore {
         && (!('voidReason' in incomingData()) || incomingData().voidReason == null)
         && (!('voidedBy' in incomingData()) || incomingData().voidedBy == null)
         && (!('voidedAt' in incomingData()) || incomingData().voidedAt == null);
-      allow update: if signedIn() && validPurchaseSettlementDraft(incomingData())
+      allow update: if signedIn() && validSettlementSource() && validSettlementAudit(draftId)
+        && (!('sourceSessionId' in existingData()) || incomingData().sourceSessionId == existingData().sourceSessionId)
         && validPurchaseSettlementDraftUpdate();
       allow delete: if false;
+      match /actions/{revision} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && incomingData().afterSnapshot == getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)).data
+          && revision == string(incomingData().afterSnapshot.revision)
+          && incomingData().afterSnapshot.updatedAt == request.time
+          && incomingData().beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
+            ? get(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)).data : null)
+          && incomingData().performedBy == request.auth.uid && incomingData().performedAt == request.time;
+        allow update, delete: if false;
+      }
     }
 
     match /purchasePayments/{paymentId} {

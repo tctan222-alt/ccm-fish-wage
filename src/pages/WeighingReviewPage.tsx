@@ -1,10 +1,10 @@
 import { useEffect,useMemo,useState,type FormEvent } from 'react'
-import { Link,useParams } from 'react-router-dom'
+import { Link,useNavigate,useParams } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
 import type { Vessel } from '../lib/purchasing'
 import { rmInputToCentsPerKg } from '../lib/purchasing'
 import {
-  buildReceiptLinesFromWeighing,formatMalaysiaDate,formatWeightKg,groupWeighingEntries,
+  buildReceiptLinesFromWeighing,canEditCompletedWeighing,canModifyWeighing,completedWeighingEditDeadline,formatMalaysiaDate,formatWeightKg,groupWeighingEntries,
   type WeighingEntry,type WeighingSession,
 } from '../lib/weighing'
 import { loadActiveSuppliers } from '../services/businessPartners'
@@ -19,6 +19,7 @@ type Processor=typeof processWeighingSessionToReceipt
 export function WeighingReviewPage({
   bundleLoader=loadWeighingBundle,supplierLoader=loadActiveSuppliers,processor=processWeighingSessionToReceipt,
   reopener=reopenWeighingSession,voider=voidWeighingSession,vesselLoader=loadVessels,sessionUpdater=updateWeighingSessionDetails,
+  now=()=>new Date(),
 }:{
   bundleLoader?:(id:string)=>Promise<WeighingBundle>
   supplierLoader?:()=>Promise<BusinessPartner[]>
@@ -27,8 +28,10 @@ export function WeighingReviewPage({
   voider?:(id:string,reason:string)=>Promise<WeighingSession>
   vesselLoader?:()=>Promise<Vessel[]>
   sessionUpdater?:typeof updateWeighingSessionDetails
+  now?:()=>Date
 }){
   const {sessionId=''}=useParams()
+  const navigate=useNavigate()
   const [bundle,setBundle]=useState<WeighingBundle|null>(null),[suppliers,setSuppliers]=useState<BusinessPartner[]>([])
   const [supplierId,setSupplierId]=useState(''),[prices,setPrices]=useState<Record<string,string>>({})
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
@@ -40,6 +43,9 @@ export function WeighingReviewPage({
   const groups=useMemo(()=>groupWeighingEntries(bundle?.entries??[]),[bundle])
   if(!bundle)return <main><p className={error?'error':'notice'} role={error?'alert':undefined}>{error||'正在载入现场称重单…'}</p></main>
   const {session,entries}=bundle
+  const completedEditable=canEditCompletedWeighing(session,now())
+  const editable=canModifyWeighing(session,now())
+  const completedDeadline=completedWeighingEditDeadline(session)
   async function process(){
     const supplier=suppliers.find(item=>item.id===supplierId)
     if(!supplier){setError('请选择供应商。');return}
@@ -62,6 +68,7 @@ export function WeighingReviewPage({
       const next=kind==='reopen'?await reopener(session.id,reason):await voider(session.id,reason)
       setBundle(current=>current?{...current,session:next}:current)
       setMessage(kind==='reopen'?'现场单已重开。':'现场单已作废。')
+      if(kind==='reopen')navigate(`/weighing/${session.id}`)
     }catch(problem){setError(problem instanceof Error?problem.message:'操作失败。')}
     finally{setBusy(false)}
   }
@@ -78,6 +85,7 @@ export function WeighingReviewPage({
       <div><small>总重量</small><strong>{formatWeightKg(session.totalWeightGrams)} kg</strong></div></section>
     {session.status==='processed'&&<p className="notice">已处理，原始称重记录继续永久保留。
       {session.processedReceiptId&&<Link to={`/purchases/${session.processedReceiptId}`}>{session.processedReceiptCode}</Link>}</p>}
+    {session.status==='completed'&&session.productType&&<p className="notice"><Link className="primary-action" to={session.productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>查看{session.productType==='fish_head'?'鱼头':'鱼仔'}结单</Link></p>}
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="notice" role="status">{message}</p>}
     <section className="weighing-review-section" role="region" aria-label="分类汇总与单价"><h2>分类汇总与单价</h2>
       <div className="weighing-group-list">{groups.map(group=><article key={group.key} className="weighing-group-card">
@@ -108,13 +116,15 @@ export function WeighingReviewPage({
       </article>)}
       {(bundle.actions??[]).length===0&&<p className="notice">尚无修改或作废记录。</p>}</div>
     </section>
-    {session.status==='completed'&&<section className="weighing-review-actions">
-      <button type="button" disabled={busy} onClick={()=>void changeStatus('reopen')}>重开称重</button>
+    {session.status==='completed'&&completedEditable&&<section className="weighing-review-actions">
+      <button type="button" disabled={busy} onClick={()=>void changeStatus('reopen')}>修改称重（7 天内）</button>
       <button className="danger-action" type="button" disabled={busy} onClick={()=>void changeStatus('void')}>作废现场单</button>
     </section>}
-    {session.status!=='processed'&&session.status!=='voided'&&<section className="weighing-review-actions">
+    {(session.status==='completed'||session.status==='weighing')&&!editable&&<p className="notice">{completedDeadline?'已超过完成称重后的 7 天修改期，只能查看结单和原始记录。':'无法确认首次完成时间，暂时只能查看。'}</p>}
+    {editable&&<section className="weighing-review-actions">
       <button type="button" disabled={busy} onClick={()=>setEditingSession(true)}>后台修改本单</button>
       {session.status==='weighing'&&<Link className="page-link" to={`/weighing/${session.id}`}>修改原始篮记录</Link>}
+      {session.status==='completed'&&completedDeadline&&<small>可修改至 {completedDeadline.toLocaleString('en-GB',{timeZone:'Asia/Kuala_Lumpur',hour12:false})}</small>}
     </section>}
     {editingSession&&<SessionEditDialog session={session} vessels={vessels} busy={busy} close={()=>setEditingSession(false)} save={saveSession}/>}
   </main>

@@ -54,6 +54,21 @@ export interface PurchaseSettlementDraft {
   updatedBy?:string
   revision:number
   voided:false
+  sourceSessionId?:string
+  sourceSessionRevision?:number
+}
+
+/** Recalculate current weights while retaining the saved price snapshots. */
+export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:PurchaseSettlementLine[]):PurchaseSettlementLine[]{
+  const identity=(line:PurchaseSettlementLine)=>line.lineType==='fish_head'
+    ?`head:${line.fishSpeciesCodeSnapshot??line.fishSpeciesId??line.nameSnapshot}`:`meal:${line.qualityCodeSnapshot}`
+  return current.map(line=>{
+    const previous=saved.find(item=>identity(item)===identity(line))
+    if(!previous)return line
+    const next={...line,defaultUnitPriceCentsPerKg:previous.defaultUnitPriceCentsPerKg,
+      unitPriceCentsPerKg:previous.unitPriceCentsPerKg,priceWasEdited:previous.priceWasEdited}
+    return {...next,amountCents:calculateSettlementLineAmount(next)}
+  })
 }
 
 export function parseSettlementPrice(value:string):number|null {

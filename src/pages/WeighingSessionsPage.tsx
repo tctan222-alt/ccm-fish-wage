@@ -2,6 +2,7 @@ import { useEffect,useMemo,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { formatMalaysiaDate,formatWeightKg,type WeighingSession,type WeighingSessionStatus } from '../lib/weighing'
 import { loadWeighingSessions } from '../services/weighing'
+import { businessDateFromLegacy } from '../lib/businessDate'
 
 const STATUS_NAMES:Record<WeighingSessionStatus,string>={
   weighing:'称重中',completed:'已完成',processed:'已处理',voided:'已作废',
@@ -15,7 +16,7 @@ export function WeighingSessionsPage({loader=loadWeighingSessions}:{loader?:()=>
   useEffect(()=>{loader().then(setItems).catch(()=>{setItems([]);setError('无法载入现场称重单。')})},[loader])
   const vessels=useMemo(()=>Array.from(new Map((items??[]).map(item=>[item.vesselId,item.vesselCodeSnapshot])).entries()),[items])
   const visible=useMemo(()=>(items??[]).filter(item=>
-    (!date||item.weighingDate===date)&&(!vessel||item.vesselId===vessel)&&(status==='all'||item.status===status)
+    (!date||businessDateFromLegacy(item.weighingDate)===businessDateFromLegacy(date))&&(!vessel||item.vesselId===vessel)&&(status==='all'||item.status===status)
       &&`${item.sessionCode} ${item.externalSlipNo}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())
   ),[items,date,vessel,status,search])
   return <main className="weighing-admin-page"><header><p className="eyebrow">CCM Fishery</p><h1>现场称重单</h1>
