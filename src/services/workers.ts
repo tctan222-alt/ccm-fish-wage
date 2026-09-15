@@ -27,7 +27,7 @@ export async function loadWorkers():Promise<Worker[]> {
 export async function loadActiveWorkers():Promise<Worker[]> {
   if(!firebaseConfigured)throw new Error('Firebase is not configured')
   const snapshot=await getDocs(query(collection(db,'workers'),where('active','==',true)))
-  return sortWorkers(snapshot.docs.map(item=>fromSnapshot(item.id,item.data()))).slice(0,20)
+  return sortWorkers(snapshot.docs.map(item=>fromSnapshot(item.id,item.data())))
 }
 
 export async function createWorker(input:WorkerInput| string,order:number):Promise<Worker> {
