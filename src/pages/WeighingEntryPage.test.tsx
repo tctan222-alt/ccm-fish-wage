@@ -12,20 +12,20 @@ const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesse
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 
 function Location(){return <output aria-label="route">{useLocation().pathname}</output>}
-function setup(sync=remoteSync()){
-  const store=createMemoryWeighingStore()
-  render(<MemoryRouter initialEntries={['/weighing/new']}><Location/><WeighingEntryPage
+function setup(sync=remoteSync(),store=createMemoryWeighingStore()){
+  const view=render(<MemoryRouter initialEntries={['/weighing/new']}><Location/><WeighingEntryPage
     vesselLoader={async()=>vessels}
     speciesLoader={async()=>DEFAULT_FISH_SPECIES}
     openSessionLoader={async()=>null}
     closedSessionLoader={async()=>null}
+    bundleLoader={async()=>{throw new Error('offline')}}
     offlineStore={store}
     remoteSync={sync}
     today={()=> '2026-07-30'}
     now={()=> '2026-07-30T12:00:00.000+08:00'}
     idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}
   /></MemoryRouter>)
-  return {store,sync}
+  return {store,sync,...view}
 }
 
 describe('iPhone 现场称重单页',()=>{
@@ -342,11 +342,79 @@ describe('iPhone 现场称重单页',()=>{
     await screen.findByText('已保存')
     fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
     fireEvent.click(screen.getByRole('button',{name:'确认完成'}))
-    await waitFor(()=>expect(screen.getByText('已完成，等待同步')).toBeInTheDocument())
+    await screen.findByText('已完成称重，可以查看结单。')
     expect(screen.getByLabelText('重量（kg）')).toBeDisabled()
     expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
     expect(screen.getByRole('link',{name:'查看鱼头结单'})).toHaveAttribute('href','/fish-head-settlement/session-v978-20260730')
     expect(screen.getByRole('link',{name:'修改称重（完成后 7 天内）'})).toHaveAttribute('href','/weighing/session-v978-20260730/review')
+  })
+
+  it('其他船留有失败操作时，当前船仍可完成同步并查看结单',async()=>{
+    const {store,sync}=setup()
+    await screen.findByLabelText('重量（kg）')
+    await store.putOperation({id:'old-error',type:'entry_create',sessionId:'other-boat',entryId:'old-entry',createdAtClient:'2026-07-29T00:00:00Z',payload:{}})
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(()=>expect(screen.getByRole('button',{name:'完成称重'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认完成'}))
+    expect(await screen.findByRole('link',{name:'查看鱼头结单'})).toHaveAttribute('href','/fish-head-settlement/session-v978-20260730')
+    expect(sync.mock.calls.every(([op])=>op.sessionId==='session-v978-20260730')).toBe(true)
+    expect((await store.getPending()).map(op=>op.id)).toEqual(['old-error'])
+  })
+
+  it('完成同步失败保留本机记录和具体错误，重试成功才显示结单入口',async()=>{
+    const sync=remoteSync(),perform=sync.getMockImplementation()!
+    let offline=true
+    sync.mockImplementation(async op=>{
+      if(op.type==='complete'&&offline)throw new Error('network unavailable')
+      return perform(op)
+    })
+    const {store}=setup(sync)
+    fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(()=>expect(screen.getByRole('button',{name:'完成称重'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认完成'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('network unavailable')
+    expect(screen.queryByRole('link',{name:'查看鱼头结单'})).not.toBeInTheDocument()
+    expect(await store.getPending()).toHaveLength(1)
+    expect(await store.getEntries('session-v978-20260730')).toEqual([expect.objectContaining({weightGrams:60000})])
+    offline=false
+    fireEvent.click(screen.getByRole('button',{name:'重试同步'}))
+    expect(await screen.findByRole('link',{name:'查看鱼头结单'})).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(await store.getPending()).toHaveLength(0)
+    expect(screen.getByText('已完成称重，可以查看结单。')).toBeInTheDocument()
+  })
+
+  it.each(['draft','session'])('从 %s 重新进入本机已完成但尚未同步的单时自动恢复同步',async route=>{
+    const sync=remoteSync(),perform=sync.getMockImplementation()!
+    sync.mockImplementation(async op=>{
+      if(op.type==='complete')throw new Error('offline')
+      return perform(op)
+    })
+    const first=setup(sync)
+    fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await waitFor(()=>expect(screen.getByRole('button',{name:'完成称重'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认完成'}))
+    await screen.findByRole('alert')
+    first.unmount()
+    if(route==='draft')setup(remoteSync(),first.store)
+    else {
+      const local=(await first.store.getSession('session-v978-20260730'))!
+      const entries=await first.store.getEntries(local.id)
+      render(<MemoryRouter initialEntries={[`/weighing/${local.id}`]}><Routes>
+        <Route path="/weighing/:sessionId" element={<WeighingEntryPage
+          vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES}
+          bundleLoader={async()=>({session:{...local,status:'weighing'},entries})}
+          offlineStore={first.store} remoteSync={remoteSync()}/>}/>
+      </Routes></MemoryRouter>)
+    }
+    expect(await screen.findByRole('link',{name:'查看鱼头结单'})).toBeInTheDocument()
+    expect(await first.store.getPending()).toHaveLength(0)
   })
 
   it('曾在线载入后，离线重开仍可使用缓存的船号和鱼名继续录入',async()=>{

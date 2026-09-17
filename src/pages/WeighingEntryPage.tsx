@@ -113,6 +113,8 @@ export function WeighingEntryPage({
   const [remark,setRemark]=useState('')
   const [pending,setPending]=useState(0)
   const [busy,setBusy]=useState(false)
+  const [syncing,setSyncing]=useState(false)
+  const [syncError,setSyncError]=useState('')
   const [message,setMessage]=useState('')
   const [error,setError]=useState('')
   const [referenceAttempt,setReferenceAttempt]=useState(0)
@@ -174,10 +176,20 @@ export function WeighingEntryPage({
   useEffect(()=>{
     let cancelled=false
     if(sessionId){
-      setContextLoading(true);setSession(null);setEntries([]);setPending(0)
+      contextRequest.current+=1
+      setContextLoading(true);setSession(null);setEntries([]);setPending(0);setSyncError('');setSyncing(false);setMessage('')
       void bundleLoader(sessionId).then(async bundle=>{
         if(cancelled)return
         if(store){
+          const operations=(await store.getPending()).filter(item=>item.sessionId===sessionId)
+          const local=await store.getSession(sessionId)
+          if(local&&operations.length>0){
+            const localEntries=await store.getEntries(sessionId)
+            bundle={session:bundle.session.status==='weighing'?local:bundle.session,
+              entries:[...new Map([...bundle.entries,...localEntries].map(entry=>[entry.id,entry])).values()]}
+          }
+          if(cancelled)return
+          setPending(operations.length)
           await store.putSession(bundle.session)
           for(const entry of bundle.entries)await store.putEntry(entry)
           await store.putMeta(weighingDraftKey(bundle.session.productType??'fish_head',bundle.session.weighingDate,bundle.session.vesselId),bundle.session.id)
@@ -200,7 +212,7 @@ export function WeighingEntryPage({
       const key=weighingDraftKey(productType,date,vesselId)
       let local:WeighingSession|undefined,localEntries:WeighingEntry[]=[],pendingCount=0,localId:string|undefined
       try{
-        setSession(null);setEntries([]);setPending(0);setExternalSlipNo('')
+        setSession(null);setEntries([]);setPending(0);setExternalSlipNo('');setSyncError('');setSyncing(false);setMessage('')
         localId=await store.getMeta(key)
         if(!isCurrent())return
         if(localId){
@@ -235,22 +247,37 @@ export function WeighingEntryPage({
     return()=>{cancelled=true}
   },[sessionId,vesselId,date,productType,store,openSessionLoader,closedSessionLoader,bundleLoader])
 
-  const refreshLocal=useCallback(async(currentSessionId:string)=>{
+  const refreshLocal=useCallback(async(currentSessionId:string,request:number)=>{
     if(!store)return
     const [savedEntries,operations,savedSession]=await Promise.all([
       store.getEntries(currentSessionId),store.getPending(),store.getSession(currentSessionId),
     ])
+    if(request!==contextRequest.current)return
     setEntries(savedEntries);setPending(operations.filter(item=>item.sessionId===currentSessionId).length)
     if(savedSession)setSession(savedSession)
+    return savedSession
   },[store])
 
-  const syncNow=useCallback(async()=>{
+  const syncNow=useCallback(async(targetSessionId?:string)=>{
     if(!store)return
-    const result=await flushWeighingQueue(store,{sync:remoteSync})
-    const currentId=await store.getMeta(weighingDraftKey(productType,date,vesselId))
-    if(currentId)await refreshLocal(currentId)
-    if(result.failed)setMessage(`${result.lastError} 尚未同步 ${result.pending} 笔`)
-  },[store,remoteSync,productType,vesselId,date,refreshLocal])
+    const request=contextRequest.current
+    const currentId=targetSessionId??sessionId??await store.getMeta(weighingDraftKey(productType,date,vesselId))
+    if(!currentId||request!==contextRequest.current)return
+    setSyncing(true);setSyncError('')
+    try{
+      const result=await flushWeighingQueue(store,{sync:remoteSync,sessionId:currentId})
+      const savedSession=await refreshLocal(currentId,request)
+      if(request!==contextRequest.current)return
+      if(result.failed)setSyncError(`同步未完成：${result.lastError}。记录仍保留在本机，请重试。`)
+      else if(savedSession?.status==='completed'&&result.pending===0)setMessage('已完成称重，可以查看结单。')
+    }catch(problem){
+      if(request===contextRequest.current)setSyncError(`同步未完成：${problem instanceof Error?problem.message:'请稍后重试。'}。记录仍保留在本机。`)
+    }finally{if(request===contextRequest.current)setSyncing(false)}
+  },[store,remoteSync,sessionId,productType,vesselId,date,refreshLocal])
+
+  useEffect(()=>{
+    if(!contextLoading&&session?.status==='completed'&&pending>0&&!saveLock.current&&(!sessionId||session.id===sessionId))void syncNow(session.id)
+  },[contextLoading,sessionId,session?.id,session?.status,pending,syncNow])
 
   useEffect(()=>{
     const retry=()=>{void syncNow()}
@@ -329,7 +356,7 @@ export function WeighingEntryPage({
       setSession(next);setEntries(current=>[{...entry,syncStatus:'syncing'},...current]);setPending(current=>current+1)
       setWeight('');if(entryMode==='total')setRemark('')
       setMessage('已保存');window.dispatchEvent(new Event('ccm:form-saved'));navigator.vibrate?.(40);queueMicrotask(()=>weightRef.current?.focus())
-      await syncNow()
+      await syncNow(base.id)
     }finally{saveLock.current=false;setBusy(false)}
   }
 
@@ -362,12 +389,17 @@ export function WeighingEntryPage({
   }
 
   async function complete(){
-    if(!store||!session)return
+    if(!store||!session||saveLock.current||busy||syncing||contextLoading||session.status!=='weighing')return
     const local={...session,status:'completed' as const,revision:session.revision+1}
     const operationId=`complete_${session.id}_${local.revision}`
-    await store.commitOperation({session:local,operation:{id:operationId,type:'complete',sessionId:session.id,
-      entryId:null,createdAtClient:now(),payload:{session:local}}})
-    setSession(local);setPending(current=>current+1);setShowComplete(false);setMessage('已完成，等待同步');await syncNow()
+    saveLock.current=true;setBusy(true);setError('')
+    try{
+      await store.commitOperation({session:local,operation:{id:operationId,type:'complete',sessionId:session.id,
+        entryId:null,createdAtClient:now(),payload:{session:local}}})
+      setSession(local);setPending(current=>current+1);setShowComplete(false);setMessage('正在完成称重并同步…')
+      await syncNow(session.id)
+    }catch(problem){setError(problem instanceof Error?problem.message:'无法保存完成申请，请重试。')}
+    finally{saveLock.current=false;setBusy(false)}
   }
 
   async function addCustomSpecies(value:{displayName:string;save:boolean}){
@@ -427,6 +459,7 @@ export function WeighingEntryPage({
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
       {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
+      {syncError&&<p className="error" role="alert">{syncError}</p>}
       {message&&<p className="weighing-message" role="status">{message}</p>}
       <div className="recent-entry">
         <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg</span></>:<span>尚无记录</span>}</div>
@@ -435,12 +468,12 @@ export function WeighingEntryPage({
       <div className="weighing-compact-summary">
         <strong>{summary.basketCount} 篮</strong><strong>{formatWeightKg(summary.totalWeightGrams)} kg</strong>
         <span>{pending>0?`尚未同步 ${pending} 笔`:'全部已同步'}</span>
-        {pending>0&&<button type="button" onClick={()=>void syncNow()}>重新同步</button>}
+        {pending>0&&<button type="button" disabled={syncing} onClick={()=>void syncNow()}>{syncing?'正在同步…':'重新同步'}</button>}
       </div>
       {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={activeContextEntries}/></section>}
     </section>
 
-    {locked&&<p className="session-lock">{session?.status==='completed'?'已完成称重，手机端已锁定。':
+    {locked&&<p className="session-lock">{session?.status==='completed'?(pending>0?'完成申请已保存，等待同步。':'已完成称重，手机端已锁定。'):
       session?.status==='processed'?'已结单，现场录入已锁定。':session?.status==='voided'?'现场单已作废。':'已超过首次完成称重后的 7 天修改期，只能查看。'}</p>}
 
     <section className="weighing-history"><h2>完整历史记录</h2>
@@ -451,9 +484,10 @@ export function WeighingEntryPage({
         <em>{item.voided?'已作废':item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
       </button>)}</div>
     </section>
-    {session?.status==='weighing'&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" onClick={()=>setShowComplete(true)}>完成称重</button>}
+    {session?.status==='weighing'&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" disabled={busy||syncing||contextLoading} onClick={()=>setShowComplete(true)}>完成称重</button>}
     {session?.status==='completed'&&<div className="settlement-actions">{pending===0?<><Link className="primary-action settlement-link" to={productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>查看{productType==='fish_head'?'鱼头':'鱼仔'}结单</Link>
-      <Link className="page-link" to={`/weighing/${session.id}/review`}>修改称重（完成后 7 天内）</Link></>:<p className="notice">称重尚未同步完成，请先重新同步后查看结单。</p>}</div>}
+      <Link className="page-link" to={`/weighing/${session.id}/review`}>修改称重（完成后 7 天内）</Link></>:<div className="notice"><p>{syncing?'正在同步称重，完成后即可查看结单。':'称重记录已保存在本机，同步成功后即可查看结单。'}</p>
+      <button type="button" disabled={syncing} onClick={()=>void syncNow(session.id)}>重试同步</button></div>}</div>}
     {showComplete&&session&&<CompleteDialog session={session} pending={pending} close={()=>setShowComplete(false)} confirm={()=>void complete()}/>}
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
       save={after=>updateEntry(editing,after)} voidEntry={reason=>queueVoid(editing,reason)}/>}

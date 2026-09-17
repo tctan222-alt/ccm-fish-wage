@@ -33,10 +33,29 @@ export async function queueWeighingOperation(store:WeighingOfflineStore,value:Pe
   await store.putOperation(value)
 }
 
-export async function flushWeighingQueue(store:WeighingOfflineStore,remote:{
+interface WeighingSyncOptions {
   sync:(operation:PendingWeighingOperation)=>Promise<{session?:WeighingSession;entry?:WeighingEntry}>
-}){
-  const operations=await store.getPending()
+  sessionId?:string
+}
+
+const activeFlushes=new WeakMap<WeighingOfflineStore,Promise<unknown>>()
+
+export function flushWeighingQueue(store:WeighingOfflineStore,remote:WeighingSyncOptions){
+  // Online events, manual retries and completion may overlap. Read the queue
+  // only after the previous flush has finished applying its acknowledgements.
+  const previous=activeFlushes.get(store)??Promise.resolve()
+  const running=previous.catch(()=>undefined).then(()=>flushPendingOperations(store,remote))
+  activeFlushes.set(store,running)
+  const release=()=>{if(activeFlushes.get(store)===running)activeFlushes.delete(store)}
+  void running.then(release,release)
+  return running
+}
+
+async function flushPendingOperations(store:WeighingOfflineStore,remote:WeighingSyncOptions){
+  const matches=(operation:PendingWeighingOperation)=>!remote.sessionId||operation.sessionId===remote.sessionId
+  const operations=(await store.getPending()).filter(matches).sort((a,b)=>
+    a.createdAtClient.localeCompare(b.createdAtClient)
+      ||Number(a.type==='complete')-Number(b.type==='complete')||a.id.localeCompare(b.id))
   let synced=0
   for(const operation of operations){
     try{
@@ -55,11 +74,11 @@ export async function flushWeighingQueue(store:WeighingOfflineStore,remote:{
       await store.removeOperation(operation.id)
       synced+=1
     }catch(problem){
-      return {synced,pending:operations.length-synced,failed:true,
+      return {synced,pending:(await store.getPending()).filter(matches).length,failed:true,
         lastError:problem instanceof Error?problem.message:'同步失败，请稍后重试。'}
     }
   }
-  return {synced,pending:0,failed:false,lastError:null}
+  return {synced,pending:(await store.getPending()).filter(matches).length,failed:false,lastError:null}
 }
 
 const PREFIX={session:'session:',entry:'entry:',operation:'operation:',meta:'meta:'} as const
