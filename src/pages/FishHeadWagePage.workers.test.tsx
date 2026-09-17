@@ -13,7 +13,7 @@ vi.mock('firebase/firestore',()=>({
 
 import { FishHeadWagePage } from './FishHeadWagePage'
 
-afterEach(()=>{cleanup();vi.clearAllMocks();vi.unstubAllEnvs()})
+afterEach(()=>{cleanup();vi.clearAllMocks()})
 
 interface RawWorkerFixture {
   id:string
@@ -25,9 +25,10 @@ interface RawWorkerFixture {
 }
 
 // These anonymized shapes preserve the fields and ordering observed in the
-// production collection: no document has workerDepartment, and the first three
-// have no department field either. Names and IDs are deliberately synthetic.
-function productionWorkerShapes():RawWorkerFixture[]{
+// production collection before the approved correction: no document had
+// workerDepartment, and the first three had no department field either.
+// Names and IDs are deliberately synthetic.
+function legacyProductionWorkerShapes():RawWorkerFixture[]{
   return [
     ...Array.from({length:3},(_,index)=>({
       id:`unclassified-${index+1}`,name:`旧资料工人 ${index+1}`,active:true,order:index,
@@ -100,9 +101,8 @@ it('loads cutting workers beyond the sixth from a mixed-department roster and sa
   expect(seventh).toBeEnabled()
 })
 
-it('reproduces six cutting workers from the sixteen actual production field shapes without guessing missing departments',async()=>{
-  vi.stubEnv('DEV',true)
-  const workers=productionWorkerShapes()
+it('reproduces six cutting workers from the sixteen legacy production field shapes without guessing missing departments',async()=>{
+  const workers=legacyProductionWorkerShapes()
   mockActiveWorkerCollection(workers)
   render(<MemoryRouter><FishHeadWagePage/></MemoryRouter>)
 
@@ -111,14 +111,12 @@ it('reproduces six cutting workers from the sixteen actual production field shap
   for(const worker of [...workers.slice(0,3),...workers.slice(9)]){
     expect(screen.queryByRole('button',{name:worker.name})).not.toBeInTheDocument()
   }
-  expect(screen.getByTestId('worker-filter-diagnostics'))
-    .toHaveTextContent('已载入 16 名 active workers，其中 6 名属于切鱼头')
 })
 
-it('shows and selects all nine cutting workers after the proposed three-record classification and saves the selected ID and name',async()=>{
-  // This is only a proposed corrected-data fixture, not an automatic migration
-  // or a change to the mapper's treatment of missing department fields.
-  const workers=productionWorkerShapes().map(worker=>worker.order<3?{
+it('shows and selects all nine cutting workers after the approved three-record classification and saves the selected ID and name',async()=>{
+  // Match the approved data correction without changing how the mapper treats
+  // workers whose department fields are still missing.
+  const workers=legacyProductionWorkerShapes().map(worker=>worker.order<3?{
     ...worker,department:'fish_head',workerDepartment:'fish_head_cutting',
   }:worker)
   mockActiveWorkerCollection(workers)
@@ -147,7 +145,7 @@ it('shows and selects all nine cutting workers after the proposed three-record c
 
 it('keeps CCM, other, inactive and unclassified workers out and respects canonical department precedence',async()=>{
   const workers:RawWorkerFixture[]=[
-    ...productionWorkerShapes(),
+    ...legacyProductionWorkerShapes(),
     {id:'canonical-ccm',name:'明确普通部门',active:true,order:16,workerDepartment:'ccm_general'},
     {id:'canonical-other',name:'明确其他部门',active:true,order:17,workerDepartment:'other'},
     {id:'inactive-cutting',name:'停用切鱼头工人',active:false,order:18,department:'fish_head'},
@@ -162,15 +160,4 @@ it('keeps CCM, other, inactive and unclassified workers out and respects canonic
   for(const worker of [...workers.slice(0,3),...workers.slice(9)]){
     expect(screen.queryByRole('button',{name:worker.name})).not.toBeInTheDocument()
   }
-})
-
-it('does not expose worker diagnostics in production UI',async()=>{
-  vi.stubEnv('DEV',false)
-  mockActiveWorkerCollection(productionWorkerShapes())
-  render(<MemoryRouter><FishHeadWagePage/></MemoryRouter>)
-
-  await screen.findByRole('button',{name:'已分类工人 1'})
-  expect(displayedWorkerNames()).toHaveLength(6)
-  expect(screen.queryByTestId('worker-filter-diagnostics')).not.toBeInTheDocument()
-  expect(screen.queryByText(/已载入 .* 名 active workers/)).not.toBeInTheDocument()
 })

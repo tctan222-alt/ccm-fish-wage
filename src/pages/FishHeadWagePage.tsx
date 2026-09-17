@@ -29,7 +29,6 @@ export function FishHeadWagePage({
   today=()=>malaysiaBusinessDate(new Date(now())),
 }:PageProps){
   const [workers,setWorkers]=useState<Worker[]|null>(null)
-  const [workerDiagnostics,setWorkerDiagnostics]=useState<{active:number;unclassified:number}|null>(null)
   const [worker,setWorker]=useState<Worker|null>(null)
   const [rate,setRate]=useState<number|null>(12)
   const [custom,setCustom]=useState('')
@@ -48,15 +47,8 @@ export function FishHeadWagePage({
 
   useEffect(()=>{
     workerLoader()
-      .then(items=>{
-        const active=items.filter(item=>item.active)
-        setWorkers(active.filter(item=>workerDepartmentFromWorker(item)==='fish_head_cutting'))
-        if(import.meta.env.DEV)setWorkerDiagnostics({
-          active:active.length,
-          unclassified:active.filter(item=>workerDepartmentFromWorker(item)===undefined).length,
-        })
-      })
-      .catch(()=>{setWorkers([]);setWorkerDiagnostics(null);setError('无法载入工人，请稍后再试。')})
+      .then(items=>setWorkers(items.filter(item=>item.active&&workerDepartmentFromWorker(item)==='fish_head_cutting')))
+      .catch(()=>{setWorkers([]);setError('无法载入工人，请稍后再试。')})
   },[workerLoader])
 
   const selectedRate=rate??parseRateCents(custom)
@@ -215,9 +207,6 @@ export function FishHeadWagePage({
 
     <section>
       <h2>1. 工人</h2>
-      {import.meta.env.DEV&&workerDiagnostics&&workers!==null&&<p className="notice" data-testid="worker-filter-diagnostics">
-        已载入 {workerDiagnostics.active} 名 active workers，其中 {workers.length} 名属于切鱼头。未分类 {workerDiagnostics.unclassified} 名。
-      </p>}
       {workers===null?<p>正在载入工人…</p>:workers.length===0?
         <p className="notice">没有启用中的工人。请先新增或重新启用工人。</p>:
         <div className="workers">
