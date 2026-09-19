@@ -1,1 +1,42 @@
-<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>潮州话语音识别测试</title><link rel="stylesheet" href="/style.css"></head><body><main><h1>潮州话语音识别测试</h1><p>本地实验工具。同一段音频只在点击「开始比较」后发送给所选服务。不会写入 ERP 业务记录。</p><p id="status" role="status">正在载入…</p><fieldset id="inputs"><legend>标准答案与录音</legend><label>预期鱼种<select id="fish"></select></label><label>预期重量 kg<input id="weight" inputmode="decimal" placeholder="80.5"></label><div id="providers"></div><div class="actions"><button id="start">开始录音</button><button id="stop" disabled>停止录音</button><label>或选择音频文件<input id="file" type="file" accept="audio/*,.wav"></label></div><p>最长 45 秒。录音与文件均在本地转换为同一份 16 kHz 单声道 WAV，再比较两个服务。</p><audio id="play" controls></audio><p id="audio-info">尚无音频</p><button id="compare" disabled>开始比较</button></fieldset><h2>累计结果</h2><p>准确率来自已保存的真实测试；服务错误也会单独计数。</p><div id="statistics"></div><a href="/api/export.csv" download>导出 CSV</a><h2>逐次识别结果</h2><p>「记为语音别名」只影响未来测试，历史结果保持不变。候选按钮只选择别名目标，不会修改评分。</p><div id="results"></div></main><script type="module" src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="zh-Hans">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>潮州话语音识别测试</title><link rel="stylesheet" href="/style.css">
+</head>
+<body><main>
+  <h1>潮州话语音识别测试</h1>
+  <p>本地实验工具。同一段音频只在点击「开始比较」后发送给所选服务。不会写入 ERP 业务记录。</p>
+  <section aria-label="服务状态" class="service-status">
+    <p>Server：<strong id="server-status" role="status">正在检查</strong></p>
+    <p>OpenAI：<strong id="openai-status">尚未确认</strong></p>
+    <p>Tencent：<strong id="tencent-status">尚未确认</strong></p>
+    <button id="refresh" type="button">重新检查连接</button>
+  </section>
+  <p id="master-info"></p>
+  <p id="status" role="status" aria-live="polite">正在载入…</p>
+  <fieldset id="inputs">
+    <legend>标准答案与录音</legend>
+    <label>预期鱼种<select id="fish"></select></label>
+    <label>预期重量 kg<input id="weight" inputmode="decimal" placeholder="80.5"></label>
+    <div id="providers">
+      <label><input id="provider-openai" type="checkbox" value="openai" disabled>比较 OpenAI</label>
+      <label><input id="provider-tencent" type="checkbox" value="tencent" disabled>比较 Tencent</label>
+    </div>
+    <div class="actions">
+      <button id="start" type="button">开始录音</button><button id="stop" type="button" disabled>停止录音</button>
+      <label>或选择音频文件<input id="file" type="file" accept="audio/*,.wav"></label>
+    </div>
+    <p>最长 45 秒。录音与文件均在本地转换为同一份 16 kHz 单声道 WAV，再比较所选可用服务。</p>
+    <audio id="play" controls></audio><p id="audio-info" role="status">录音：未录音</p>
+    <div class="compare-action">
+      <button id="compare" type="button" disabled aria-describedby="compare-reason">开始比较</button>
+      <p id="compare-reason" role="status" aria-live="polite">请先录音；正在检查本地识别服务。</p>
+    </div>
+  </fieldset>
+  <h2>累计结果</h2><p>准确率来自已保存的测试；服务错误也会单独计数。</p>
+  <p id="history-status" role="status"></p><div id="statistics"></div><a href="/api/export.csv" download>导出 CSV</a>
+  <h2>逐次识别结果</h2><p>「记为语音别名」只影响未来测试，历史结果保持不变。候选按钮只选择别名目标，不会修改评分。</p>
+  <div id="results"></div>
+</main><script type="module" src="/app.js"></script></body>
+</html>
