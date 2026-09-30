@@ -606,6 +606,25 @@ html,body,#root,main{
 .weighing-live-summary h2{margin:0 0 4px;font-size:.88rem}.weighing-live-summary table{width:100%;border-collapse:collapse;font-size:.8rem}
 .weighing-live-summary th,.weighing-live-summary td{padding:3px 0;text-align:left}.weighing-live-summary thead{color:#486581;font-size:.74rem}
 .weighing-live-summary th:not(:first-child),.weighing-live-summary td:not(:first-child){text-align:right}.weighing-live-summary tbody th{font-weight:800}
+.fish-head-live-valuation{min-width:0;font-variant-numeric:tabular-nums}
+.fish-head-live-valuation .valuation-caption{margin:0 0 5px;color:#486581;font-size:.75rem}
+.fish-head-live-valuation table{table-layout:fixed}
+.fish-head-live-valuation th,.fish-head-live-valuation td{padding:5px 3px;overflow-wrap:anywhere;vertical-align:top}
+.fish-head-live-valuation thead th:first-child{width:24%}
+.fish-head-live-valuation tbody tr+tr{border-top:1px solid #d9e2ec}
+.fish-head-live-valuation tbody td:last-child{font-weight:800;color:#075985}
+.valuation-totals{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 8px;margin-top:6px;padding-top:7px;border-top:2px solid #829ab1;font-size:.82rem;overflow-wrap:anywhere}
+.valuation-totals>span{display:flex;flex-wrap:wrap;gap:3px 6px}
+.valuation-totals p{grid-column:1/-1;margin:0}.valuation-totals p strong{font-size:1rem;color:#075985}
+.valuation-totals .valuation-missing{color:#854d0e;font-weight:700}
+@media(max-width:430px){
+  .fish-head-live-valuation table,.fish-head-live-valuation tbody{display:block}
+  .fish-head-live-valuation thead{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+  .fish-head-live-valuation tbody tr{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:2px 5px;padding:5px 0}
+  .fish-head-live-valuation tbody th{grid-column:1/-1;padding:0;text-align:left;font-size:.9rem}
+  .weighing-live-summary .fish-head-live-valuation tbody td{min-width:0;padding:0;text-align:left;font-size:.8rem}
+  .fish-head-live-valuation tbody td::before{content:attr(data-label);display:block;margin-bottom:2px;color:#486581;font-size:.7rem;font-weight:500}
+}
 .settlement-link{display:block;margin-top:8px;text-align:center}
 .purchase-settlement-page{max-width:1100px;overflow-x:hidden}.settlement-context{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0;padding:14px;background:#fff;border:2px solid #d9e2ec;border-radius:12px}.settlement-context label{display:grid;gap:5px;font-weight:800;min-width:0}.settlement-context input,.settlement-context select{width:100%;min-width:0;min-height:52px;padding:9px;border:2px solid #627d98;border-radius:9px;background:#fff;font:inherit}.settlement-context small{color:#486581}.settlement-table-section{padding:14px;background:#fff;border:2px solid #d9e2ec;border-radius:12px}.settlement-meta{margin:0 0 10px;color:#486581;font-weight:800}.settlement-table-scroll{width:100%;overflow-x:auto}.settlement-table{width:100%;min-width:760px;border-collapse:collapse;font-variant-numeric:tabular-nums}.settlement-table caption{text-align:left;padding:0 0 9px;font-weight:900;font-size:1.1rem}.settlement-table th,.settlement-table td{padding:10px 12px;border-bottom:1px solid #d9e2ec;text-align:right;white-space:nowrap}.settlement-table th:first-child,.settlement-table td:first-child{text-align:left}.settlement-table thead th{background:#eef4f7;color:#486581;font-size:.85rem}.settlement-table tbody th{font-weight:900}.settlement-table input{width:110px;min-height:46px;padding:7px;border:2px solid #075985;border-radius:8px;font:inherit;text-align:right}.settlement-table tfoot th,.settlement-table tfoot td{border-top:2px solid #075985;border-bottom:0;font-weight:900;font-size:1.1rem}.settlement-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:12px}.settlement-actions button{min-height:50px}.settlement-actions .primary-action{min-width:180px}
 @media(max-width:700px){.settlement-context{grid-template-columns:1fr 1fr}.settlement-receipt-no{grid-column:1/3}.settlement-actions{display:grid;grid-template-columns:1fr 1fr}}

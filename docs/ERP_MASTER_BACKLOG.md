@@ -16,8 +16,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | Priority | 业务范围 | 当前状态 / PR |
 |---|---|---|
 | 0 | 当前 main、PR、生产发布状态核对 | 已完成；详情见下 |
-| 1 | Fish Head Purchase 立即输入 kg | 已实现，[PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)；本地 482 tests / typecheck / lint / build 通过，CI / review 见 PR；尚未部署 |
-| 2 | 未完成称重实时价格与金额 | 待开始 |
+| 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，`49477b13b19468527e635c4007883e51e619b35e`；本地 482 tests / typecheck / lint / build、CI / review 通过；尚未部署 |
+| 2 | 未完成称重实时价格与金额 | 已实现，[PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)；本地 505 tests / typecheck / lint / build 通过，CI / review / 合并状态见 PR；尚未部署 |
 | 3 | 未完成称重 entry 修改与即时重算 | 待开始 |
 | 4 | Fish Head Settlement 待结单首页 | 待开始 |
 | 5 | Settlement sourceSessionId identity | 待开始；解决 #37 P1 finding |
@@ -64,6 +64,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 仅为 live valuation preview：不创建 `purchaseSettlementDraft`，不自动 complete / processed，不写正式 settlement。流程仍为 Weighing → Complete → Settlement。
 
 **交付：**独立 focused PR。
+
+本轮实现：现场汇总同步调用正式 `buildPurchaseSettlementLines()`，复用默认价格、船号溢价、同鱼合计重量和 integer cents half-up 金额；不复制价格或另写金额公式。保存、撤回、作废及现有 entry 修改后立即重算，缺价显示破折号和未定价鱼种数。仅为只读预览，不写篮价格快照或 settlement draft，不改变称重状态、schema、Rules 或生产数据。跨模块、页面联动和 Priority 1 慢网络回归已覆盖；320 / 375 / 390 / 430px 本地浏览器检查无横向溢出。合并后停止，Priority 3 留待下一轮。
 
 ## Priority 3：未完成称重 entry 修改与即时重算
 
