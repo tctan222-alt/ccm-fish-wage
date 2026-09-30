@@ -633,6 +633,19 @@ html,body,#root,main{
 .weighing-entry-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:3px 7px;align-items:center;min-width:0;min-height:52px;padding:6px 8px;text-align:left;font-size:.84rem}
 .weighing-entry-row strong{overflow:hidden;text-overflow:ellipsis}.weighing-entry-row em{grid-column:2/4;color:#486581;font-size:.72rem}
 .weighing-entry-row.voided{text-decoration:line-through;opacity:.68}.weighing-history details summary{min-height:44px;padding:10px 0;font-weight:800}
+.entry-history-hint{margin:0 0 6px;color:#486581;font-size:.82rem}
+.weighing-entry-row .entry-row-action{grid-column:3;grid-row:2/4;justify-self:end;padding-left:8px;background:#fff;color:#075985;font-weight:800;text-decoration:none}
+.weighing-entry-row:has(.entry-row-action) em{grid-column:2}
+.fish-head-entry-dialog{min-width:0;width:100%;box-sizing:border-box;background:#fff;border-radius:12px}
+.entry-dialog-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.entry-dialog-heading h2{margin:0;font-size:1.15rem}.entry-dialog-heading button{flex-shrink:0;min-height:44px}
+.fish-head-entry-dialog .entry-current{margin:8px 0 4px;font-weight:800;font-size:1.05rem;overflow-wrap:anywhere}
+.fish-head-entry-dialog .entry-meta{margin:0 0 12px;font-size:.78rem;color:#486581;overflow-wrap:anywhere}
+.fish-head-entry-dialog fieldset{display:block;min-width:0;margin:0;padding:8px;border:1px solid #bcccdc;border-radius:8px}
+.fish-head-entry-dialog .species-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;max-height:32vh;overflow-y:auto}
+.fish-head-entry-dialog .species-grid button{min-width:0;min-height:44px;height:auto;padding:6px 3px;font-size:.88rem;white-space:normal;overflow-wrap:anywhere}
+.fish-head-entry-dialog .entry-weight input{width:100%;min-width:0;box-sizing:border-box;min-height:58px;font-size:1.6rem;font-weight:800}
+.fish-head-entry-dialog .primary-action{min-height:48px}
+.fish-head-entry-dialog .void-entry-panel{margin-top:18px}.fish-head-entry-dialog .void-entry-panel input{width:100%;min-width:0;box-sizing:border-box}
 .weighing-history details ul{list-style:none;margin:0;padding:0}.weighing-history details li{display:flex;justify-content:space-between;gap:8px;padding:6px 0}
 .complete-weighing{width:100%;background:#075985;border-color:#075985;color:#fff}
 .complete-dialog dl{display:grid;grid-template-columns:1fr 1fr;gap:6px}.complete-dialog dl div{padding:7px;background:#eef4f7;border-radius:8px}

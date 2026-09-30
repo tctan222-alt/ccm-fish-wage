@@ -11,6 +11,8 @@ export interface PendingWeighingOperation {
   payload:unknown
 }
 
+interface WeighingSyncResult {session?:WeighingSession;entry?:WeighingEntry}
+
 export interface WeighingOfflineStore {
   getSession(id:string):Promise<WeighingSession|undefined>
   putSession(value:WeighingSession):Promise<void>
@@ -19,6 +21,7 @@ export interface WeighingOfflineStore {
   getPending():Promise<PendingWeighingOperation[]>
   putOperation(value:PendingWeighingOperation):Promise<void>
   removeOperation(id:string):Promise<void>
+  acknowledgeOperation(operation:PendingWeighingOperation,result:WeighingSyncResult):Promise<void>
   getMeta(key:string):Promise<string|undefined>
   putMeta(key:string,value:string):Promise<void>
   commitOperation(value:{
@@ -34,7 +37,7 @@ export async function queueWeighingOperation(store:WeighingOfflineStore,value:Pe
 }
 
 interface WeighingSyncOptions {
-  sync:(operation:PendingWeighingOperation)=>Promise<{session?:WeighingSession;entry?:WeighingEntry}>
+  sync:(operation:PendingWeighingOperation)=>Promise<WeighingSyncResult>
   sessionId?:string
 }
 
@@ -53,25 +56,12 @@ export function flushWeighingQueue(store:WeighingOfflineStore,remote:WeighingSyn
 
 async function flushPendingOperations(store:WeighingOfflineStore,remote:WeighingSyncOptions){
   const matches=(operation:PendingWeighingOperation)=>!remote.sessionId||operation.sessionId===remote.sessionId
-  const operations=(await store.getPending()).filter(matches).sort((a,b)=>
-    a.createdAtClient.localeCompare(b.createdAtClient)
-      ||Number(a.type==='complete')-Number(b.type==='complete')||a.id.localeCompare(b.id))
+  const operations=orderedOperations((await store.getPending()).filter(matches))
   let synced=0
   for(const operation of operations){
     try{
       const result=await remote.sync(operation)
-      if(result.session){
-        const local=await store.getSession(result.session.id)
-        await store.putSession(local?.status==='completed'&&result.session.status==='weighing'
-          ?{...result.session,status:'completed'}
-          :result.session)
-      }
-      if(result.entry)await store.putEntry({...result.entry,syncStatus:'synced'})
-      else if(operation.entryId){
-        const current=(await store.getEntries(operation.sessionId)).find(item=>item.id===operation.entryId)
-        if(current)await store.putEntry({...current,syncStatus:'synced'})
-      }
-      await store.removeOperation(operation.id)
+      await store.acknowledgeOperation(operation,result)
       synced+=1
     }catch(problem){
       return {synced,pending:(await store.getPending()).filter(matches).length,failed:true,
@@ -79,6 +69,45 @@ async function flushPendingOperations(store:WeighingOfflineStore,remote:Weighing
     }
   }
   return {synced,pending:(await store.getPending()).filter(matches).length,failed:false,lastError:null}
+}
+
+function operationRevision(operation:PendingWeighingOperation){
+  const payload=operation.payload as {entry?:WeighingEntry;after?:WeighingEntry}|null
+  return (operation.type==='entry_create'?payload?.entry:payload?.after)?.revision
+    ??(operation.type==='entry_create'?1:operation.type==='entry_update'?2:3)
+}
+
+function orderedOperations(operations:PendingWeighingOperation[]){
+  const ordered=operations.sort((a,b)=>Number(a.type==='complete')-Number(b.type==='complete')
+    ||a.createdAtClient.localeCompare(b.createdAtClient)||a.id.localeCompare(b.id))
+  const key=(operation:PendingWeighingOperation)=>JSON.stringify([operation.sessionId,operation.entryId])
+  const perEntry=new Map<string,PendingWeighingOperation[]>()
+  for(const operation of ordered){
+    if(!operation.entryId)continue
+    const group=perEntry.get(key(operation))??[]
+    group.push(operation);perEntry.set(key(operation),group)
+  }
+  // Client clocks and lexicographic ids are not a dependency order. Preserve
+  // each basket's numeric revision chain, including multiple edits in one ms.
+  for(const group of perEntry.values())group.sort((a,b)=>operationRevision(a)-operationRevision(b))
+  return ordered.map(operation=>operation.entryId?perEntry.get(key(operation))!.shift()!:operation)
+}
+
+function acknowledgedValues(operation:PendingWeighingOperation,result:WeighingSyncResult,
+  localSession:WeighingSession|undefined,localEntry:WeighingEntry|undefined,pending:PendingWeighingOperation[]):WeighingSyncResult {
+  const remaining=pending.filter(item=>item.id!==operation.id)
+  let session=result.session
+  if(session&&localSession){
+    if(remaining.some(item=>item.sessionId===operation.sessionId)||localSession.revision>session.revision){
+      session=localSession
+    }else if(localSession.status==='completed'&&session.status==='weighing'){
+      session={...session,status:'completed'}
+    }
+  }
+  const entryPending=remaining.some(item=>item.sessionId===operation.sessionId&&item.entryId===operation.entryId)
+  const newerLocal=localEntry&&localEntry.revision>(result.entry?.revision??operationRevision(operation))
+  const entry=entryPending||newerLocal?localEntry??result.entry:result.entry??localEntry
+  return {session,entry:entry?{...entry,syncStatus:entryPending?'syncing':newerLocal?entry.syncStatus:'synced'}:undefined}
 }
 
 const PREFIX={session:'session:',entry:'entry:',operation:'operation:',meta:'meta:'} as const
@@ -95,6 +124,17 @@ export function createMemoryWeighingStore(shared=new Map<string,unknown>()):Weig
       .map(([,value])=>value as PendingWeighingOperation).sort((a,b)=>a.createdAtClient.localeCompare(b.createdAtClient)||a.id.localeCompare(b.id))},
     async putOperation(value){shared.set(PREFIX.operation+value.id,value)},
     async removeOperation(id){shared.delete(PREFIX.operation+id)},
+    async acknowledgeOperation(operation,result){
+      const pending=[...shared.entries()].filter(([key])=>key.startsWith(PREFIX.operation))
+        .map(([,value])=>value as PendingWeighingOperation)
+      if(!pending.some(item=>item.id===operation.id))return
+      const values=acknowledgedValues(operation,result,
+        shared.get(PREFIX.session+operation.sessionId) as WeighingSession|undefined,
+        operation.entryId?shared.get(PREFIX.entry+operation.entryId) as WeighingEntry|undefined:undefined,pending)
+      if(values.session)shared.set(PREFIX.session+values.session.id,values.session)
+      if(values.entry)shared.set(PREFIX.entry+values.entry.id,values.entry)
+      shared.delete(PREFIX.operation+operation.id)
+    },
     async getMeta(key){return shared.get(PREFIX.meta+key) as string|undefined},
     async putMeta(key,value){shared.set(PREFIX.meta+key,value)},
     async commitOperation(value){
@@ -177,6 +217,30 @@ export function createIndexedDbWeighingStore():WeighingOfflineStore {
     async removeOperation(id){
       const db=await openDatabase(),tx=db.transaction('operations','readwrite')
       tx.objectStore('operations').delete(id);await transactionDone(tx);db.close()
+    },
+    async acknowledgeOperation(operation,result){
+      const db=await openDatabase(),tx=db.transaction(['sessions','entries','operations'],'readwrite')
+      const done=transactionDone(tx)
+      try{
+        // The read/check/write and queue removal share one transaction with the
+        // same stores as a local edit. An in-flight ack cannot race that edit.
+        const [localSession,localEntry,pending]=await Promise.all([
+          requestResult(tx.objectStore('sessions').get(operation.sessionId)) as Promise<WeighingSession|undefined>,
+          operation.entryId?requestResult(tx.objectStore('entries').get(operation.entryId)) as Promise<WeighingEntry|undefined>:undefined,
+          requestResult(tx.objectStore('operations').getAll()) as Promise<PendingWeighingOperation[]>,
+        ])
+        if(pending.some(item=>item.id===operation.id)){
+          const values=acknowledgedValues(operation,result,localSession,localEntry,pending)
+          if(values.session)tx.objectStore('sessions').put(values.session)
+          if(values.entry)tx.objectStore('entries').put(values.entry)
+          tx.objectStore('operations').delete(operation.id)
+        }
+        await done
+      }catch(problem){
+        try{tx.abort()}catch{/* It may already have aborted or completed. */}
+        await done.catch(()=>undefined)
+        throw problem
+      }finally{db.close()}
     },
     async getMeta(key){
       const db=await openDatabase(),tx=db.transaction('meta','readonly')

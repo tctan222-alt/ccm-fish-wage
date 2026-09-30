@@ -114,6 +114,7 @@ export function WeighingEntryPage({
   const [remark,setRemark]=useState('')
   const [pending,setPending]=useState(0)
   const [busy,setBusy]=useState(false)
+  const [entryMutationBusy,setEntryMutationBusy]=useState(false)
   const [syncing,setSyncing]=useState(false)
   const [syncError,setSyncError]=useState('')
   const [message,setMessage]=useState('')
@@ -132,6 +133,7 @@ export function WeighingEntryPage({
   const weightRef=useRef<HTMLInputElement>(null)
   const refocusAfterSave=useRef(false)
   const saveLock=useRef(false)
+  const entryMutationLock=useRef(false)
   const contextRequest=useRef(0)
 
   const store=offlineStore
@@ -141,8 +143,9 @@ export function WeighingEntryPage({
   const contextEntries=contextMatchesSession?entries:[]
   const activeContextEntries=contextEntries.filter(item=>!item.voided)
   const summary=summarizeWeighingEntries(contextEntries)
-  const latestIndividual=activeContextEntries.find(item=>item.entryMode==='individual')
-  const latest=activeContextEntries[0]
+  const latestIndividual=activeContextEntries.filter(item=>item.entryMode==='individual')
+    .reduce<WeighingEntry|undefined>((latest,item)=>!latest||(item.sequenceNo??0)>(latest.sequenceNo??0)?item:latest,undefined)
+  const latest=productType==='fish_head'?latestIndividual:activeContextEntries[0]
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const locked=Boolean(session&&(session.status!=='weighing'||!canModifyWeighing(session,new Date(now()))))
   let contextKey=''
@@ -312,6 +315,7 @@ export function WeighingEntryPage({
       if(request!==contextRequest.current)return
       if(result.failed)setSyncError(`同步未完成：${result.lastError}。记录仍保留在本机，请重试。`)
       else if(savedSession?.status==='completed'&&result.pending===0)setMessage('已完成称重，可以查看结单。')
+      else if(result.pending===0)setMessage(current=>current.replace('已保存在本机，等待同步','已保存并同步'))
     }catch(problem){
       if(request===contextRequest.current)setSyncError(`同步未完成：${problem instanceof Error?problem.message:'请稍后重试。'}。记录仍保留在本机。`)
     }finally{if(request===contextRequest.current)setSyncing(false)}
@@ -347,7 +351,7 @@ export function WeighingEntryPage({
 
   async function confirmEntry(event?:FormEvent){
     event?.preventDefault()
-    if(saveLock.current||busy||savePending||locked||!store||!selectedVessel?.active)return
+    if(saveLock.current||entryMutationLock.current||busy||savePending||locked||!store||!selectedVessel?.active)return
     const request=contextRequest.current
     saveLock.current=true;setBusy(true);setError('')
     try{await saveEntry(request)}
@@ -418,35 +422,50 @@ export function WeighingEntryPage({
   }
 
   async function queueVoid(entry:WeighingEntry,reason:string){
-    if(!store||!session)return
-    if(!canModifyWeighing(session,new Date(now()))){setError('已超过首次完成称重后的 7 天修改期。');return}
-    const result=softVoidWeighingEntry(session,entry,reason),operationId=`entry_void_${entry.id}_${result.entry.revision}`
-    await store.commitOperation({session:result.session,entry:{...result.entry,syncStatus:'syncing'},
-      operation:{id:operationId,type:'entry_void',sessionId:session.id,entryId:entry.id,
-        createdAtClient:now(),payload:{before:entry,after:result.entry}}})
-    setSession(result.session);setEntries(current=>current.map(item=>item.id===entry.id?{...result.entry,syncStatus:'syncing'}:item))
-    setPending(current=>current+1);setEditing(null);setMessage('已作废，等待同步');window.dispatchEvent(new Event('ccm:form-saved'));await syncNow()
+    await commitEntryChange(entry,{reason})
   }
 
   async function undoLatest(){
-    if(!latestIndividual)return
+    if(!latestIndividual||locked||contextPending||entryMutationLock.current)return
     if(!window.confirm(`撤回最近一篮：${latestIndividual.displayNameSnapshot} ${formatWeightKg(latestIndividual.weightGrams)} kg？`))return
-    await queueVoid(latestIndividual,'撤回上一篮')
+    try{await queueVoid(latestIndividual,'撤回上一篮')}
+    catch(problem){setError(problem instanceof Error?problem.message:'撤回未保存，请重试。')}
   }
 
   async function updateEntry(before:WeighingEntry,after:WeighingEntry){
-    if(!store||!session)return
-    if(!canModifyWeighing(session,new Date(now()))){setError('已超过首次完成称重后的 7 天修改期。');return}
-    const nextSession=applyEntryReplacement(session,before,after),operationId=`entry_update_${after.id}_${after.revision}`
-    await store.commitOperation({session:nextSession,entry:{...after,syncStatus:'syncing'},
-      operation:{id:operationId,type:'entry_update',sessionId:session.id,entryId:after.id,
-        createdAtClient:now(),payload:{before,after}}})
-    setSession(nextSession);setEntries(current=>current.map(item=>item.id===after.id?{...after,syncStatus:'syncing'}:item))
-    setPending(current=>current+1);setEditing(null);setMessage('修改已保存，等待同步');window.dispatchEvent(new Event('ccm:form-saved'));await syncNow()
+    await commitEntryChange(before,{after})
+  }
+
+  async function commitEntryChange(before:WeighingEntry,change:{after:WeighingEntry}|{reason:string}){
+    if(!store||!session||locked||contextPending)throw new Error('当前现场单尚不能修改，请关闭后重新查看。')
+    if(entryMutationLock.current||(busy&&!syncing))throw new Error('正在保存，请稍候再试。')
+    const currentId=session.id,request=contextRequest.current
+    entryMutationLock.current=true;setEntryMutationBusy(true);setError('')
+    try{
+      const [currentSession,currentEntries]=await Promise.all([store.getSession(currentId),store.getEntries(currentId)])
+      const currentEntry=currentEntries.find(item=>item.id===before.id)
+      if(request!==contextRequest.current)throw new Error('现场单已切换，请重新打开记录。')
+      if(!currentSession||currentSession.status!=='weighing'||!canModifyWeighing(currentSession,new Date(now())))throw new Error('现场单已锁定，不能修改。')
+      if(!currentEntry||currentEntry.voided||currentEntry.revision!==before.revision)throw new Error('记录已更新，请关闭后重新打开再修改。')
+      const deleting='reason' in change
+      const result=deleting?softVoidWeighingEntry(currentSession,currentEntry,change.reason)
+        :{session:applyEntryReplacement(currentSession,currentEntry,change.after),entry:change.after}
+      const type=deleting?'entry_void':'entry_update',after=result.entry
+      await store.commitOperation({session:result.session,entry:{...after,syncStatus:'syncing'},
+        operation:{id:`${type}_${after.id}_${after.revision}`,type,sessionId:currentId,entryId:after.id,
+          createdAtClient:now(),payload:{before:currentEntry,after}}})
+      if(request===contextRequest.current){
+        setSession(result.session);setEntries(current=>current.map(item=>item.id===after.id?{...after,syncStatus:'syncing'}:item))
+        setPending(current=>current+1);setEditing(null)
+        setMessage(deleting?'删除已保存在本机，等待同步':'修改已保存在本机，等待同步')
+      }
+      window.dispatchEvent(new Event('ccm:form-saved'))
+    }finally{entryMutationLock.current=false;setEntryMutationBusy(false)}
+    await syncNow(currentId)
   }
 
   async function complete(){
-    if(!store||!session||saveLock.current||busy||syncing||contextLoading||session.status!=='weighing')return
+    if(!store||!session||saveLock.current||entryMutationLock.current||busy||syncing||contextLoading||session.status!=='weighing')return
     const local={...session,status:'completed' as const,revision:session.revision+1}
     const operationId=`complete_${session.id}_${local.revision}`
     saveLock.current=true;setBusy(true);setError('')
@@ -524,7 +543,7 @@ export function WeighingEntryPage({
       {message&&<p className="weighing-message" role="status">{message}</p>}
       <div className="recent-entry">
         <div><small>最近一篮</small>{latest?<><strong>{latest.displayNameSnapshot}</strong><span>{formatWeightKg(latest.weightGrams)} kg</span></>:<span>尚无记录</span>}</div>
-        <button type="button" className="undo-entry" disabled={!latestIndividual||locked} onClick={()=>void undoLatest()}>撤回</button>
+        <button type="button" className="undo-entry" disabled={!latestIndividual||locked||contextPending||entryMutationBusy||(busy&&!syncing)} onClick={()=>void undoLatest()}>撤回</button>
       </div>
       <div className="weighing-compact-summary">
         <strong>{summary.basketCount} 篮</strong><strong>{formatWeightKg(summary.totalWeightGrams)} kg</strong>
@@ -540,11 +559,14 @@ export function WeighingEntryPage({
       session?.status==='processed'?'已结单，现场录入已锁定。':session?.status==='voided'?'现场单已作废。':'已超过首次完成称重后的 7 天修改期，只能查看。'}</p>}
 
     <section className="weighing-history"><h2>完整历史记录</h2>
+      {productType==='fish_head'&&!locked&&entries.some(item=>!item.voided)&&<p className="entry-history-hint">点击任意一篮可修改重量、鱼种或删除。</p>}
       <div className="weighing-entry-list">{entries.map(item=><button type="button" key={item.id}
+        disabled={contextPending||entryMutationBusy||(busy&&!syncing)}
         className={`weighing-entry-row ${item.voided?'voided':''}`} onClick={()=>setEditing(item)}>
         <span>{item.sequenceNo?`第 ${item.sequenceNo} 篮`:'总重'}</span><strong>{item.displayNameSnapshot}</strong>
         <b>{formatWeightKg(item.weightGrams)} kg</b><small>{entryTime(item.recordedAtClient)}</small>
-        <em>{item.voided?'已作废':item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
+        <em>{item.voided?(productType==='fish_head'?'已删除':'已作废'):item.syncStatus==='synced'?'已同步':item.syncStatus==='failed'?'同步失败':'尚未同步'}</em>
+        {productType==='fish_head'&&<span className="entry-row-action">{!locked&&!item.voided?'编辑':'查看'} ›</span>}
       </button>)}</div>
     </section>
     {session?.status==='weighing'&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" disabled={busy||syncing||contextLoading} onClick={()=>setShowComplete(true)}>完成称重</button>}
@@ -612,31 +634,52 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
   const [quality,setQuality]=useState<FishMealQuality>(entry.fishMealQuality??'bucket')
   const [reason,setReason]=useState('')
   const [error,setError]=useState('')
+  const [busy,setBusy]=useState(false)
+  const actionLock=useRef(false)
+  const fishHead=entry.productType==='fish_head',readOnly=locked||entry.voided
+  const basketLabel=entry.sequenceNo?`第 ${entry.sequenceNo} 篮`:'总重记录'
+  const title=fishHead?`${readOnly?'查看':'编辑'}${basketLabel}`:'查看记录'
   async function submit(event:FormEvent){event.preventDefault()
+    if(readOnly||actionLock.current)return
+    actionLock.current=true;setBusy(true);setError('')
     try{
       const grams=kgInputToGrams(weight,entry.entryMode),selected=species.find(item=>item.id===speciesId)
       const rebuilt=buildWeighingEntry({id:entry.id,clientEntryId:entry.clientEntryId,sessionId:entry.sessionId,
         productType:entry.productType,fishSpeciesId:entry.productType==='fish_head'?speciesId:null,
         fishSpecies:entry.productType==='fish_head'?selected:null,fishMealQuality:entry.productType==='fish_meal'?quality:null,
         entryMode:entry.entryMode,sequenceNo:entry.sequenceNo,weightGrams:grams,
-        unitPriceCentsPerKg:entry.unitPriceCentsPerKg,remark:entry.remark,
+        unitPriceCentsPerKg:entry.productType==='fish_meal'?entry.unitPriceCentsPerKg:undefined,remark:entry.remark,
+        receiptNoSnapshot:entry.receiptNoSnapshot,
         weighingDate:entry.weighingDate,monthKey:entry.monthKey,vesselId:entry.vesselId,vesselCodeSnapshot:entry.vesselCodeSnapshot,
         recordedAtClient:entry.recordedAtClient,recordedAt:entry.recordedAt,recordedBy:entry.recordedBy})
       await save({...rebuilt,revision:entry.revision+1,syncStatus:'syncing'})
-    }catch(problem){setError(problem instanceof Error?problem.message:'修改失败。')}
+    }catch(problem){setError(problem instanceof Error?problem.message:'修改未保存，请重试。')}
+    finally{actionLock.current=false;setBusy(false)}
   }
-  return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>查看记录</h2>
-    <p>修订版本：{entry.revision}{entry.voided&&` · 已作废：${entry.voidReason}`}</p>
+  async function remove(){
+    if(readOnly||actionLock.current)return
+    if(fishHead&&!window.confirm(`删除${basketLabel}？\n${entry.displayNameSnapshot} · ${formatWeightKg(entry.weightGrams)} kg\n记录会保留在系统审计中。`))return
+    actionLock.current=true;setBusy(true);setError('')
+    try{await voidEntry(reason.trim()||'错误记录')}
+    catch(problem){setError(problem instanceof Error?problem.message:'删除未保存，请重试。')}
+    finally{actionLock.current=false;setBusy(false)}
+  }
+  return <div className="dialog-backdrop"><section className={`form-dialog ${fishHead?'fish-head-entry-dialog':''}`} role="dialog" aria-modal="true" aria-labelledby="entry-dialog-title">
+    {fishHead?<header className="entry-dialog-heading"><h2 id="entry-dialog-title">{title}</h2><button type="button" disabled={busy} onClick={close}>关闭</button></header>:<h2 id="entry-dialog-title">查看记录</h2>}
+    {fishHead&&<p className="entry-current">{entry.displayNameSnapshot} · {formatWeightKg(entry.weightGrams)} kg</p>}
+    <p className="entry-meta">{fishHead&&<>记录时间：{entryTime(entry.recordedAtClient)} · </>}修订版本：{entry.revision}{fishHead&&` · ${entry.syncStatus==='synced'?'已同步':'已保存在本机，等待同步'}`}{entry.voided&&` · 已${fishHead?'删除':'作废'}：${entry.voidReason}`}</p>
     <form className="master-form" onSubmit={submit}>
       {entry.productType==='fish_head'?<fieldset><legend>鱼名</legend><div className="species-grid">
-        {species.map(item=><button type="button" key={item.id} className={speciesId===item.id?'selected':''} disabled={locked||entry.voided} onClick={()=>setSpeciesId(item.id)}>{item.displayName}</button>)}</div></fieldset>:
-        <label>鱼仔品质<select value={quality} disabled={locked||entry.voided} onChange={event=>setQuality(event.target.value as FishMealQuality)}>
+        {species.map(item=><button type="button" key={item.id} aria-pressed={speciesId===item.id} className={speciesId===item.id?'selected':''} disabled={readOnly||busy} onClick={()=>setSpeciesId(item.id)}>{item.displayName}</button>)}</div></fieldset>:
+        <label>鱼仔品质<select value={quality} disabled={readOnly||busy} onChange={event=>setQuality(event.target.value as FishMealQuality)}>
           <option value="bucket">桶鱼仔</option><option value="bag">包鱼仔</option></select></label>}
-      <label>重量（kg）<input value={weight} disabled={locked||entry.voided} onChange={event=>setWeight(event.target.value)}/></label>
-      {!locked&&!entry.voided&&<button className="primary-action">保存修改</button>}
+      <label className="entry-weight">重量（kg）<input inputMode="decimal" enterKeyHint="done" value={weight} disabled={readOnly||busy} onChange={event=>setWeight(event.target.value)}/></label>
+      {!readOnly&&<button className="primary-action" disabled={busy}>{busy?'正在保存…':'保存修改'}</button>}
     </form>
-    {!locked&&!entry.voided&&<div className="void-entry-panel"><label>作废原因<input value={reason} onChange={event=>setReason(event.target.value)}/></label>
-      <button className="danger-action" onClick={()=>void voidEntry(reason||'错误记录')}>作废</button></div>}
-    {error&&<p className="error" role="alert">{error}</p>}<button onClick={close}>关闭</button>
+    {!readOnly&&<div className="void-entry-panel"><label>{fishHead?'删除原因（选填）':'作废原因'}<input maxLength={100} value={reason} disabled={busy} onChange={event=>setReason(event.target.value)}/></label>
+      {fishHead&&<small>记录会保留在系统审计中。</small>}
+      <button type="button" className="danger-action" disabled={busy} onClick={()=>void remove()}>{fishHead?'删除此篮':'作废'}</button></div>}
+    {error&&<p className="error" role="alert">{error}</p>}
+    {!fishHead&&<button type="button" disabled={busy} onClick={close}>关闭</button>}
   </section></div>
 }
