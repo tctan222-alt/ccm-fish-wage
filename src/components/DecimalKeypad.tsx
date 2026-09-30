@@ -3,13 +3,14 @@ interface Props {
   onChange:(value:string)=>void
   onConfirm:()=>void
   disabled?:boolean
+  confirmDisabled?:boolean
 }
 
 function keypadFeedback(){
   navigator.vibrate?.(12)
 }
 
-export function DecimalKeypad({value,onChange,onConfirm,disabled=false}:Props){
+export function DecimalKeypad({value,onChange,onConfirm,disabled=false,confirmDisabled=false}:Props){
   function append(character:string){
     if(disabled)return
     if(character==='.'&&value.includes('.'))return
@@ -35,6 +36,6 @@ export function DecimalKeypad({value,onChange,onConfirm,disabled=false}:Props){
       disabled={disabled} onClick={()=>append(valueItem)}>{valueItem}</button>)}
     <button type="button" disabled={disabled} onClick={backspace}>⌫</button>
     <button type="button" className="decimal-keypad-clear" disabled={disabled} onClick={clear}>清空</button>
-    <button type="button" className="decimal-keypad-confirm" disabled={disabled} onClick={onConfirm}>确认加入</button>
+    <button type="button" className="decimal-keypad-confirm" disabled={disabled||confirmDisabled} onClick={onConfirm}>确认加入</button>
   </div>
 }
