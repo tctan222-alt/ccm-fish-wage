@@ -17,7 +17,7 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 |---|---|---|
 | 0 | 当前 main、PR、生产发布状态核对 | 已完成；详情见下 |
 | 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，`49477b13b19468527e635c4007883e51e619b35e`；本地 482 tests / typecheck / lint / build、CI / review 通过；尚未部署 |
-| 2 | 未完成称重实时价格与金额 | 已实现；验证与 focused PR 进行中，尚未部署 |
+| 2 | 未完成称重实时价格与金额 | 已实现，[PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)；本地 505 tests / typecheck / lint / build 通过，CI / review / 合并状态见 PR；尚未部署 |
 | 3 | 未完成称重 entry 修改与即时重算 | 待开始 |
 | 4 | Fish Head Settlement 待结单首页 | 待开始 |
 | 5 | Settlement sourceSessionId identity | 待开始；解决 #37 P1 finding |
