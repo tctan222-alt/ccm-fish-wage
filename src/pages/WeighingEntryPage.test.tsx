@@ -122,10 +122,10 @@ describe('iPhone 现场称重单页',()=>{
     const firstSummary=screen.getByRole('region',{name:'现场汇总'})
     expect(firstSummary).toHaveTextContent('80 kg')
     expect(within(firstSummary).getByRole('columnheader',{name:'鱼名'})).toBeInTheDocument()
-    expect(within(firstSummary).getByRole('columnheader',{name:'总重量'})).toBeInTheDocument()
-    expect(within(firstSummary).getByRole('columnheader',{name:'篮子数'})).toBeInTheDocument()
+    expect(within(firstSummary).getByRole('columnheader',{name:'总 kg'})).toBeInTheDocument()
+    expect(within(firstSummary).getByRole('columnheader',{name:'篮数'})).toBeInTheDocument()
     expect(within(firstSummary).getByRole('rowheader',{name:'金线'})).toBeInTheDocument()
-    expect(within(firstSummary).getByText('1 篮')).toBeInTheDocument()
+    expect(within(firstSummary).getAllByText('1 篮')).toHaveLength(2)
 
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
@@ -482,7 +482,7 @@ describe('iPhone 现场称重单页',()=>{
     })
   })
 
-  it('鱼头采购不显示鱼名下拉、key-in 或现场价钱，并可把自定义鱼名保存到当前单',async()=>{
+  it('鱼头采购不显示鱼名下拉或手填价钱，可保存自定义鱼名且篮记录不写价格快照',async()=>{
     const store=createMemoryWeighingStore()
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_head" pageTitle="鱼头购入"
       vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
@@ -579,7 +579,7 @@ describe('iPhone 现场称重单页',()=>{
     expect(weight).toHaveValue('80.1234')
   })
 
-  it('现场汇总只显示鱼名、重量和篮数，不显示价钱或金额',async()=>{
+  it('现场汇总在称重中显示鱼名、重量、篮数以及正式默认单价和金额',async()=>{
     setup()
     fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'80.125'}})
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
@@ -589,7 +589,9 @@ describe('iPhone 现场称重单页',()=>{
     expect(summary).toHaveTextContent('金线')
     expect(summary).toHaveTextContent('80.125 kg')
     expect(summary).toHaveTextContent('1 篮')
-    expect(summary).not.toHaveTextContent(/RM|单价|金额/)
+    expect(summary).toHaveTextContent('RM 2.10/kg')
+    expect(summary).toHaveTextContent('RM 168.26')
+    expect(summary).toHaveTextContent('当前总金额')
   })
 })
 

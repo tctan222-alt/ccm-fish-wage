@@ -3,6 +3,7 @@ import { Link,useParams } from 'react-router-dom'
 import { auth } from '../firebase'
 import { DEFAULT_VESSELS,type Vessel } from '../lib/purchasing'
 import { DecimalKeypad } from '../components/DecimalKeypad'
+import { FishHeadLiveSummary } from '../components/FishHeadLiveSummary'
 import { malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
@@ -530,7 +531,9 @@ export function WeighingEntryPage({
         <span>{pending>0?`尚未同步 ${pending} 笔`:'全部已同步'}</span>
         {pending>0&&<button type="button" disabled={syncing} onClick={()=>void syncNow()}>{syncing?'正在同步…':'重新同步'}</button>}
       </div>
-      {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2><CategorySummary entries={activeContextEntries}/></section>}
+      {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2>
+        {productType==='fish_head'?<FishHeadLiveSummary entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''}/>:<CategorySummary entries={activeContextEntries}/>}
+      </section>}
     </section>
 
     {locked&&<p className="session-lock">{session?.status==='completed'?(pending>0?'完成申请已保存，等待同步。':'已完成称重，手机端已锁定。'):
