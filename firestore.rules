@@ -2,6 +2,10 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    function uid() { return request.auth.uid; }
+    function now() { return request.time; }
+    function beforeData(path) { return get(path).data; }
+    function afterData(path) { return getAfter(path).data; }
     function signedIn() { return request.auth != null; }
     // Shared lazy accessors keep the compiled rules below the runtime size limit.
     // Calling these preserves the original request/resource availability checks.
@@ -23,7 +27,7 @@ service cloud.firestore {
         && validRetailAlias(aliases, 0) && validRetailAlias(aliases, 1) && validRetailAlias(aliases, 2) && validRetailAlias(aliases, 3) && validRetailAlias(aliases, 4)
         && order is int && order >= 0 && order <= 1000000
         && data.active is bool && (data.chineseName != '黑昌' || !data.active) && data.createdBy is string && data.createdAt is timestamp
-        && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
+        && data.updatedBy == uid() && data.updatedAt == now();
     }
 
     function validRetailLine(line) {
@@ -45,7 +49,7 @@ service cloud.firestore {
       let lines = data.lines;
       return data.keys().hasOnly(['lines', 'totalAmountCents', 'createdAt', 'createdBy'])
         && lines is list && lines.size() <= 5
-        && data.createdAt == request.time && data.createdBy == request.auth.uid
+        && data.createdAt == now() && data.createdBy == uid()
         && data.totalAmountCents is int && data.totalAmountCents == retailAmount(lines, 0) + retailAmount(lines, 1)
           + retailAmount(lines, 2) + retailAmount(lines, 3) + retailAmount(lines, 4);
     }
@@ -53,31 +57,90 @@ service cloud.firestore {
       return /databases/$(database)/documents/retailSales/$(saleId)/groups/$(groupId);
     }
     function validRetailSale(data, saleId) {
-      let first = get(retailGroupPath(saleId, 'first')).data;
-      let second = get(retailGroupPath(saleId, 'second')).data;
-      let third = get(retailGroupPath(saleId, 'third')).data;
-      let fourth = get(retailGroupPath(saleId, 'fourth')).data;
-      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
-        && data.businessDate is string && validBusinessDate(data.businessDate)
-        && validWageDateKey(data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
-        && data.dateSortKey is int && data.dateSortKey == int(data.businessDate[6:10] + data.businessDate[3:5] + data.businessDate[0:2])
-        && data.vendorName is string && data.vendorName.size() > 0 && data.vendorName.size() <= 100
-        && data.lineGroups.keys().hasOnly(['first', 'second', 'third', 'fourth'])
-        && data.lineGroups.first == first.lines && data.lineGroups.second == second.lines
-        && data.lineGroups.third == third.lines && data.lineGroups.fourth == fourth.lines
+      let prefix = data.groupSetId == 'initial' ? '' : data.groupSetId + '_';
+      let date = data.businessDate;
+      let groups = data.lineGroups;
+      let vendor = data.vendorName;
+      let first = beforeData(retailGroupPath(saleId, prefix + 'first'));
+      let second = beforeData(retailGroupPath(saleId, prefix + 'second'));
+      let third = beforeData(retailGroupPath(saleId, prefix + 'third'));
+      let fourth = beforeData(retailGroupPath(saleId, prefix + 'fourth'));
+      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'invoiceNumber', 'invoiceSequence', 'revision', 'remark', 'groupSetId', 'lastActionId'])
+        && date is string && validBusinessDate(date)
+        && validWageDateKey(date[6:10] + '-' + date[3:5] + '-' + date[0:2])
+        && data.dateSortKey is int && data.dateSortKey == int(date[6:10] + date[3:5] + date[0:2])
+        && vendor is string && vendor.size() > 0 && vendor.size() <= 100
+        && groups.keys().hasOnly(['first', 'second', 'third', 'fourth'])
+        && groups.first == first.lines && groups.second == second.lines
+        && groups.third == third.lines && groups.fourth == fourth.lines
         && first.lines.size() > 0
-        && first.createdBy == request.auth.uid && second.createdBy == request.auth.uid
-        && third.createdBy == request.auth.uid && fourth.createdBy == request.auth.uid
+        && first.createdBy == uid() && second.createdBy == uid()
+        && third.createdBy == uid() && fourth.createdBy == uid()
         && data.totalAmountCents is int && data.totalAmountCents == first.totalAmountCents + second.totalAmountCents + third.totalAmountCents + fourth.totalAmountCents
-        && data.createdBy == request.auth.uid && data.updatedBy == request.auth.uid
-        && data.createdAt == request.time && data.updatedAt == request.time;
+        && data.remark is string && data.remark.size() <= 500
+        && data.revision is int && data.revision >= 1
+        && data.lastActionId.matches('^[A-Za-z0-9_-]{1,100}$')
+        && data.updatedBy == uid() && data.updatedAt == now();
+    }
+
+    function retailSalePath(id) { return /databases/$(database)/documents/retailSales/$(id); }
+    function retailCounterPath(key) { return /databases/$(database)/documents/retailInvoiceCounters/$(key); }
+    function retailActionPath(id, action) { return /databases/$(database)/documents/retailSales/$(id)/actions/$(action); }
+    function retailEditOpen(data) {
+      return data.createdAt is timestamp && now() >= data.createdAt
+        && now() < data.createdAt + duration.value(2592000, 's');
+    }
+    function retailNumber(data) {
+      return data.businessDate[0:2] + data.businessDate[3:5] + data.businessDate[6:10]
+        + (data.invoiceSequence < 10 ? '00' : data.invoiceSequence < 100 ? '0' : '') + string(data.invoiceSequence);
+    }
+    function retailAllocated(data, id) {
+      let counter = afterData(retailCounterPath(string(data.dateSortKey)));
+      return data.createdBy == uid() && data.createdAt == now() && data.revision == 1
+          && data.groupSetId == 'initial' && data.lastActionId == id
+          && data.invoiceSequence is int && data.invoiceSequence > 0 && data.invoiceNumber == retailNumber(data)
+          && counter.lastSaleId == id && counter.lastSequence == data.invoiceSequence && counter.updatedAt == now();
+    }
+    function retailUpdated(data) {
+      let old = existingData();
+      return retailEditOpen(old)
+          && data.diff(old).affectedKeys().hasOnly(['vendorName', 'lineGroups', 'totalAmountCents', 'remark', 'updatedBy', 'updatedAt', 'revision', 'groupSetId', 'lastActionId'])
+          && data.revision == old.get('revision', 1) + 1
+          && data.groupSetId == data.lastActionId && data.groupSetId != 'initial';
+    }
+    function retailHasAction(data, id) {
+      let path = retailActionPath(id, data.lastActionId);
+      return !exists(path) && afterData(path).afterSnapshot == data;
+    }
+    function validRetailAction(data, id, action) {
+      let path = retailSalePath(id);
+      let after = afterData(path);
+      return data.keys().hasOnly(['type', 'saleId', 'clientOperationId', 'revision', 'beforeSnapshot', 'afterSnapshot', 'performedBy', 'performedAt'])
+        && data.saleId == id && data.clientOperationId == action && after.lastActionId == action
+        && data.revision == after.revision && data.afterSnapshot == after
+        && data.performedBy == uid() && data.performedAt == now() && after.updatedAt == now()
+        && (exists(path) ? data.type == 'update' && data.beforeSnapshot == beforeData(path)
+          && after.revision == beforeData(path).get('revision', 1) + 1
+          : data.type == 'create' && data.beforeSnapshot == null && after.revision == 1);
+    }
+    function validRetailCounter(data, key) {
+      let path = retailSalePath(data.lastSaleId);
+      let sale = afterData(path);
+      return data.keys().hasOnly(['dateSortKey', 'lastSequence', 'lastSaleId', 'updatedBy', 'updatedAt'])
+        && data.dateSortKey is int && string(data.dateSortKey) == key
+        && data.lastSequence is int && data.lastSequence > 0
+        && data.lastSaleId.matches('^[A-Za-z0-9_-]{1,100}$')
+        && data.updatedBy == uid() && data.updatedAt == now()
+        && !exists(path) && sale.dateSortKey == data.dateSortKey && sale.invoiceSequence == data.lastSequence
+        && sale.createdAt == now()
+        && data.lastSequence == (request.method == 'create' ? 1 : existingData().lastSequence + 1);
     }
 
     match /retailFish/{fishId} {
       allow read: if signedIn();
       allow create: if signedIn() && validRetailFish(incomingData())
         && incomingData().chineseName != '黑昌'
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time;
+        && incomingData().createdBy == uid() && incomingData().createdAt == now();
       allow update: if signedIn() && validRetailFish(incomingData())
         && incomingData().createdBy == existingData().createdBy && incomingData().createdAt == existingData().createdAt;
       allow delete: if false;
@@ -86,14 +149,26 @@ service cloud.firestore {
       allow read: if signedIn();
       // Immutable prepared groups are validated separately within the expression
       // budget. Only this final atomic document appears as a completed sale.
-      allow create: if signedIn() && validRetailSale(incomingData(), saleId);
-      allow update, delete: if false;
+      allow create, update: if signedIn() && validRetailSale(incomingData(), saleId)
+        && (request.method == 'create' ? retailAllocated(incomingData(), saleId) : retailUpdated(incomingData()))
+        && retailHasAction(incomingData(), saleId);
+      allow delete: if false;
       match /groups/{groupId} {
         allow read: if signedIn();
-        allow create: if signedIn() && groupId in ['first', 'second', 'third', 'fourth']
+        allow create: if signedIn() && groupId.matches('^([A-Za-z0-9_-]{1,100}_)?(first|second|third|fourth)$')
           && validRetailGroup(incomingData());
         allow update, delete: if false;
       }
+      match /actions/{actionId} {
+        allow read: if signedIn();
+        allow create: if signedIn() && validRetailAction(incomingData(), saleId, actionId);
+        allow update, delete: if false;
+      }
+    }
+    match /retailInvoiceCounters/{dateKey} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && validRetailCounter(incomingData(), dateKey);
+      allow delete: if false;
     }
 
     function monthPath(monthKey) {
@@ -105,7 +180,7 @@ service cloud.firestore {
     function monthOpenAfter(dateKey) {
       let path = monthPath(monthKeyForDate(dateKey));
       return !existsAfter(path)
-        || (getAfter(path).data.status == 'open' && getAfter(path).data.closingToken == null);
+        || (afterData(path).status == 'open' && afterData(path).closingToken == null);
     }
 
     function actionPath(monthKey, actionId) {
@@ -318,19 +393,19 @@ service cloud.firestore {
     }
 
     function validIceWorkRecordAction(recordId, actionId, expectedType, expectedRevision) {
-      let action = getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)/actions/$(actionId)).data;
+      let action = afterData(/databases/$(database)/documents/iceWorkRecords/$(recordId)/actions/$(actionId));
       return existsAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)/actions/$(actionId))
         && action.type == expectedType && action.recordId == recordId
-        && action.clientOperationId == actionId && action.performedBy == request.auth.uid
-        && action.performedAt == request.time && action.revision == expectedRevision;
+        && action.clientOperationId == actionId && action.performedBy == uid()
+        && action.performedAt == now() && action.revision == expectedRevision;
     }
 
     function validIceWorkSettlementAction(settlementId, actionId, expectedType, expectedRevision) {
-      let action = getAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)/actions/$(actionId)).data;
+      let action = afterData(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)/actions/$(actionId));
       return existsAfter(/databases/$(database)/documents/iceWorkMonthlySettlements/$(settlementId)/actions/$(actionId))
         && action.type == expectedType && action.settlementId == settlementId
-        && action.clientOperationId == actionId && action.performedBy == request.auth.uid
-        && action.performedAt == request.time && action.revision == expectedRevision;
+        && action.clientOperationId == actionId && action.performedBy == uid()
+        && action.performedAt == now() && action.revision == expectedRevision;
     }
 
     function validPurchaseReceipt(data) {
@@ -388,8 +463,8 @@ service cloud.firestore {
     }
 
     function validActivePurchaseParties(data) {
-      let supplier = get(/databases/$(database)/documents/businessPartners/$(data.supplierId)).data;
-      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      let supplier = beforeData(/databases/$(database)/documents/businessPartners/$(data.supplierId));
+      let vessel = beforeData(/databases/$(database)/documents/vessels/$(data.vesselId));
       return supplier.active == true && supplier.supplier == true
         && supplier.partnerCode == data.supplierCodeSnapshot
         && supplier.displayName == data.supplierNameSnapshot
@@ -469,7 +544,7 @@ service cloud.firestore {
         && data.type in ['create', 'update_draft', 'confirm', 'void', 'payment_create', 'payment_void']
         && data.receiptId is string && data.receiptCode is string
         && data.supplierId is string && data.vesselId is string
-        && data.performedBy == request.auth.uid && data.performedAt == request.time
+        && data.performedBy == uid() && data.performedAt == now()
         && (!('paymentId' in data) || data.paymentId is string)
         && (!('reason' in data) || (data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 100))
         && 'afterSnapshot' in data;
@@ -522,21 +597,21 @@ service cloud.firestore {
         && incomingData().productType == existingData().productType
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().revision == existingData().revision + 1
         && ((existingData().voided == false && incomingData().voided == false)
           || (existingData().voided == false && incomingData().voided == true
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'voided', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'revision'
             ])
-            && incomingData().voidedBy == request.auth.uid
-            && incomingData().voidedAt == request.time));
+            && incomingData().voidedBy == uid()
+            && incomingData().voidedAt == now()));
     }
 
     function validSettlementSource() {
       let data = incomingData();
-      let source = getAfter(weighingSessionPath(data.sourceSessionId)).data;
+      let source = afterData(weighingSessionPath(data.sourceSessionId));
       return data.sourceSessionId is string && data.sourceSessionRevision == source.revision
         && source.productType == data.productType && source.vesselId == data.vesselId
         && source.vesselCodeSnapshot == data.vesselCodeSnapshot
@@ -554,34 +629,34 @@ service cloud.firestore {
     }
 
     function validSettlementLegacyBinding() {
-      let entry = get(weighingEntryPath(incomingData().sourceSessionId, existingData().sourceEntryIds[0])).data;
+      let entry = beforeData(weighingEntryPath(incomingData().sourceSessionId, existingData().sourceEntryIds[0]));
       return entry.sessionId == incomingData().sourceSessionId
         && entry.productType == incomingData().productType
         && entry.recordedAt is timestamp && entry.recordedAt <= existingData().createdAt;
     }
 
     function validSettlementAudit(draftId) {
-      let action = getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)/actions/$(string(incomingData().revision))).data;
+      let action = afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)/actions/$(string(incomingData().revision)));
       return action.afterSnapshot == incomingData()
         && action.beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) ? existingData() : null)
-        && action.performedBy == request.auth.uid && action.performedAt == request.time;
+        && action.performedBy == uid() && action.performedAt == now();
     }
 
     function validLinkedPurchaseAction(receiptId, actionType) {
-      let actionId = getAfter(purchaseReceiptPath(receiptId)).data.lastActionId;
-      let action = getAfter(purchaseActionPath(receiptId, actionId)).data;
+      let actionId = afterData(purchaseReceiptPath(receiptId)).lastActionId;
+      let action = afterData(purchaseActionPath(receiptId, actionId));
       return existsAfter(purchaseActionPath(receiptId, actionId))
         && action.type == actionType && action.receiptId == receiptId
-        && action.receiptCode == getAfter(purchaseReceiptPath(receiptId)).data.receiptCode
-        && action.supplierId == getAfter(purchaseReceiptPath(receiptId)).data.supplierId
-        && action.vesselId == getAfter(purchaseReceiptPath(receiptId)).data.vesselId
-        && action.performedBy == request.auth.uid && action.performedAt == request.time;
+        && action.receiptCode == afterData(purchaseReceiptPath(receiptId)).receiptCode
+        && action.supplierId == afterData(purchaseReceiptPath(receiptId)).supplierId
+        && action.vesselId == afterData(purchaseReceiptPath(receiptId)).vesselId
+        && action.performedBy == uid() && action.performedAt == now();
     }
 
     function validPurchaseReceiptPaymentUpdate(receiptId) {
-      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
-      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
-      let payment = getAfter(purchasePaymentPath(action.paymentId)).data;
+      let receipt = afterData(purchaseReceiptPath(receiptId));
+      let action = afterData(purchaseActionPath(receiptId, receipt.lastActionId));
+      let payment = afterData(purchasePaymentPath(action.paymentId));
       return validLinkedPurchaseAction(receiptId, action.type)
         && action.paymentId is string
         && existsAfter(purchasePaymentPath(action.paymentId))
@@ -600,8 +675,8 @@ service cloud.firestore {
     }
 
     function validDraftPurchaseAction(receiptId, actionType) {
-      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
-      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      let receipt = afterData(purchaseReceiptPath(receiptId));
+      let action = afterData(purchaseActionPath(receiptId, receipt.lastActionId));
       return validLinkedPurchaseAction(receiptId, actionType)
         && action.afterSnapshot.status == 'draft'
         && action.afterSnapshot.draftVersion == receipt.draftVersion
@@ -612,8 +687,8 @@ service cloud.firestore {
     }
 
     function validConfirmPurchaseAction(receiptId) {
-      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
-      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      let receipt = afterData(purchaseReceiptPath(receiptId));
+      let action = afterData(purchaseActionPath(receiptId, receipt.lastActionId));
       return validLinkedPurchaseAction(receiptId, 'confirm')
         && action.afterSnapshot.status == 'confirmed'
         && action.afterSnapshot.lineCount == receipt.lineCount
@@ -623,8 +698,8 @@ service cloud.firestore {
     }
 
     function validVoidPurchaseAction(receiptId) {
-      let receipt = getAfter(purchaseReceiptPath(receiptId)).data;
-      let action = getAfter(purchaseActionPath(receiptId, receipt.lastActionId)).data;
+      let receipt = afterData(purchaseReceiptPath(receiptId));
+      let action = afterData(purchaseActionPath(receiptId, receipt.lastActionId));
       return validLinkedPurchaseAction(receiptId, 'void')
         && action.reason == receipt.voidReason
         && action.beforeSnapshot.status == 'confirmed'
@@ -634,24 +709,24 @@ service cloud.firestore {
 
     function validDraftLineUpsert(receiptId, lineId) {
       let path = purchaseReceiptPath(receiptId);
-      let after = getAfter(path).data;
+      let after = afterData(path);
       return after.status == 'draft'
         && lineId in after.lineIds
         && (
           (!exists(path) && validDraftPurchaseAction(receiptId, 'create'))
           ||
-          (exists(path) && get(path).data.status == 'draft'
-            && after.draftVersion == get(path).data.draftVersion + 1
+          (exists(path) && beforeData(path).status == 'draft'
+            && after.draftVersion == beforeData(path).draftVersion + 1
             && validDraftPurchaseAction(receiptId, 'update_draft'))
         );
     }
 
     function validDraftLineDelete(receiptId, lineId) {
       let path = purchaseReceiptPath(receiptId);
-      let after = getAfter(path).data;
-      return exists(path) && get(path).data.status == 'draft'
+      let after = afterData(path);
+      return exists(path) && beforeData(path).status == 'draft'
         && after.status == 'draft' && !(lineId in after.lineIds)
-        && after.draftVersion == get(path).data.draftVersion + 1
+        && after.draftVersion == beforeData(path).draftVersion + 1
         && validDraftPurchaseAction(receiptId, 'update_draft');
     }
 
@@ -691,7 +766,7 @@ service cloud.firestore {
     function weighingCanModify(data) {
       return data.status in ['weighing', 'completed']
         && ((data.status == 'weighing' && data.completedAt == null)
-          || (data.completedAt is timestamp && request.time <= data.completedAt + duration.value(7, 'd')));
+          || (data.completedAt is timestamp && now() <= data.completedAt + duration.value(7, 'd')));
     }
 
     function validWeighingSession(data) {
@@ -816,10 +891,10 @@ service cloud.firestore {
           && data.fishSpeciesCodeSnapshot == data.fishSpeciesId
           && data.fishSpeciesNameSnapshot == data.displayNameSnapshot)
         || (exists(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId))
-          && get(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).data.active == true
-          && get(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).data.speciesCode == data.fishSpeciesCodeSnapshot
-          && get(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).data.displayName == data.fishSpeciesNameSnapshot
-          && get(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).data.displayName == data.displayNameSnapshot);
+          && beforeData(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).active == true
+          && beforeData(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).speciesCode == data.fishSpeciesCodeSnapshot
+          && beforeData(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).displayName == data.fishSpeciesNameSnapshot
+          && beforeData(/databases/$(database)/documents/fishSpecies/$(data.fishSpeciesId)).displayName == data.displayNameSnapshot);
     }
 
     function validWeighingAction(data) {
@@ -835,17 +910,17 @@ service cloud.firestore {
         && data.sessionId is string
         && (data.entryId == null || data.entryId is string)
         && (data.reason == null || (data.reason is string && data.reason.size() >= 2 && data.reason.size() <= 100))
-        && data.performedBy == request.auth.uid && data.performedAt == request.time
+        && data.performedBy == uid() && data.performedAt == now()
         && data.clientOperationId is string && data.clientOperationId.size() > 0
         && 'afterSnapshot' in data;
     }
 
     function validLinkedWeighingAction(sessionId, actionType) {
-      let actionId = getAfter(weighingSessionPath(sessionId)).data.lastActionId;
-      let action = getAfter(weighingActionPath(sessionId, actionId)).data;
+      let actionId = afterData(weighingSessionPath(sessionId)).lastActionId;
+      let action = afterData(weighingActionPath(sessionId, actionId));
       return existsAfter(weighingActionPath(sessionId, actionId))
         && action.type == actionType && action.sessionId == sessionId
-        && action.performedBy == request.auth.uid && action.performedAt == request.time;
+        && action.performedBy == uid() && action.performedAt == now();
     }
 
     function validWeighingAggregateDelta(before, after, oldEntry, newEntry) {
@@ -899,14 +974,14 @@ service cloud.firestore {
         && incomingData().revision == existingData().revision + 1
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time;
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now();
     }
 
     function validWeighingControlledMetadataUpdate() {
       let before = existingData();
       let data = incomingData();
-      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      let vessel = beforeData(/databases/$(database)/documents/vessels/$(data.vesselId));
       return data.diff(before).affectedKeys().hasOnly([
           'sessionCode', 'weighingDate', 'monthKey', 'dateSortKey', 'monthSortKey',
           'externalSlipNo', 'vesselId', 'vesselCodeSnapshot', 'vesselNameSnapshot',
@@ -914,7 +989,7 @@ service cloud.firestore {
         ])
         && data.status == before.status && data.productType == before.productType
         && data.revision == before.revision + 1
-        && data.updatedBy == request.auth.uid && data.updatedAt == request.time
+        && data.updatedBy == uid() && data.updatedAt == now()
         && data.sessionCode is string && data.sessionCode.size() >= 5 && data.sessionCode.size() <= 80
         && data.weighingDate is string && validBusinessDate(data.weighingDate)
         && data.monthKey == data.weighingDate[3:10]
@@ -931,7 +1006,7 @@ service cloud.firestore {
     function validWeighingMetadataAudit(sessionId) {
       let before = existingData();
       let after = incomingData();
-      let action = getAfter(weighingActionPath(sessionId, after.lastActionId)).data;
+      let action = afterData(weighingActionPath(sessionId, after.lastActionId));
       let old = action.beforeSnapshot;
       let next = action.afterSnapshot;
       return validLinkedWeighingAction(sessionId, 'session_update') && action.entryId == null
@@ -952,33 +1027,33 @@ service cloud.firestore {
     function validWeighingEntrySessionUpdate(sessionId) {
       let before = existingData();
       let after = incomingData();
-      let action = getAfter(weighingActionPath(sessionId, after.lastActionId)).data;
+      let action = afterData(weighingActionPath(sessionId, after.lastActionId));
       let entryPath = weighingEntryPath(sessionId, action.entryId);
-      let entry = getAfter(entryPath).data;
+      let entry = afterData(entryPath);
       return after.diff(before).affectedKeys().hasOnly([
           'lastSequenceNo', 'fishHeadBasketCount', 'fishHeadWeightGrams', 'fishMealBucketBasketCount', 'fishMealBucketWeightGrams',
           'fishMealBagBasketCount', 'fishMealBagWeightGrams', 'fishMealTotalWeightGrams', 'totalWeightGrams',
           'externalSlipNo', 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
         ])
-        && after.revision == before.revision + 1 && after.updatedBy == request.auth.uid && after.updatedAt == request.time
+        && after.revision == before.revision + 1 && after.updatedBy == uid() && after.updatedAt == now()
         && after.externalSlipNo is string && after.externalSlipNo.size() <= 100
         && after.fishMealTotalWeightGrams == after.fishMealBucketWeightGrams + after.fishMealBagWeightGrams
         && after.totalWeightGrams == after.fishHeadWeightGrams + after.fishMealTotalWeightGrams
         && action.type in ['entry_create', 'entry_update', 'entry_void']
-        && action.sessionId == sessionId && action.performedBy == request.auth.uid && action.performedAt == request.time
-        && entry.lastActionId == after.lastActionId && entry.updatedAt == request.time
+        && action.sessionId == sessionId && action.performedBy == uid() && action.performedAt == now()
+        && entry.lastActionId == after.lastActionId && entry.updatedAt == now()
         && ((action.type == 'entry_create' && !exists(entryPath) && validWeighingCreateDelta(before, after, entry))
           || (after.lastSequenceNo == before.lastSequenceNo
-            && ((action.type == 'entry_update' && validWeighingAggregateDelta(before, after, get(entryPath).data, entry))
-              || (action.type == 'entry_void' && validWeighingAggregateDelta(before, after, get(entryPath).data,
+            && ((action.type == 'entry_update' && validWeighingAggregateDelta(before, after, beforeData(entryPath), entry))
+              || (action.type == 'entry_void' && validWeighingAggregateDelta(before, after, beforeData(entryPath),
                 {'productType': 'fish_meal', 'entryMode': 'total', 'weightGrams': 0, 'fishMealQuality': null})))));
     }
 
     function validWeighingFirstBasket(sessionId) {
       let data = incomingData();
-      let action = getAfter(weighingActionPath(sessionId, data.lastActionId)).data;
-      let entry = getAfter(weighingEntryPath(sessionId, action.entryId)).data;
-      let vessel = get(/databases/$(database)/documents/vessels/$(data.vesselId)).data;
+      let action = afterData(weighingActionPath(sessionId, data.lastActionId));
+      let entry = afterData(weighingEntryPath(sessionId, action.entryId));
+      let vessel = beforeData(/databases/$(database)/documents/vessels/$(data.vesselId));
       return vessel.active == true && vessel.vesselCode == data.vesselCodeSnapshot && vessel.displayName == data.vesselNameSnapshot
         && validLinkedWeighingAction(sessionId, 'entry_create') && action.entryId is string
         && entry.sessionId == sessionId && entry.productType == data.productType && data.totalWeightGrams == entry.weightGrams
@@ -1059,12 +1134,12 @@ service cloud.firestore {
     }
 
     function validDraftVesselTripUpdate(tripId) {
-      let action = getAfter(vesselTripActionPath(tripId, incomingData().lastActionId)).data;
+      let action = afterData(vesselTripActionPath(tripId, incomingData().lastActionId));
       let crew = action.type == 'crew_add'
-        ? getAfter(vesselTripCrewPath(tripId, action.crewSettlementId)).data
+        ? afterData(vesselTripCrewPath(tripId, action.crewSettlementId))
         : {};
       let entry = action.type in ['entry_add', 'entry_void']
-        ? getAfter(vesselTripEntryPath(action.entryId)).data
+        ? afterData(vesselTripEntryPath(action.entryId))
         : {};
       return incomingData().diff(existingData()).affectedKeys().hasOnly([
           'incomeCents', 'expenseCents', 'crewWageCents', 'crewAdvanceCents',
@@ -1100,8 +1175,8 @@ service cloud.firestore {
     }
 
     function validVesselTripPaymentUpdate(tripId) {
-      let action = getAfter(vesselTripActionPath(tripId, incomingData().lastActionId)).data;
-      let payment = getAfter(vesselCrewPaymentPath(action.paymentId)).data;
+      let action = afterData(vesselTripActionPath(tripId, incomingData().lastActionId));
+      let payment = afterData(vesselCrewPaymentPath(action.paymentId));
       return action.paymentId is string
         && existsAfter(vesselCrewPaymentPath(action.paymentId))
         && payment.tripId == tripId
@@ -1111,7 +1186,7 @@ service cloud.firestore {
         ])
         && (
           (action.type == 'payment_create' && payment.voided == false
-            && payment.createdAt == request.time
+            && payment.createdAt == now()
             && ((payment.paymentType == 'advance'
                 && incomingData().crewAdvanceCents == existingData().crewAdvanceCents + payment.amountCents
                 && incomingData().crewPaidCents == existingData().crewPaidCents)
@@ -1120,7 +1195,7 @@ service cloud.firestore {
                 && incomingData().crewAdvanceCents == existingData().crewAdvanceCents)))
           ||
           (action.type == 'payment_void' && payment.voided == true
-            && payment.voidedAt == request.time
+            && payment.voidedAt == now()
             && ((payment.paymentType == 'advance'
                 && incomingData().crewAdvanceCents == existingData().crewAdvanceCents - payment.amountCents
                 && incomingData().crewPaidCents == existingData().crewPaidCents)
@@ -1131,9 +1206,9 @@ service cloud.firestore {
     }
 
     function validVesselCrewPaymentUpdate(tripId) {
-      let actionId = getAfter(vesselTripPath(tripId)).data.lastActionId;
-      let action = getAfter(vesselTripActionPath(tripId, actionId)).data;
-      let payment = getAfter(vesselCrewPaymentPath(action.paymentId)).data;
+      let actionId = afterData(vesselTripPath(tripId)).lastActionId;
+      let action = afterData(vesselTripActionPath(tripId, actionId));
+      let payment = afterData(vesselCrewPaymentPath(action.paymentId));
       return action.paymentId is string
         && existsAfter(vesselCrewPaymentPath(action.paymentId))
         && payment.tripId == tripId
@@ -1143,7 +1218,7 @@ service cloud.firestore {
           'advanceCents', 'paidCents', 'balanceCents', 'lastActionId'
         ])
         && (
-          (action.type == 'payment_create' && payment.createdAt == request.time
+          (action.type == 'payment_create' && payment.createdAt == now()
             && ((payment.paymentType == 'advance'
                 && incomingData().advanceCents == existingData().advanceCents + payment.amountCents
                 && incomingData().paidCents == existingData().paidCents)
@@ -1151,7 +1226,7 @@ service cloud.firestore {
                 && incomingData().paidCents == existingData().paidCents + payment.amountCents
                 && incomingData().advanceCents == existingData().advanceCents)))
           ||
-          (action.type == 'payment_void' && payment.voidedAt == request.time
+          (action.type == 'payment_void' && payment.voidedAt == now()
             && ((payment.paymentType == 'advance'
                 && incomingData().advanceCents == existingData().advanceCents - payment.amountCents
                 && incomingData().paidCents == existingData().paidCents)
@@ -1468,8 +1543,8 @@ service cloud.firestore {
         && data.type in ['close', 'reopen', 'payment_create', 'payment_void']
         && data.monthKey is string && data.monthKey.matches('^[0-9]{4}-[0-9]{2}$')
         && data.closeVersion is int && data.closeVersion >= 1
-        && data.performedBy == request.auth.uid
-        && data.performedAt == request.time
+        && data.performedBy == uid()
+        && data.performedAt == now()
         && (!('workerId' in data) || data.workerId is string)
         && (!('paymentId' in data) || data.paymentId is string)
         && (!('reason' in data) || (data.reason is string && data.reason.size() >= 3 && data.reason.size() <= 100))
@@ -1483,8 +1558,8 @@ service cloud.firestore {
     }
 
     function validCloseAction(monthKey, version, actionId) {
-      let month = getAfter(monthPath(monthKey)).data;
-      let action = getAfter(actionPath(monthKey, actionId)).data;
+      let month = afterData(monthPath(monthKey));
+      let action = afterData(actionPath(monthKey, actionId));
       return actionId == 'close_' + string(version)
         && existsAfter(actionPath(monthKey, actionId))
         && action.type == 'close'
@@ -1502,12 +1577,12 @@ service cloud.firestore {
     }
 
     function validPaymentMonthUpdate(monthKey) {
-      let action = getAfter(actionPath(monthKey, incomingData().lastActionId)).data;
-      let payment = getAfter(paymentPath(monthKey, action.paymentId)).data;
+      let action = afterData(actionPath(monthKey, incomingData().lastActionId));
+      let payment = afterData(paymentPath(monthKey, action.paymentId));
       return existingData().status == 'closed'
         && incomingData().status == 'closed'
         && incomingData().diff(existingData()).affectedKeys().hasOnly(['paidCents', 'updatedAt', 'lastActionId'])
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedAt == now()
         && existsAfter(actionPath(monthKey, incomingData().lastActionId))
         && existsAfter(paymentPath(monthKey, action.paymentId))
         && action.monthKey == monthKey
@@ -1517,13 +1592,13 @@ service cloud.firestore {
           (action.type == 'payment_create'
             && incomingData().lastActionId == 'payment_create_' + action.paymentId
             && payment.voided == false
-            && payment.createdAt == request.time
+            && payment.createdAt == now()
             && incomingData().paidCents == existingData().paidCents + payment.amountCents)
           ||
           (action.type == 'payment_void'
             && incomingData().lastActionId == 'payment_void_' + action.paymentId
             && payment.voided == true
-            && payment.voidedAt == request.time
+            && payment.voidedAt == now()
             && incomingData().paidCents == existingData().paidCents - payment.amountCents)
         );
     }
@@ -1536,10 +1611,10 @@ service cloud.firestore {
           'notes', 'createdBy', 'createdAt', 'updatedBy', 'updatedAt', 'inactiveBy', 'inactiveAt'
         ])
         && incomingData().active == true
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null
         && incomingData().inactiveAt == null;
       allow update: if signedIn() && validWorker(incomingData())
@@ -1548,8 +1623,8 @@ service cloud.firestore {
           || (!('createdBy' in existingData()) && !('createdBy' in incomingData())))
         && (('createdAt' in existingData() && incomingData().createdAt == existingData().createdAt)
           || (!('createdAt' in existingData()) && !('createdAt' in incomingData())))
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (incomingData().active == existingData().active
             && ((!('inactiveBy' in existingData()) && incomingData().inactiveBy == null)
@@ -1557,8 +1632,8 @@ service cloud.firestore {
             && ((!('inactiveAt' in existingData()) && incomingData().inactiveAt == null)
               || incomingData().inactiveAt == existingData().inactiveAt))
           || (existingData().active == true && incomingData().active == false
-            && incomingData().inactiveBy == request.auth.uid
-            && incomingData().inactiveAt == request.time)
+            && incomingData().inactiveBy == uid()
+            && incomingData().inactiveAt == now())
           || (existingData().active == false && incomingData().active == true
             && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
@@ -1569,25 +1644,25 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn() && validPartner(incomingData())
         && incomingData().active == true
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null
         && incomingData().inactiveAt == null;
       allow update: if signedIn() && validPartner(incomingData())
         && incomingData().partnerCode == existingData().partnerCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (incomingData().active == existingData().active
             && incomingData().inactiveBy == existingData().inactiveBy
             && incomingData().inactiveAt == existingData().inactiveAt)
           || (existingData().active == true && incomingData().active == false
-            && incomingData().inactiveBy == request.auth.uid
-            && incomingData().inactiveAt == request.time)
+            && incomingData().inactiveBy == uid()
+            && incomingData().inactiveAt == now())
           || (existingData().active == false && incomingData().active == true
             && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
@@ -1599,23 +1674,23 @@ service cloud.firestore {
       allow create: if signedIn() && validFishSpecies(incomingData())
         && speciesId == incomingData().speciesCode
         && incomingData().active == true
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
       allow update: if signedIn() && validFishSpecies(incomingData())
         && incomingData().speciesCode == existingData().speciesCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (incomingData().active == existingData().active
             && incomingData().inactiveBy == existingData().inactiveBy
             && incomingData().inactiveAt == existingData().inactiveAt)
           || (existingData().active == true && incomingData().active == false
-            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+            && incomingData().inactiveBy == uid() && incomingData().inactiveAt == now())
           || (existingData().active == false && incomingData().active == true
             && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
@@ -1628,10 +1703,10 @@ service cloud.firestore {
         && incomingData().status == 'weighing'
         && incomingData().productType in ['fish_head', 'fish_meal']
         && incomingData().revision == 2
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().completedBy == null && incomingData().completedAt == null
         && incomingData().processedBy == null && incomingData().processedAt == null
         && incomingData().processedReceiptId == null && incomingData().processedReceiptCode == null
@@ -1639,7 +1714,7 @@ service cloud.firestore {
         && incomingData().voidReason == null
         && validWeighingFirstBasket(sessionId);
       allow update: if signedIn() && existingData().status == incomingData().status && weighingCanModify(existingData())
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.type == 'session_update'
+        && afterData(weighingActionPath(sessionId, incomingData().lastActionId)).type == 'session_update'
         && validWeighingMetadataAudit(sessionId)
         && validWeighingControlledMetadataUpdate()
         && existingData().status in ['weighing', 'completed'];
@@ -1649,12 +1724,12 @@ service cloud.firestore {
       allow update: if signedIn()
         && existingData().status == 'completed' && incomingData().status == 'weighing'
         && existingData().completedAt is timestamp
-        && request.time <= existingData().completedAt + duration.value(7, 'd')
+        && now() <= existingData().completedAt + duration.value(7, 'd')
         && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
         ])
         && incomingData().revision == existingData().revision + 1
-        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid() && incomingData().updatedAt == now()
         && incomingData().completedBy == existingData().completedBy && incomingData().completedAt == existingData().completedAt
         && validLinkedWeighingAction(sessionId, 'reopen');
       allow update: if signedIn() && incomingData().status == 'voided' && weighingCanModify(existingData())
@@ -1662,13 +1737,13 @@ service cloud.firestore {
           'status', 'revision', 'updatedBy', 'updatedAt', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
         ])
         && incomingData().revision == existingData().revision + 1
-        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
-        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+        && incomingData().updatedBy == uid() && incomingData().updatedAt == now()
+        && incomingData().voidedBy == uid() && incomingData().voidedAt == now()
         && incomingData().voidReason is string && incomingData().voidReason.size() >= 3 && incomingData().voidReason.size() <= 100
         && validLinkedWeighingAction(sessionId, 'session_void')
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.reason == incomingData().voidReason;
+        && afterData(weighingActionPath(sessionId, incomingData().lastActionId)).reason == incomingData().voidReason;
       allow update: if signedIn() && existingData().status == 'weighing' && incomingData().status == 'weighing'
-        && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.type in ['entry_create', 'entry_update', 'entry_void']
+        && afterData(weighingActionPath(sessionId, incomingData().lastActionId)).type in ['entry_create', 'entry_update', 'entry_void']
         && weighingCanModify(existingData()) && validWeighingEntrySessionUpdate(sessionId);
       allow update: if signedIn()
         && incomingData().status in ['completed', 'processed']
@@ -1683,7 +1758,7 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'updatedBy', 'updatedAt', 'completedBy', 'completedAt', 'lastActionId'
             ])
-            && ((existingData().completedAt == null && incomingData().completedBy == request.auth.uid && incomingData().completedAt == request.time)
+            && ((existingData().completedAt == null && incomingData().completedBy == uid() && incomingData().completedAt == now())
               || (existingData().completedAt is timestamp && incomingData().completedAt == existingData().completedAt && incomingData().completedBy == existingData().completedBy)))
           ||
           (existingData().status == 'completed' && incomingData().status == 'processed'
@@ -1692,12 +1767,12 @@ service cloud.firestore {
               'status', 'revision', 'updatedBy', 'updatedAt', 'processedReceiptId',
               'processedReceiptCode', 'processedBy', 'processedAt', 'lastActionId'
             ])
-            && incomingData().processedBy == request.auth.uid
-            && incomingData().processedAt == request.time
+            && incomingData().processedBy == uid()
+            && incomingData().processedAt == now()
             && incomingData().processedReceiptId is string
             && existsAfter(purchaseReceiptPath(incomingData().processedReceiptId))
-            && getAfter(purchaseReceiptPath(incomingData().processedReceiptId)).data.sourceWeighingSessionId == sessionId
-            && getAfter(purchaseReceiptPath(incomingData().processedReceiptId)).data.receiptCode
+            && afterData(purchaseReceiptPath(incomingData().processedReceiptId)).sourceWeighingSessionId == sessionId
+            && afterData(purchaseReceiptPath(incomingData().processedReceiptId)).receiptCode
               == incomingData().processedReceiptCode)
         );
       allow delete: if false;
@@ -1710,26 +1785,26 @@ service cloud.firestore {
           && incomingData().revision == 1 && incomingData().voided == false
           && incomingData().voidReason == null && incomingData().voidedBy == null
           && incomingData().voidedAt == null
-          && incomingData().recordedBy == request.auth.uid
-          && incomingData().recordedAt == request.time
-          && incomingData().updatedBy == request.auth.uid
-          && incomingData().updatedAt == request.time
+          && incomingData().recordedBy == uid()
+          && incomingData().recordedAt == now()
+          && incomingData().updatedBy == uid()
+          && incomingData().updatedAt == now()
             && validWeighingSpeciesSnapshot(incomingData())
-            && getAfter(weighingSessionPath(sessionId)).data.status == 'weighing'
+            && afterData(weighingSessionPath(sessionId)).status == 'weighing'
             && (!('weighingDate' in incomingData()) || (
-              incomingData().weighingDate == getAfter(weighingSessionPath(sessionId)).data.weighingDate
-              && incomingData().monthKey == getAfter(weighingSessionPath(sessionId)).data.monthKey
-              && incomingData().vesselId == getAfter(weighingSessionPath(sessionId)).data.vesselId
-              && incomingData().vesselCodeSnapshot == getAfter(weighingSessionPath(sessionId)).data.vesselCodeSnapshot
+              incomingData().weighingDate == afterData(weighingSessionPath(sessionId)).weighingDate
+              && incomingData().monthKey == afterData(weighingSessionPath(sessionId)).monthKey
+              && incomingData().vesselId == afterData(weighingSessionPath(sessionId)).vesselId
+              && incomingData().vesselCodeSnapshot == afterData(weighingSessionPath(sessionId)).vesselCodeSnapshot
             ))
-            && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
-              || incomingData().productType == getAfter(weighingSessionPath(sessionId)).data.productType)
-            && (!('productType' in getAfter(weighingSessionPath(sessionId)).data)
+            && (!('productType' in afterData(weighingSessionPath(sessionId)))
+              || incomingData().productType == afterData(weighingSessionPath(sessionId)).productType)
+            && (!('productType' in afterData(weighingSessionPath(sessionId)))
               || !('receiptNoSnapshot' in incomingData())
-              || incomingData().receiptNoSnapshot == getAfter(weighingSessionPath(sessionId)).data.sessionCode)
-            && getAfter(weighingSessionPath(sessionId)).data.lastActionId == incomingData().lastActionId
+              || incomingData().receiptNoSnapshot == afterData(weighingSessionPath(sessionId)).sessionCode)
+            && afterData(weighingSessionPath(sessionId)).lastActionId == incomingData().lastActionId
           && validLinkedWeighingAction(sessionId, 'entry_create')
-          && getAfter(weighingActionPath(sessionId, incomingData().lastActionId)).data.entryId == entryId;
+          && afterData(weighingActionPath(sessionId, incomingData().lastActionId)).entryId == entryId;
         allow update: if signedIn() && validWeighingEntry(incomingData())
           && incomingData().clientEntryId == existingData().clientEntryId
           && incomingData().sessionId == existingData().sessionId
@@ -1746,12 +1821,12 @@ service cloud.firestore {
                 && incomingData().vesselId == existingData().vesselId
                 && incomingData().vesselCodeSnapshot == existingData().vesselCodeSnapshot))
           && incomingData().revision == existingData().revision + 1
-          && incomingData().updatedBy == request.auth.uid
-          && incomingData().updatedAt == request.time
+          && incomingData().updatedBy == uid()
+          && incomingData().updatedAt == now()
           && validWeighingSpeciesSnapshot(incomingData())
-          && get(weighingSessionPath(sessionId)).data.status == 'weighing'
-          && getAfter(weighingSessionPath(sessionId)).data.status == 'weighing'
-          && getAfter(weighingSessionPath(sessionId)).data.lastActionId == incomingData().lastActionId
+          && beforeData(weighingSessionPath(sessionId)).status == 'weighing'
+          && afterData(weighingSessionPath(sessionId)).status == 'weighing'
+          && afterData(weighingSessionPath(sessionId)).lastActionId == incomingData().lastActionId
           && (
             (existingData().voided == false && incomingData().voided == false
               && incomingData().diff(existingData()).affectedKeys().hasOnly([
@@ -1766,8 +1841,8 @@ service cloud.firestore {
                 'voided', 'voidReason', 'voidedBy', 'voidedAt',
                 'revision', 'updatedBy', 'updatedAt', 'lastActionId'
               ])
-              && incomingData().voidedBy == request.auth.uid
-              && incomingData().voidedAt == request.time
+              && incomingData().voidedBy == uid()
+              && incomingData().voidedAt == now()
               && validLinkedWeighingAction(sessionId, 'entry_void'))
           );
         allow delete: if false;
@@ -1778,12 +1853,12 @@ service cloud.firestore {
         allow create: if signedIn() && validWeighingAction(incomingData())
           && incomingData().sessionId == sessionId
           && (
-            getAfter(weighingSessionPath(sessionId)).data.lastActionId == actionId
+            afterData(weighingSessionPath(sessionId)).lastActionId == actionId
             || (incomingData().type == 'create' && !exists(weighingSessionPath(sessionId))
-              && getAfter(weighingSessionPath(sessionId)).data.createdBy == request.auth.uid
+              && afterData(weighingSessionPath(sessionId)).createdBy == uid()
               && incomingData().entryId == null)
             || (incomingData().type == 'sync_conflict' && exists(weighingSessionPath(sessionId))
-              && get(weighingSessionPath(sessionId)).data.status == 'weighing'
+              && beforeData(weighingSessionPath(sessionId)).status == 'weighing'
               && incomingData().entryId is string)
           );
         allow update, delete: if false;
@@ -1795,23 +1870,23 @@ service cloud.firestore {
       allow create: if signedIn() && validPurchaseCategory(incomingData())
         && categoryId == incomingData().categoryCode
         && incomingData().active == true
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
       allow update: if signedIn() && validPurchaseCategory(incomingData())
         && incomingData().categoryCode == existingData().categoryCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (incomingData().active == existingData().active
             && incomingData().inactiveBy == existingData().inactiveBy
             && incomingData().inactiveAt == existingData().inactiveAt)
           || (existingData().active == true && incomingData().active == false
-            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+            && incomingData().inactiveBy == uid() && incomingData().inactiveAt == now())
           || (existingData().active == false && incomingData().active == true
             && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
@@ -1822,23 +1897,23 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn() && validVessel(incomingData())
         && incomingData().active == true
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
       allow update: if signedIn() && validVessel(incomingData())
         && incomingData().vesselCode == existingData().vesselCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (incomingData().active == existingData().active
             && incomingData().inactiveBy == existingData().inactiveBy
             && incomingData().inactiveAt == existingData().inactiveAt)
           || (existingData().active == true && incomingData().active == false
-            && incomingData().inactiveBy == request.auth.uid && incomingData().inactiveAt == request.time)
+            && incomingData().inactiveBy == uid() && incomingData().inactiveAt == now())
           || (existingData().active == false && incomingData().active == true
             && incomingData().inactiveBy == null && incomingData().inactiveAt == null)
         );
@@ -1861,15 +1936,15 @@ service cloud.firestore {
 
     match /iceWorkRecords/{recordId} {
       allow create: if signedIn() && validIceWorkRecord(incomingData())
-        && incomingData().createdBy == request.auth.uid && incomingData().updatedBy == request.auth.uid
-        && incomingData().createdAt == request.time && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid() && incomingData().updatedBy == uid()
+        && incomingData().createdAt == now() && incomingData().updatedAt == now()
         && incomingData().status == 'draft' && incomingData().revision == 1 && incomingData().voided == false
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode == incomingData().vesselCodeSnapshot
+        && beforeData(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).active == true
+        && beforeData(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).vesselCode == incomingData().vesselCodeSnapshot
         && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'create', 1);
       allow update: if signedIn() && validIceWorkRecord(incomingData())
         && incomingData().createdBy == existingData().createdBy && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid() && incomingData().updatedAt == now()
         && incomingData().revision == existingData().revision + 1
         && ((existingData().status in ['draft', 'reopened'] && incomingData().status == existingData().status
               && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'update', incomingData().revision))
@@ -1877,24 +1952,24 @@ service cloud.firestore {
               && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'status', 'revision', 'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
               ])
-              && incomingData().confirmedBy == request.auth.uid && incomingData().confirmedAt == request.time
+              && incomingData().confirmedBy == uid() && incomingData().confirmedAt == now()
               && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'confirm', incomingData().revision))
           || (existingData().status == 'confirmed' && incomingData().status == 'reopened'
-              && incomingData().reopenedBy == request.auth.uid && incomingData().reopenedAt == request.time
+              && incomingData().reopenedBy == uid() && incomingData().reopenedAt == now()
               && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'reopen', incomingData().revision))
           || (existingData().status != 'voided' && incomingData().status == 'voided' && incomingData().voided == true
-              && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+              && incomingData().voidedBy == uid() && incomingData().voidedAt == now()
               && validIceWorkRecordAction(recordId, incomingData().lastActionId, 'void', incomingData().revision)));
       match /actions/{actionId} {
         allow read: if signedIn();
         allow create: if signedIn() && incomingData().type in ['create','update','confirm','reopen','void']
-          && incomingData().recordId == recordId && incomingData().performedBy == request.auth.uid
-        && incomingData().performedAt == request.time && incomingData().revision is int
+          && incomingData().recordId == recordId && incomingData().performedBy == uid()
+        && incomingData().performedAt == now() && incomingData().revision is int
           && incomingData().clientOperationId == actionId
-          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.revision == incomingData().revision
-          && getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data.lastActionId == actionId
-          && iceWorkRecordSnapshotMatches(getAfter(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, incomingData().afterSnapshot)
-          && (incomingData().type == 'create' ? incomingData().beforeSnapshot == null : iceWorkRecordSnapshotMatches(get(/databases/$(database)/documents/iceWorkRecords/$(recordId)).data, incomingData().beforeSnapshot));
+          && afterData(/databases/$(database)/documents/iceWorkRecords/$(recordId)).revision == incomingData().revision
+          && afterData(/databases/$(database)/documents/iceWorkRecords/$(recordId)).lastActionId == actionId
+          && iceWorkRecordSnapshotMatches(afterData(/databases/$(database)/documents/iceWorkRecords/$(recordId)), incomingData().afterSnapshot)
+          && (incomingData().type == 'create' ? incomingData().beforeSnapshot == null : iceWorkRecordSnapshotMatches(beforeData(/databases/$(database)/documents/iceWorkRecords/$(recordId)), incomingData().beforeSnapshot));
         allow update, delete: if false;
       }
     }
@@ -1916,10 +1991,10 @@ service cloud.firestore {
         && validActivePurchaseParties(incomingData())
         && incomingData().status == 'draft'
         && incomingData().paidCents == 0 && incomingData().paymentStatus == 'unpaid'
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().confirmedBy == null && incomingData().confirmedAt == null
         && incomingData().voidedBy == null && incomingData().voidedAt == null
         && incomingData().voidReason == null
@@ -1928,9 +2003,9 @@ service cloud.firestore {
           incomingData().sourceWeighingSessionId == null
           ||
           (incomingData().sourceWeighingSessionId is string
-            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.status == 'processed'
-            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptId == receiptId
-            && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptCode
+            && afterData(weighingSessionPath(incomingData().sourceWeighingSessionId)).status == 'processed'
+            && afterData(weighingSessionPath(incomingData().sourceWeighingSessionId)).processedReceiptId == receiptId
+            && afterData(weighingSessionPath(incomingData().sourceWeighingSessionId)).processedReceiptCode
               == incomingData().receiptCode
             && validLinkedWeighingAction(incomingData().sourceWeighingSessionId, 'process'))
         );
@@ -1939,8 +2014,8 @@ service cloud.firestore {
         && incomingData().sourceWeighingSessionId == existingData().sourceWeighingSessionId
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && (
           (existingData().status == 'draft' && incomingData().status == 'draft'
             && validActivePurchaseParties(incomingData())
@@ -1961,7 +2036,7 @@ service cloud.firestore {
             && incomingData().lineCount >= 1
             && incomingData().totalWeightGrams > 0 && incomingData().totalAmountCents > 0
             && incomingData().paidCents == 0 && incomingData().paymentStatus == 'unpaid'
-            && incomingData().confirmedBy == request.auth.uid && incomingData().confirmedAt == request.time
+            && incomingData().confirmedBy == uid() && incomingData().confirmedAt == now()
             && incomingData().voidedBy == null && incomingData().voidedAt == null
             && incomingData().voidReason == null
             && validConfirmPurchaseAction(receiptId))
@@ -1971,7 +2046,7 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+            && incomingData().voidedBy == uid() && incomingData().voidedAt == now()
             && validVoidPurchaseAction(receiptId))
           ||
           (existingData().status == 'confirmed' && incomingData().status == 'confirmed'
@@ -1987,40 +2062,40 @@ service cloud.firestore {
         allow create: if signedIn() && validPurchaseLine(incomingData())
           && (
             (incomingData().sourceWeighingSessionId == null
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.active == true
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.categoryCode
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).active == true
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).categoryCode
                 == incomingData().categoryCodeSnapshot
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.displayName
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).displayName
                 == incomingData().categoryNameSnapshot)
             ||
             (incomingData().sourceWeighingSessionId is string
               && incomingData().sourceWeighingSessionId
-                == getAfter(purchaseReceiptPath(receiptId)).data.sourceWeighingSessionId
-              && getAfter(weighingSessionPath(incomingData().sourceWeighingSessionId)).data.processedReceiptId == receiptId)
+                == afterData(purchaseReceiptPath(receiptId)).sourceWeighingSessionId
+              && afterData(weighingSessionPath(incomingData().sourceWeighingSessionId)).processedReceiptId == receiptId)
           )
-          && incomingData().createdAt == request.time && incomingData().updatedAt == request.time
+          && incomingData().createdAt == now() && incomingData().updatedAt == now()
           && validDraftLineUpsert(receiptId, lineId);
         allow update: if signedIn() && validPurchaseLine(incomingData())
           && incomingData().sourceWeighingSessionId == existingData().sourceWeighingSessionId
           && (
             (incomingData().sourceWeighingSessionId == null
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.active == true
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.categoryCode
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).active == true
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).categoryCode
                 == incomingData().categoryCodeSnapshot
-              && get(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).data.displayName
+              && beforeData(/databases/$(database)/documents/purchaseCategories/$(incomingData().categoryId)).displayName
                 == incomingData().categoryNameSnapshot)
             ||
             (incomingData().sourceWeighingSessionId is string
               && incomingData().sourceWeighingSessionId
-                == getAfter(purchaseReceiptPath(receiptId)).data.sourceWeighingSessionId)
+                == afterData(purchaseReceiptPath(receiptId)).sourceWeighingSessionId)
           )
           && incomingData().createdAt == existingData().createdAt
-          && incomingData().updatedAt == request.time
+          && incomingData().updatedAt == now()
           && (
             validDraftLineUpsert(receiptId, lineId)
             ||
-            (get(purchaseReceiptPath(receiptId)).data.status == 'draft'
-              && getAfter(purchaseReceiptPath(receiptId)).data.status == 'confirmed'
+            (beforeData(purchaseReceiptPath(receiptId)).status == 'draft'
+              && afterData(purchaseReceiptPath(receiptId)).status == 'confirmed'
               && incomingData().diff(existingData()).affectedKeys().hasOnly([
                 'categoryCodeSnapshot', 'categoryNameSnapshot', 'amountCents', 'updatedAt'
               ]))
@@ -2032,7 +2107,7 @@ service cloud.firestore {
         allow read: if signedIn();
         allow create: if signedIn() && validPurchaseAction(incomingData())
           && incomingData().receiptId == receiptId
-          && getAfter(purchaseReceiptPath(receiptId)).data.lastActionId == actionId;
+          && afterData(purchaseReceiptPath(receiptId)).lastActionId == actionId;
         allow update, delete: if false;
       }
     }
@@ -2044,9 +2119,9 @@ service cloud.firestore {
       allow create: if signedIn()
         && incomingData().keys().hasOnly(['productType', 'sourceSessionId', 'draftId', 'createdBy', 'createdAt'])
         && sourceId == incomingData().productType + '_session_' + incomingData().sourceSessionId
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
-        && getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).data.sourceSessionId == incomingData().sourceSessionId
-        && getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).data.productType == incomingData().productType;
+        && incomingData().createdBy == uid() && incomingData().createdAt == now()
+        && afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).sourceSessionId == incomingData().sourceSessionId
+        && afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).productType == incomingData().productType;
       allow update, delete: if false;
     }
 
@@ -2055,19 +2130,19 @@ service cloud.firestore {
       allow create: if signedIn() && validPurchaseSettlementDraft(incomingData())
         && incomingData().revision == 1
         && draftId == incomingData().productType + '_session_' + incomingData().sourceSessionId
-        && getAfter(settlementSourcePath(incomingData())).data.draftId == draftId
+        && afterData(settlementSourcePath(incomingData())).draftId == draftId
         && validSettlementSource() && validSettlementAudit(draftId)
         && incomingData().productType in ['fish_head', 'fish_meal']
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now()
         && incomingData().voided == false
         && (!('voidReason' in incomingData()) || incomingData().voidReason == null)
         && (!('voidedBy' in incomingData()) || incomingData().voidedBy == null)
         && (!('voidedAt' in incomingData()) || incomingData().voidedAt == null);
       allow update: if signedIn() && validSettlementSource() && validSettlementAudit(draftId)
-        && getAfter(settlementSourcePath(incomingData())).data.draftId == draftId
+        && afterData(settlementSourcePath(incomingData())).draftId == draftId
         && (('sourceSessionId' in existingData())
           ? incomingData().sourceSessionId == existingData().sourceSessionId : validSettlementLegacyBinding())
         && validPurchaseSettlementDraftUpdate();
@@ -2075,12 +2150,12 @@ service cloud.firestore {
       match /actions/{revision} {
         allow read: if signedIn();
         allow create: if signedIn()
-          && incomingData().afterSnapshot == getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)).data
+          && incomingData().afterSnapshot == afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
           && revision == string(incomingData().afterSnapshot.revision)
-          && incomingData().afterSnapshot.updatedAt == request.time
+          && incomingData().afterSnapshot.updatedAt == now()
           && incomingData().beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
-            ? get(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)).data : null)
-          && incomingData().performedBy == request.auth.uid && incomingData().performedAt == request.time;
+            ? beforeData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) : null)
+          && incomingData().performedBy == uid() && incomingData().performedAt == now();
         allow update, delete: if false;
       }
     }
@@ -2088,41 +2163,41 @@ service cloud.firestore {
     match /purchasePayments/{paymentId} {
       allow read: if signedIn();
       allow create: if signedIn() && validPurchasePayment(incomingData())
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().createdBy == uid() && incomingData().createdAt == now()
         && incomingData().voided == false && incomingData().voidReason == null
         && incomingData().voidedBy == null && incomingData().voidedAt == null
-        && get(purchaseReceiptPath(incomingData().receiptId)).data.status == 'confirmed'
-        && incomingData().receiptCode == get(purchaseReceiptPath(incomingData().receiptId)).data.receiptCode
-        && incomingData().supplierId == get(purchaseReceiptPath(incomingData().receiptId)).data.supplierId
-        && incomingData().supplierNameSnapshot == get(purchaseReceiptPath(incomingData().receiptId)).data.supplierNameSnapshot
+        && beforeData(purchaseReceiptPath(incomingData().receiptId)).status == 'confirmed'
+        && incomingData().receiptCode == beforeData(purchaseReceiptPath(incomingData().receiptId)).receiptCode
+        && incomingData().supplierId == beforeData(purchaseReceiptPath(incomingData().receiptId)).supplierId
+        && incomingData().supplierNameSnapshot == beforeData(purchaseReceiptPath(incomingData().receiptId)).supplierNameSnapshot
         && incomingData().amountCents
-          <= get(purchaseReceiptPath(incomingData().receiptId)).data.totalAmountCents
-            - get(purchaseReceiptPath(incomingData().receiptId)).data.paidCents
-        && getAfter(purchaseReceiptPath(incomingData().receiptId)).data.paidCents
-          == get(purchaseReceiptPath(incomingData().receiptId)).data.paidCents + incomingData().amountCents
+          <= beforeData(purchaseReceiptPath(incomingData().receiptId)).totalAmountCents
+            - beforeData(purchaseReceiptPath(incomingData().receiptId)).paidCents
+        && afterData(purchaseReceiptPath(incomingData().receiptId)).paidCents
+          == beforeData(purchaseReceiptPath(incomingData().receiptId)).paidCents + incomingData().amountCents
         && validLinkedPurchaseAction(incomingData().receiptId, 'payment_create')
-        && getAfter(purchaseActionPath(
+        && afterData(purchaseActionPath(
           incomingData().receiptId,
-          getAfter(purchaseReceiptPath(incomingData().receiptId)).data.lastActionId
-        )).data.paymentId == paymentId;
+          afterData(purchaseReceiptPath(incomingData().receiptId)).lastActionId
+        )).paymentId == paymentId;
       allow update: if signedIn() && validPurchasePayment(incomingData())
         && existingData().voided == false && incomingData().voided == true
         && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'voided', 'voidReason', 'voidedBy', 'voidedAt'
         ])
-        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
-        && getAfter(purchaseReceiptPath(existingData().receiptId)).data.paidCents
-          == get(purchaseReceiptPath(existingData().receiptId)).data.paidCents - existingData().amountCents
-        && getAfter(purchaseReceiptPath(existingData().receiptId)).data.paidCents >= 0
+        && incomingData().voidedBy == uid() && incomingData().voidedAt == now()
+        && afterData(purchaseReceiptPath(existingData().receiptId)).paidCents
+          == beforeData(purchaseReceiptPath(existingData().receiptId)).paidCents - existingData().amountCents
+        && afterData(purchaseReceiptPath(existingData().receiptId)).paidCents >= 0
         && validLinkedPurchaseAction(existingData().receiptId, 'payment_void')
-        && getAfter(purchaseActionPath(
+        && afterData(purchaseActionPath(
           existingData().receiptId,
-          getAfter(purchaseReceiptPath(existingData().receiptId)).data.lastActionId
-        )).data.paymentId == paymentId
-        && getAfter(purchaseActionPath(
+          afterData(purchaseReceiptPath(existingData().receiptId)).lastActionId
+        )).paymentId == paymentId
+        && afterData(purchaseActionPath(
           existingData().receiptId,
-          getAfter(purchaseReceiptPath(existingData().receiptId)).data.lastActionId
-        )).data.reason == incomingData().voidReason;
+          afterData(purchaseReceiptPath(existingData().receiptId)).lastActionId
+        )).reason == incomingData().voidReason;
       allow delete: if false;
     }
 
@@ -2130,16 +2205,16 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn() && validVesselWageTemplate(incomingData())
         && incomingData().id == templateId
-        && incomingData().createdBy == request.auth.uid
-        && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time;
+        && incomingData().createdBy == uid()
+        && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now();
       allow update: if signedIn() && validVesselWageTemplate(incomingData())
         && incomingData().id == existingData().id
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
-        && incomingData().updatedBy == request.auth.uid
-        && incomingData().updatedAt == request.time;
+        && incomingData().updatedBy == uid()
+        && incomingData().updatedAt == now();
       allow delete: if false;
     }
 
@@ -2152,13 +2227,13 @@ service cloud.firestore {
         && incomingData().crewWageCents == 0 && incomingData().crewAdvanceCents == 0
         && incomingData().crewPaidCents == 0 && incomingData().profitCents == 0
         && incomingData().revision == 1 && incomingData().voidReason == null
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
-        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().createdBy == uid() && incomingData().createdAt == now()
+        && incomingData().updatedBy == uid() && incomingData().updatedAt == now()
         && incomingData().lastActionId == 'create'
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.active == true
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.vesselCode
+        && beforeData(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).active == true
+        && beforeData(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).vesselCode
           == incomingData().vesselCodeSnapshot
-        && get(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).data.displayName
+        && beforeData(/databases/$(database)/documents/vessels/$(incomingData().vesselId)).displayName
           == incomingData().vesselNameSnapshot;
       allow update: if signedIn() && validVesselTrip(incomingData())
         && incomingData().id == existingData().id
@@ -2172,12 +2247,12 @@ service cloud.firestore {
         && incomingData().returnDate == existingData().returnDate
         && incomingData().notes == existingData().notes
         && incomingData().revision == existingData().revision + 1
-        && incomingData().updatedBy == request.auth.uid && incomingData().updatedAt == request.time
+        && incomingData().updatedBy == uid() && incomingData().updatedAt == now()
         && existsAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId))
-        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).data.performedBy
-          == request.auth.uid
-        && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).data.performedAt
-          == request.time
+        && afterData(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).performedBy
+          == uid()
+        && afterData(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/$(incomingData().lastActionId)).performedAt
+          == now()
         && (
           (existingData().status == 'draft' && incomingData().status == 'draft'
             && validDraftVesselTripUpdate(tripId))
@@ -2186,8 +2261,8 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'confirmedBy', 'confirmedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && incomingData().confirmedBy == request.auth.uid
-            && incomingData().confirmedAt == request.time
+            && incomingData().confirmedBy == uid()
+            && incomingData().confirmedAt == now()
             && incomingData().lastActionId == 'confirm')
           ||
           (existingData().status in ['draft', 'confirmed']
@@ -2200,8 +2275,8 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'revision', 'settledBy', 'settledAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && incomingData().settledBy == request.auth.uid
-            && incomingData().settledAt == request.time
+            && incomingData().settledBy == uid()
+            && incomingData().settledAt == now()
             && incomingData().lastActionId == 'settle')
           ||
           (existingData().status in ['draft', 'confirmed', 'settled']
@@ -2211,10 +2286,10 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'voidReason', 'revision', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'lastActionId'
             ])
-            && incomingData().voidedBy == request.auth.uid
-            && incomingData().voidedAt == request.time
+            && incomingData().voidedBy == uid()
+            && incomingData().voidedAt == now()
             && incomingData().lastActionId == 'void'
-            && getAfter(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/void).data.reason
+            && afterData(/databases/$(database)/documents/vesselTrips/$(tripId)/actions/void).reason
               == incomingData().voidReason)
         );
       allow delete: if false;
@@ -2223,19 +2298,19 @@ service cloud.firestore {
         allow read: if signedIn();
         allow create: if signedIn() && validVesselCrewSettlement(incomingData())
           && incomingData().id == crewId && incomingData().tripId == tripId
-          && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+          && incomingData().createdBy == uid() && incomingData().createdAt == now()
           && incomingData().advanceCents == 0 && incomingData().paidCents == 0
-          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.active == true
-          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.department == 'vessel'
-          && get(/databases/$(database)/documents/workers/$(incomingData().workerId)).data.name
+          && beforeData(/databases/$(database)/documents/workers/$(incomingData().workerId)).active == true
+          && beforeData(/databases/$(database)/documents/workers/$(incomingData().workerId)).department == 'vessel'
+          && beforeData(/databases/$(database)/documents/workers/$(incomingData().workerId)).name
             == incomingData().workerNameSnapshot
-          && get(vesselTripPath(tripId)).data.status == 'draft'
+          && beforeData(vesselTripPath(tripId)).status == 'draft'
           && incomingData().lastActionId == 'crew_add_' + crewId
-          && getAfter(vesselTripPath(tripId)).data.lastActionId == incomingData().lastActionId
-          && getAfter(vesselTripPath(tripId)).data.crewWageCents
-            == get(vesselTripPath(tripId)).data.crewWageCents + incomingData().grossWageCents
-          && getAfter(vesselTripPath(tripId)).data.crewAdvanceCents
-            == get(vesselTripPath(tripId)).data.crewAdvanceCents + incomingData().advanceCents;
+          && afterData(vesselTripPath(tripId)).lastActionId == incomingData().lastActionId
+          && afterData(vesselTripPath(tripId)).crewWageCents
+            == beforeData(vesselTripPath(tripId)).crewWageCents + incomingData().grossWageCents
+          && afterData(vesselTripPath(tripId)).crewAdvanceCents
+            == beforeData(vesselTripPath(tripId)).crewAdvanceCents + incomingData().advanceCents;
         allow update: if signedIn() && validVesselCrewSettlement(incomingData())
           && validVesselCrewPaymentUpdate(tripId);
         allow delete: if false;
@@ -2246,9 +2321,9 @@ service cloud.firestore {
         allow create: if signedIn()
           && incomingData().keys().hasAll(['type', 'performedBy', 'performedAt'])
           && incomingData().type in ['crew_add', 'entry_add', 'entry_void', 'confirm', 'settle', 'payment_create', 'payment_void', 'void']
-          && incomingData().performedBy == request.auth.uid
-          && incomingData().performedAt == request.time
-          && getAfter(vesselTripPath(tripId)).data.lastActionId == actionId
+          && incomingData().performedBy == uid()
+          && incomingData().performedAt == now()
+          && afterData(vesselTripPath(tripId)).lastActionId == actionId
           && (
             !(incomingData().type in ['entry_void', 'payment_void'])
             ||
@@ -2264,48 +2339,48 @@ service cloud.firestore {
     match /vesselTripEntries/{entryId} {
       allow read: if signedIn();
       allow create: if signedIn() && validVesselTripEntry(incomingData())
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().createdBy == uid() && incomingData().createdAt == now()
         && incomingData().lastActionId == 'entry_add_' + entryId
-        && get(vesselTripPath(incomingData().tripId)).data.status == 'draft'
-        && getAfter(vesselTripPath(incomingData().tripId)).data.lastActionId == incomingData().lastActionId
+        && beforeData(vesselTripPath(incomingData().tripId)).status == 'draft'
+        && afterData(vesselTripPath(incomingData().tripId)).lastActionId == incomingData().lastActionId
         && (
           (incomingData().type == 'income'
-            && getAfter(vesselTripPath(incomingData().tripId)).data.incomeCents
-              == get(vesselTripPath(incomingData().tripId)).data.incomeCents + incomingData().amountCents
-            && getAfter(vesselTripPath(incomingData().tripId)).data.expenseCents
-              == get(vesselTripPath(incomingData().tripId)).data.expenseCents)
+            && afterData(vesselTripPath(incomingData().tripId)).incomeCents
+              == beforeData(vesselTripPath(incomingData().tripId)).incomeCents + incomingData().amountCents
+            && afterData(vesselTripPath(incomingData().tripId)).expenseCents
+              == beforeData(vesselTripPath(incomingData().tripId)).expenseCents)
           ||
           (incomingData().type == 'expense'
-            && getAfter(vesselTripPath(incomingData().tripId)).data.expenseCents
-              == get(vesselTripPath(incomingData().tripId)).data.expenseCents + incomingData().amountCents
-            && getAfter(vesselTripPath(incomingData().tripId)).data.incomeCents
-              == get(vesselTripPath(incomingData().tripId)).data.incomeCents)
+            && afterData(vesselTripPath(incomingData().tripId)).expenseCents
+              == beforeData(vesselTripPath(incomingData().tripId)).expenseCents + incomingData().amountCents
+            && afterData(vesselTripPath(incomingData().tripId)).incomeCents
+              == beforeData(vesselTripPath(incomingData().tripId)).incomeCents)
         );
       allow update: if signedIn() && validVesselTripEntry(incomingData())
         && existingData().voided == false && incomingData().voided == true
         && incomingData().diff(existingData()).affectedKeys().hasOnly(['voided', 'voidReason', 'lastActionId'])
         && incomingData().lastActionId == 'entry_void_' + entryId
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.reason
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).reason
           == incomingData().voidReason
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.type
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.type
           == existingData().type
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.amountCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.amountCents
           == existingData().amountCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.voided == true
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.incomeCents
-          == getAfter(vesselTripPath(existingData().tripId)).data.incomeCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.expenseCents
-          == getAfter(vesselTripPath(existingData().tripId)).data.expenseCents
-        && get(vesselTripPath(existingData().tripId)).data.status == 'draft'
-        && getAfter(vesselTripPath(existingData().tripId)).data.lastActionId == incomingData().lastActionId
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.voided == true
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.incomeCents
+          == afterData(vesselTripPath(existingData().tripId)).incomeCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.expenseCents
+          == afterData(vesselTripPath(existingData().tripId)).expenseCents
+        && beforeData(vesselTripPath(existingData().tripId)).status == 'draft'
+        && afterData(vesselTripPath(existingData().tripId)).lastActionId == incomingData().lastActionId
         && (
           (existingData().type == 'income'
-            && getAfter(vesselTripPath(existingData().tripId)).data.incomeCents
-              == get(vesselTripPath(existingData().tripId)).data.incomeCents - existingData().amountCents)
+            && afterData(vesselTripPath(existingData().tripId)).incomeCents
+              == beforeData(vesselTripPath(existingData().tripId)).incomeCents - existingData().amountCents)
           ||
           (existingData().type == 'expense'
-            && getAfter(vesselTripPath(existingData().tripId)).data.expenseCents
-              == get(vesselTripPath(existingData().tripId)).data.expenseCents - existingData().amountCents)
+            && afterData(vesselTripPath(existingData().tripId)).expenseCents
+              == beforeData(vesselTripPath(existingData().tripId)).expenseCents - existingData().amountCents)
         );
       allow delete: if false;
     }
@@ -2313,82 +2388,82 @@ service cloud.firestore {
     match /vesselCrewPayments/{paymentId} {
       allow read: if signedIn();
       allow create: if signedIn() && validVesselCrewPayment(incomingData())
-        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && incomingData().createdBy == uid() && incomingData().createdAt == now()
         && incomingData().voided == false && incomingData().voidReason == null
         && incomingData().voidedBy == null && incomingData().voidedAt == null
         && incomingData().lastActionId == 'payment_create_' + paymentId
         && ((incomingData().paymentType == 'advance'
-            && get(vesselTripPath(incomingData().tripId)).data.status in ['draft', 'confirmed'])
+            && beforeData(vesselTripPath(incomingData().tripId)).status in ['draft', 'confirmed'])
           || (incomingData().paymentType == 'settlement'
-            && get(vesselTripPath(incomingData().tripId)).data.status == 'confirmed'))
+            && beforeData(vesselTripPath(incomingData().tripId)).status == 'confirmed'))
         && incomingData().workerId
-          == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.workerId
+          == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).workerId
         && incomingData().workerNameSnapshot
-          == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.workerNameSnapshot
+          == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).workerNameSnapshot
         && incomingData().amountCents
-          <= get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.balanceCents
+          <= beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).balanceCents
         && ((incomingData().paymentType == 'advance'
-            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
+            && afterData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).advanceCents
+              == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).advanceCents
                 + incomingData().amountCents
-            && getAfter(vesselTripPath(incomingData().tripId)).data.crewAdvanceCents
-              == get(vesselTripPath(incomingData().tripId)).data.crewAdvanceCents + incomingData().amountCents
-            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents)
+            && afterData(vesselTripPath(incomingData().tripId)).crewAdvanceCents
+              == beforeData(vesselTripPath(incomingData().tripId)).crewAdvanceCents + incomingData().amountCents
+            && afterData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).paidCents
+              == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).paidCents)
           || (incomingData().paymentType == 'settlement'
-            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.paidCents
+            && afterData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).paidCents
+              == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).paidCents
                 + incomingData().amountCents
-            && getAfter(vesselTripPath(incomingData().tripId)).data.crewPaidCents
-              == get(vesselTripPath(incomingData().tripId)).data.crewPaidCents + incomingData().amountCents
-            && getAfter(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).data.advanceCents));
+            && afterData(vesselTripPath(incomingData().tripId)).crewPaidCents
+              == beforeData(vesselTripPath(incomingData().tripId)).crewPaidCents + incomingData().amountCents
+            && afterData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).advanceCents
+              == beforeData(vesselTripCrewPath(incomingData().tripId, incomingData().crewSettlementId)).advanceCents));
       allow update: if signedIn() && validVesselCrewPayment(incomingData())
         && existingData().voided == false && incomingData().voided == true
         && incomingData().diff(existingData()).affectedKeys().hasOnly([
           'voided', 'voidReason', 'voidedBy', 'voidedAt', 'lastActionId'
         ])
-        && incomingData().voidedBy == request.auth.uid && incomingData().voidedAt == request.time
+        && incomingData().voidedBy == uid() && incomingData().voidedAt == now()
         && incomingData().lastActionId == 'payment_void_' + paymentId
-        && get(vesselTripPath(existingData().tripId)).data.status in ['draft', 'confirmed']
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.reason
+        && beforeData(vesselTripPath(existingData().tripId)).status in ['draft', 'confirmed']
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).reason
           == incomingData().voidReason
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.paymentType
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.paymentType
           == existingData().paymentType
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.amountCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.amountCents
           == existingData().amountCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.crewAdvanceCents
-          == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.crewPaidCents
-          == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.tripAdvanceCents
-          == get(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.beforeSnapshot.tripPaidCents
-          == get(vesselTripPath(existingData().tripId)).data.crewPaidCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.crewAdvanceCents
-          == getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.crewPaidCents
-          == getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.tripAdvanceCents
-          == getAfter(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
-        && getAfter(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).data.afterSnapshot.tripPaidCents
-          == getAfter(vesselTripPath(existingData().tripId)).data.crewPaidCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.crewAdvanceCents
+          == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.crewPaidCents
+          == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.tripAdvanceCents
+          == beforeData(vesselTripPath(existingData().tripId)).crewAdvanceCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).beforeSnapshot.tripPaidCents
+          == beforeData(vesselTripPath(existingData().tripId)).crewPaidCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.crewAdvanceCents
+          == afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.crewPaidCents
+          == afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.tripAdvanceCents
+          == afterData(vesselTripPath(existingData().tripId)).crewAdvanceCents
+        && afterData(vesselTripActionPath(existingData().tripId, incomingData().lastActionId)).afterSnapshot.tripPaidCents
+          == afterData(vesselTripPath(existingData().tripId)).crewPaidCents
         && ((existingData().paymentType == 'advance'
-            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
+            && afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents
+              == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents
                 - existingData().amountCents
-            && getAfter(vesselTripPath(existingData().tripId)).data.crewAdvanceCents
-              == get(vesselTripPath(existingData().tripId)).data.crewAdvanceCents - existingData().amountCents
-            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents)
+            && afterData(vesselTripPath(existingData().tripId)).crewAdvanceCents
+              == beforeData(vesselTripPath(existingData().tripId)).crewAdvanceCents - existingData().amountCents
+            && afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents
+              == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents)
           || (existingData().paymentType == 'settlement'
-            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
-              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.paidCents
+            && afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents
+              == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).paidCents
                 - existingData().amountCents
-            && getAfter(vesselTripPath(existingData().tripId)).data.crewPaidCents
-              == get(vesselTripPath(existingData().tripId)).data.crewPaidCents - existingData().amountCents
-            && getAfter(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents
-              == get(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).data.advanceCents));
+            && afterData(vesselTripPath(existingData().tripId)).crewPaidCents
+              == beforeData(vesselTripPath(existingData().tripId)).crewPaidCents - existingData().amountCents
+            && afterData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents
+              == beforeData(vesselTripCrewPath(existingData().tripId, existingData().crewSettlementId)).advanceCents));
       allow delete: if false;
     }
 
@@ -2396,15 +2471,15 @@ service cloud.firestore {
       allow read: if signedIn();
       allow create: if signedIn() && validWageEntry(incomingData())
         && incomingData().keys().hasAll(['businessDate', 'dateSortKey', 'monthKey', 'monthSortKey'])
-        && incomingData().createdBy == request.auth.uid
+        && incomingData().createdBy == uid()
         && incomingData().deleted == false
-        && incomingData().createdAt == request.time
-        && incomingData().updatedAt == request.time
+        && incomingData().createdAt == now()
+        && incomingData().updatedAt == now()
         && monthOpenAfter(incomingData().dateKey);
       allow update: if signedIn() && validWageEntry(incomingData())
         && existingData().deleted == false && incomingData().deleted == true
         && incomingData().diff(existingData()).affectedKeys().hasOnly(['deleted', 'updatedAt'])
-        && incomingData().updatedAt == request.time
+        && incomingData().updatedAt == now()
         && monthOpenAfter(existingData().dateKey);
       allow delete: if false;
     }
@@ -2426,17 +2501,17 @@ service cloud.firestore {
         && incomingData().rateRm is string && incomingData().rateRm.matches('^[0-9][.][0-9]{2}$')
         && incomingData().wageRm is string && incomingData().wageRm.matches('^[0-9]+[.][0-9]{2}$')
         && incomingData().voidReason is string && incomingData().voidReason.size() > 0 && incomingData().voidReason.size() <= 100
-        && incomingData().voidedBy == request.auth.uid
-        && incomingData().voidedAt == request.time
+        && incomingData().voidedBy == uid()
+        && incomingData().voidedAt == now()
         && monthOpenAfter(incomingData().dateKey)
-        && get(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == false
-        && getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.deleted == true
-        && incomingData().dateKey == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.dateKey
-        && incomingData().workerId == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerId
-        && incomingData().workerName == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.workerName
-        && incomingData().weightKg == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.weightKg
-        && incomingData().rateRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.rateRm
-        && incomingData().wageRm == getAfter(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).data.wageRm;
+        && beforeData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).deleted == false
+        && afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).deleted == true
+        && incomingData().dateKey == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).dateKey
+        && incomingData().workerId == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).workerId
+        && incomingData().workerName == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).workerName
+        && incomingData().weightKg == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).weightKg
+        && incomingData().rateRm == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).rateRm
+        && incomingData().wageRm == afterData(/databases/$(database)/documents/fishHeadWageEntries/$(voidId)).wageRm;
       allow update, delete: if false;
     }
 
@@ -2454,9 +2529,9 @@ service cloud.firestore {
         && incomingData().closedBy == null
         && incomingData().closedAt == null
         && incomingData().closingToken is string
-        && incomingData().closingBy == request.auth.uid
-        && incomingData().closingAt == request.time
-        && incomingData().updatedAt == request.time
+        && incomingData().closingBy == uid()
+        && incomingData().closingAt == now()
+        && incomingData().updatedAt == now()
         && incomingData().lastActionId == 'closing_lock'
         && incomingData().statementIds.size() == 0;
       allow update: if signedIn() && validMonth(incomingData())
@@ -2464,24 +2539,24 @@ service cloud.firestore {
         && (
           (existingData().status == 'open'
             && (existingData().closingToken == null
-              || request.time >= existingData().closingAt + duration.value(5, 'm'))
+              || now() >= existingData().closingAt + duration.value(5, 'm'))
             && incomingData().status == 'open'
             && incomingData().diff(existingData()).affectedKeys()
               .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
             && incomingData().closingToken is string
-            && incomingData().closingBy == request.auth.uid
-            && incomingData().closingAt == request.time
-            && incomingData().updatedAt == request.time)
+            && incomingData().closingBy == uid()
+            && incomingData().closingAt == now()
+            && incomingData().updatedAt == now())
           ||
           (existingData().status == 'open'
             && existingData().closingToken is string
-            && existingData().closingBy == request.auth.uid
+            && existingData().closingBy == uid()
             && incomingData().status == 'closed'
             && incomingData().closeVersion == existingData().closeVersion + 1
             && incomingData().paidCents == 0
-            && incomingData().closedBy == request.auth.uid
-            && incomingData().closedAt == request.time
-            && incomingData().updatedAt == request.time
+            && incomingData().closedBy == uid()
+            && incomingData().closedAt == now()
+            && incomingData().updatedAt == now()
             && incomingData().closingToken == null
             && incomingData().closingBy == null
             && incomingData().closingAt == null
@@ -2489,14 +2564,14 @@ service cloud.firestore {
           ||
           (existingData().status == 'open'
             && existingData().closingToken is string
-            && existingData().closingBy == request.auth.uid
+            && existingData().closingBy == uid()
             && incomingData().status == 'open'
             && incomingData().diff(existingData()).affectedKeys()
               .hasOnly(['closingToken', 'closingBy', 'closingAt', 'updatedAt'])
             && incomingData().closingToken == null
             && incomingData().closingBy == null
             && incomingData().closingAt == null
-            && incomingData().updatedAt == request.time)
+            && incomingData().updatedAt == now())
           ||
           (existingData().status == 'closed'
             && existingData().paidCents == 0
@@ -2505,18 +2580,18 @@ service cloud.firestore {
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'status', 'reopenedBy', 'reopenedAt', 'updatedAt', 'lastActionId'
             ])
-            && incomingData().reopenedBy == request.auth.uid
-            && incomingData().reopenedAt == request.time
-            && incomingData().updatedAt == request.time
+            && incomingData().reopenedBy == uid()
+            && incomingData().reopenedAt == now()
+            && incomingData().updatedAt == now()
             && incomingData().lastActionId == 'reopen_' + string(existingData().closeVersion)
             && existsAfter(actionPath(monthKey, incomingData().lastActionId))
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'reopen'
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.reason is string
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.performedBy == request.auth.uid
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.beforeSnapshot.status == 'closed'
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.beforeSnapshot.paidCents == 0
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.afterSnapshot.status == 'open'
-            && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.afterSnapshot.paidCents == 0)
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).type == 'reopen'
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).reason is string
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).performedBy == uid()
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).beforeSnapshot.status == 'closed'
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).beforeSnapshot.paidCents == 0
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).afterSnapshot.status == 'open'
+            && afterData(actionPath(monthKey, incomingData().lastActionId)).afterSnapshot.paidCents == 0)
           ||
           validPaymentMonthUpdate(monthKey)
         );
@@ -2528,28 +2603,28 @@ service cloud.firestore {
           && incomingData().id == statementId
           && incomingData().monthKey == monthKey
           && incomingData().paidCents == 0
-          && incomingData().createdBy == request.auth.uid
-          && incomingData().snapshotAt == request.time
-          && getAfter(monthPath(monthKey)).data.status == 'closed'
-          && incomingData().closeVersion == getAfter(monthPath(monthKey)).data.closeVersion
-          && incomingData().lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
-          && statementId in getAfter(monthPath(monthKey)).data.statementIds
+          && incomingData().createdBy == uid()
+          && incomingData().snapshotAt == now()
+          && afterData(monthPath(monthKey)).status == 'closed'
+          && incomingData().closeVersion == afterData(monthPath(monthKey)).closeVersion
+          && incomingData().lastActionId == afterData(monthPath(monthKey)).lastActionId
+          && statementId in afterData(monthPath(monthKey)).statementIds
           && validCloseAction(monthKey, incomingData().closeVersion, incomingData().lastActionId);
         allow update: if signedIn() && validStatement(incomingData())
           && incomingData().diff(existingData()).affectedKeys().hasOnly(['paidCents', 'lastActionId'])
           && incomingData().closeVersion == existingData().closeVersion
-          && incomingData().lastActionId == getAfter(monthPath(monthKey)).data.lastActionId
+          && incomingData().lastActionId == afterData(monthPath(monthKey)).lastActionId
           && existsAfter(actionPath(monthKey, incomingData().lastActionId))
-          && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.workerId == existingData().workerId
-          && getAfter(actionPath(monthKey, incomingData().lastActionId)).data.closeVersion == existingData().closeVersion
+          && afterData(actionPath(monthKey, incomingData().lastActionId)).workerId == existingData().workerId
+          && afterData(actionPath(monthKey, incomingData().lastActionId)).closeVersion == existingData().closeVersion
           && (
-            (getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'payment_create'
+            (afterData(actionPath(monthKey, incomingData().lastActionId)).type == 'payment_create'
               && incomingData().paidCents == existingData().paidCents
-                + getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, incomingData().lastActionId)).data.paymentId)).data.amountCents)
+                + afterData(paymentPath(monthKey, afterData(actionPath(monthKey, incomingData().lastActionId)).paymentId)).amountCents)
             ||
-            (getAfter(actionPath(monthKey, incomingData().lastActionId)).data.type == 'payment_void'
+            (afterData(actionPath(monthKey, incomingData().lastActionId)).type == 'payment_void'
               && incomingData().paidCents == existingData().paidCents
-                - getAfter(paymentPath(monthKey, getAfter(actionPath(monthKey, incomingData().lastActionId)).data.paymentId)).data.amountCents)
+                - afterData(paymentPath(monthKey, afterData(actionPath(monthKey, incomingData().lastActionId)).paymentId)).amountCents)
           );
         allow delete: if false;
       }
@@ -2558,54 +2633,54 @@ service cloud.firestore {
         allow read: if signedIn();
         allow create: if signedIn() && validPayment(incomingData())
           && incomingData().monthKey == monthKey
-          && incomingData().createdBy == request.auth.uid
-          && incomingData().createdAt == request.time
+          && incomingData().createdBy == uid()
+          && incomingData().createdAt == now()
           && incomingData().voided == false
           && incomingData().voidReason == null
           && incomingData().voidedBy == null
           && incomingData().voidedAt == null
-          && get(monthPath(monthKey)).data.status == 'closed'
-          && incomingData().closeVersion == get(monthPath(monthKey)).data.closeVersion
-          && get(statementPath(monthKey, incomingData().statementId)).data.closeVersion == incomingData().closeVersion
-          && incomingData().workerId == get(statementPath(monthKey, incomingData().statementId)).data.workerId
-          && incomingData().workerName == get(statementPath(monthKey, incomingData().statementId)).data.workerName
-          && incomingData().amountCents <= get(statementPath(monthKey, incomingData().statementId)).data.wageCents
-            - get(statementPath(monthKey, incomingData().statementId)).data.paidCents
-          && getAfter(statementPath(monthKey, incomingData().statementId)).data.paidCents
-            == get(statementPath(monthKey, incomingData().statementId)).data.paidCents + incomingData().amountCents
-          && getAfter(monthPath(monthKey)).data.paidCents
-            == get(monthPath(monthKey)).data.paidCents + incomingData().amountCents
-          && getAfter(statementPath(monthKey, incomingData().statementId)).data.lastActionId == 'payment_create_' + paymentId
-          && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_create_' + paymentId
+          && beforeData(monthPath(monthKey)).status == 'closed'
+          && incomingData().closeVersion == beforeData(monthPath(monthKey)).closeVersion
+          && beforeData(statementPath(monthKey, incomingData().statementId)).closeVersion == incomingData().closeVersion
+          && incomingData().workerId == beforeData(statementPath(monthKey, incomingData().statementId)).workerId
+          && incomingData().workerName == beforeData(statementPath(monthKey, incomingData().statementId)).workerName
+          && incomingData().amountCents <= beforeData(statementPath(monthKey, incomingData().statementId)).wageCents
+            - beforeData(statementPath(monthKey, incomingData().statementId)).paidCents
+          && afterData(statementPath(monthKey, incomingData().statementId)).paidCents
+            == beforeData(statementPath(monthKey, incomingData().statementId)).paidCents + incomingData().amountCents
+          && afterData(monthPath(monthKey)).paidCents
+            == beforeData(monthPath(monthKey)).paidCents + incomingData().amountCents
+          && afterData(statementPath(monthKey, incomingData().statementId)).lastActionId == 'payment_create_' + paymentId
+          && afterData(monthPath(monthKey)).lastActionId == 'payment_create_' + paymentId
           && existsAfter(actionPath(monthKey, 'payment_create_' + paymentId));
         allow update: if signedIn() && validPayment(incomingData())
           && existingData().voided == false && incomingData().voided == true
           && incomingData().diff(existingData()).affectedKeys().hasOnly(['voided', 'voidReason', 'voidedBy', 'voidedAt'])
           && incomingData().voidReason is string
           && incomingData().voidReason.size() >= 3 && incomingData().voidReason.size() <= 100
-          && incomingData().voidedBy == request.auth.uid
-          && incomingData().voidedAt == request.time
-          && getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents
-            == get(statementPath(monthKey, existingData().statementId)).data.paidCents - existingData().amountCents
-          && getAfter(monthPath(monthKey)).data.paidCents
-            == get(monthPath(monthKey)).data.paidCents - existingData().amountCents
-          && getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents >= 0
-          && getAfter(monthPath(monthKey)).data.paidCents >= 0
-          && getAfter(statementPath(monthKey, existingData().statementId)).data.lastActionId == 'payment_void_' + paymentId
-          && getAfter(monthPath(monthKey)).data.lastActionId == 'payment_void_' + paymentId
+          && incomingData().voidedBy == uid()
+          && incomingData().voidedAt == now()
+          && afterData(statementPath(monthKey, existingData().statementId)).paidCents
+            == beforeData(statementPath(monthKey, existingData().statementId)).paidCents - existingData().amountCents
+          && afterData(monthPath(monthKey)).paidCents
+            == beforeData(monthPath(monthKey)).paidCents - existingData().amountCents
+          && afterData(statementPath(monthKey, existingData().statementId)).paidCents >= 0
+          && afterData(monthPath(monthKey)).paidCents >= 0
+          && afterData(statementPath(monthKey, existingData().statementId)).lastActionId == 'payment_void_' + paymentId
+          && afterData(monthPath(monthKey)).lastActionId == 'payment_void_' + paymentId
           && existsAfter(actionPath(monthKey, 'payment_void_' + paymentId))
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.reason
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).reason
             == incomingData().voidReason
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.amountCents
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).beforeSnapshot.amountCents
             == existingData().amountCents
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.statementPaidCents
-            == get(statementPath(monthKey, existingData().statementId)).data.paidCents
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.beforeSnapshot.monthPaidCents
-            == get(monthPath(monthKey)).data.paidCents
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.statementPaidCents
-            == getAfter(statementPath(monthKey, existingData().statementId)).data.paidCents
-          && getAfter(actionPath(monthKey, 'payment_void_' + paymentId)).data.afterSnapshot.monthPaidCents
-            == getAfter(monthPath(monthKey)).data.paidCents;
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).beforeSnapshot.statementPaidCents
+            == beforeData(statementPath(monthKey, existingData().statementId)).paidCents
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).beforeSnapshot.monthPaidCents
+            == beforeData(monthPath(monthKey)).paidCents
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).afterSnapshot.statementPaidCents
+            == afterData(statementPath(monthKey, existingData().statementId)).paidCents
+          && afterData(actionPath(monthKey, 'payment_void_' + paymentId)).afterSnapshot.monthPaidCents
+            == afterData(monthPath(monthKey)).paidCents;
         allow delete: if false;
       }
 
@@ -2613,27 +2688,27 @@ service cloud.firestore {
         allow read: if signedIn();
         allow create: if signedIn() && validAction(incomingData())
           && incomingData().monthKey == monthKey
-          && getAfter(monthPath(monthKey)).data.lastActionId == actionId
+          && afterData(monthPath(monthKey)).lastActionId == actionId
           && (
             (incomingData().type == 'close' && actionId == 'close_' + string(incomingData().closeVersion))
             || (incomingData().type == 'reopen' && actionId == 'reopen_' + string(incomingData().closeVersion))
             || (incomingData().type == 'payment_create'
               && actionId == 'payment_create_' + incomingData().paymentId
-              && getAfter(paymentPath(monthKey, incomingData().paymentId)).data.createdAt == request.time
+              && afterData(paymentPath(monthKey, incomingData().paymentId)).createdAt == now()
               && incomingData().afterSnapshot.amountCents
-                == getAfter(paymentPath(monthKey, incomingData().paymentId)).data.amountCents
+                == afterData(paymentPath(monthKey, incomingData().paymentId)).amountCents
               && incomingData().afterSnapshot.statementPaidCents
-                == getAfter(statementPath(
+                == afterData(statementPath(
                   monthKey,
-                  getAfter(paymentPath(monthKey, incomingData().paymentId)).data.statementId
-                )).data.paidCents
+                  afterData(paymentPath(monthKey, incomingData().paymentId)).statementId
+                )).paidCents
               && incomingData().afterSnapshot.monthPaidCents
-                == getAfter(monthPath(monthKey)).data.paidCents)
+                == afterData(monthPath(monthKey)).paidCents)
             || (incomingData().type == 'payment_void'
               && actionId == 'payment_void_' + incomingData().paymentId
-              && getAfter(paymentPath(monthKey, incomingData().paymentId)).data.voidedAt == request.time
+              && afterData(paymentPath(monthKey, incomingData().paymentId)).voidedAt == now()
               && incomingData().reason
-                == getAfter(paymentPath(monthKey, incomingData().paymentId)).data.voidReason)
+                == afterData(paymentPath(monthKey, incomingData().paymentId)).voidReason)
           );
         allow update, delete: if false;
       }
