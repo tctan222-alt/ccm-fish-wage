@@ -511,12 +511,6 @@ service cloud.firestore {
     function validPurchaseSettlementDraftUpdate() {
       return validPurchaseSettlementDraft(incomingData())
         && incomingData().productType == existingData().productType
-        && incomingData().businessDate == existingData().businessDate
-        && incomingData().dateSortKey == existingData().dateSortKey
-        && incomingData().monthKey == existingData().monthKey
-        && incomingData().monthSortKey == existingData().monthSortKey
-        && incomingData().vesselId == existingData().vesselId
-        && incomingData().vesselCodeSnapshot == existingData().vesselCodeSnapshot
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
         && incomingData().updatedBy == request.auth.uid
@@ -539,9 +533,22 @@ service cloud.firestore {
         && source.vesselCodeSnapshot == data.vesselCodeSnapshot
         && validBusinessDate(data.businessDate)
         && data.dateSortKey == int(data.businessDate[6:10] + data.businessDate[3:5] + data.businessDate[0:2])
+        && data.monthKey == data.businessDate[3:10]
+        && data.monthSortKey == int(data.businessDate[6:10] + data.businessDate[3:5])
         && (source.weighingDate == data.businessDate
           || source.weighingDate == data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
         && weighingCanModify(source);
+    }
+
+    function settlementSourcePath(data) {
+      return /databases/$(database)/documents/purchaseSettlementSources/$(data.productType + '_session_' + data.sourceSessionId);
+    }
+
+    function validSettlementLegacyBinding() {
+      let entry = get(weighingEntryPath(incomingData().sourceSessionId, existingData().sourceEntryIds[0])).data;
+      return entry.sessionId == incomingData().sourceSessionId
+        && entry.productType == incomingData().productType
+        && entry.recordedAt is timestamp && entry.recordedAt <= existingData().createdAt;
     }
 
     function validSettlementAudit(draftId) {
@@ -2021,11 +2028,25 @@ service cloud.firestore {
       }
     }
 
+    // One immutable source binding serializes canonical creation and lazy legacy
+    // binding without copying historical drafts or retaining mutable tuple IDs.
+    match /purchaseSettlementSources/{sourceId} {
+      allow read: if signedIn();
+      allow create: if signedIn()
+        && incomingData().keys().hasOnly(['productType', 'sourceSessionId', 'draftId', 'createdBy', 'createdAt'])
+        && sourceId == incomingData().productType + '_session_' + incomingData().sourceSessionId
+        && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time
+        && getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).data.sourceSessionId == incomingData().sourceSessionId
+        && getAfter(/databases/$(database)/documents/purchaseSettlementDrafts/$(incomingData().draftId)).data.productType == incomingData().productType;
+      allow update, delete: if false;
+    }
+
     match /purchaseSettlementDrafts/{draftId} {
       allow read: if signedIn();
       allow create: if signedIn() && validPurchaseSettlementDraft(incomingData())
         && incomingData().revision == 1
-        && draftId == incomingData().productType + '_' + string(incomingData().dateSortKey) + '_' + incomingData().vesselId
+        && draftId == incomingData().productType + '_session_' + incomingData().sourceSessionId
+        && getAfter(settlementSourcePath(incomingData())).data.draftId == draftId
         && validSettlementSource() && validSettlementAudit(draftId)
         && incomingData().productType in ['fish_head', 'fish_meal']
         && incomingData().createdBy == request.auth.uid
@@ -2037,7 +2058,9 @@ service cloud.firestore {
         && (!('voidedBy' in incomingData()) || incomingData().voidedBy == null)
         && (!('voidedAt' in incomingData()) || incomingData().voidedAt == null);
       allow update: if signedIn() && validSettlementSource() && validSettlementAudit(draftId)
-        && (!('sourceSessionId' in existingData()) || incomingData().sourceSessionId == existingData().sourceSessionId)
+        && getAfter(settlementSourcePath(incomingData())).data.draftId == draftId
+        && (('sourceSessionId' in existingData())
+          ? incomingData().sourceSessionId == existingData().sourceSessionId : validSettlementLegacyBinding())
         && validPurchaseSettlementDraftUpdate();
       allow delete: if false;
       match /actions/{revision} {

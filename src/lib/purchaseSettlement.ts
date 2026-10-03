@@ -36,6 +36,8 @@ export interface PurchaseSettlementLine {
 }
 
 export interface PurchaseSettlementDraft {
+  /** Firestore identity retained at runtime; never stored in the document or its audit. */
+  draftId?:string
   productType:WeighingProductType
   businessDate:string
   dateSortKey:number
@@ -138,6 +140,13 @@ export function assertValidPurchaseSettlementDraft(draft:PurchaseSettlementDraft
 export function formatSettlementMoney(cents:number){return `RM ${(cents/100).toFixed(2)}`}
 
 export function draftIdForSettlement(productType:WeighingProductType,dateSortKey:number,vesselId:string){return `${productType}_${dateSortKey}_${vesselId}`}
+
+export function draftIdForSourceSession(productType:WeighingProductType,sourceSessionId:string){
+  const id=`${productType}_session_${sourceSessionId}`
+  if(!sourceSessionId.trim()||sourceSessionId.includes('/')||['.','..'].includes(sourceSessionId)||/^__.*__$/.test(sourceSessionId)
+    ||new TextEncoder().encode(id).length>1500)throw new Error('来源称重单 ID 不正确。')
+  return id
+}
 
 export function makeSettlementDraft(input:Pick<PurchaseSettlementDraft,'productType'|'businessDate'|'dateSortKey'|'monthKey'|'monthSortKey'|'vesselId'|'vesselCodeSnapshot'|'receiptNo'|'lines'|'sourceEntryIds'> & {createdBy?:string;revision?:number}):PurchaseSettlementDraft {
   return {...input,status:'settlement_draft',totalAmountCents:totalSettlementAmountCents(input.lines),revision:input.revision??1,voided:false}

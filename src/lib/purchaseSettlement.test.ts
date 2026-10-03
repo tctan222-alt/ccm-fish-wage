@@ -7,6 +7,7 @@ import {
   reconcileSettlementLines,
   parseSettlementPrice,
   updateSettlementLinePrice,
+  draftIdForSourceSession,
   type SettlementSourceEntry,
 } from './purchaseSettlement'
 import { getDefaultFishHeadPriceCents, getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
@@ -18,6 +19,15 @@ const entry=(overrides:Partial<SettlementSourceEntry>={}):SettlementSourceEntry=
 })
 
 describe('purchase settlement pricing',()=>{
+  it('uses the immutable source session rather than vessel/date for a draft identity',()=>{
+    expect(draftIdForSourceSession('fish_head','source-A')).toBe('fish_head_session_source-A')
+    expect(draftIdForSourceSession('fish_head','source-A')).not.toBe(draftIdForSourceSession('fish_head','source-B'))
+    expect(draftIdForSourceSession('fish_meal','source-A')).toBe('fish_meal_session_source-A')
+  })
+
+  it.each(['',' ','a/b','.','..','__reserved__','x'.repeat(1500)])('rejects unsafe source document identity %s',value=>{
+    expect(()=>draftIdForSourceSession('fish_head',value)).toThrow('来源称重单 ID')
+  })
   it('uses fish-head base prices and only adds the no-loan premium when a base price exists',()=>{
     expect(getDefaultFishHeadPriceCents('金线','')).toBe(205)
     expect(getDefaultFishHeadPriceCents('金线','978')).toBe(210)

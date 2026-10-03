@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch, type DocumentData, type DocumentReference } from 'firebase/firestore'
+import { collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, where, writeBatch, type DocumentData, type DocumentReference } from 'firebase/firestore'
 import { createIceWorkRecord, createIceWorkSettlement } from './lib/iceWork'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale } from './lib/retailSales'
 import retailSeed from './data/retailFishSeed.json'
@@ -38,6 +38,219 @@ async function changeWeighing(ref:DocumentReference,type:string,patch:DocumentDa
 
 beforeAll(async () => { environment = await initializeTestEnvironment({ projectId: 'demo-ccm-rules', firestore: { rules: await readFile('firestore.rules', 'utf8') } }) })
 afterAll(async () => { if (environment) await environment.cleanup() })
+
+describe('Firestore Rules: source-authoritative purchase settlement identity', () => {
+  function draft(sourceSessionId:string,overrides:DocumentData={}):DocumentData {
+    const line={lineType:'fish_head',nameSnapshot:'金线',totalWeightGrams:100_000,basketCount:1,totalWeightEntryCount:0,
+      defaultUnitPriceCentsPerKg:275,unitPriceCentsPerKg:290,priceWasEdited:true,amountCents:29_000,
+      sourceEntryIds:['saved-entry'],fishSpeciesId:'jin_xian',fishSpeciesCodeSnapshot:'jin_xian',fishSpeciesNameSnapshot:'金线'}
+    return {productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,
+      vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'saved-receipt',status:'settlement_draft',lines:[line],totalAmountCents:29_000,
+      sourceEntryIds:['saved-entry'],sourceSessionId,sourceSessionRevision:2,createdBy:'u1',createdAt:serverTimestamp(),
+      updatedBy:'u1',updatedAt:serverTimestamp(),revision:1,voided:false,...overrides}
+  }
+  async function source(id:string,overrides:DocumentData={}) {
+    return seedWeighing(id,weighingRecord(1,{weighingDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,...overrides}))
+  }
+  async function save(id:string,sourceSessionId:string,patch:DocumentData={},options:{guard?:boolean;audit?:boolean;userId?:string;guardPatch?:DocumentData}={}) {
+    const userId=options.userId??'u1',db=environment.authenticatedContext(userId).firestore()
+    const ref=doc(db,'purchaseSettlementDrafts',id),existing=await getDoc(ref),before=existing.exists()?existing.data()!:null
+    const next:DocumentData={...(before??draft(sourceSessionId,{createdBy:userId})),sourceSessionId,
+      revision:before?before.revision+1:1,updatedBy:userId,updatedAt:serverTimestamp(),...patch}
+    const batch=writeBatch(db)
+    batch.set(ref,next)
+    if(options.audit!==false)batch.set(doc(ref,'actions',String(next.revision)),{
+      beforeSnapshot:before,afterSnapshot:next,performedBy:userId,performedAt:serverTimestamp()})
+    const guardRef=doc(db,'purchaseSettlementSources',`${next.productType}_session_${sourceSessionId}`)
+    if(options.guard!==false&&!(await getDoc(guardRef)).exists())batch.set(guardRef,{
+      productType:next.productType,sourceSessionId,draftId:id,createdBy:userId,createdAt:serverTimestamp(),...options.guardPatch})
+    return batch.commit()
+  }
+  async function seedLegacy(id:string,sourceSessionId:string,bound=false,overrides:DocumentData={}) {
+    const createdAt=Timestamp.fromMillis(Date.now()-120_000)
+    const value=draft(sourceSessionId,{createdAt,updatedAt:createdAt,createdBy:'original-owner',revision:4,...overrides})
+    if(!bound) { delete value.sourceSessionId; delete value.sourceSessionRevision }
+    await environment.withSecurityRulesDisabled(async context=>{
+      const db=context.firestore()
+      await setDoc(doc(db,'purchaseSettlementDrafts',id),value)
+      await setDoc(doc(db,'weighingSessions',sourceSessionId,'entries','saved-entry'),{
+        sessionId:sourceSessionId,productType:'fish_head',recordedAt:Timestamp.fromMillis(createdAt.toMillis()-60_000)})
+    })
+    return value
+  }
+  it('allows canonical audited creation and rejects tuple, arbitrary ID, missing guard or mismatched guard target',async()=>{
+    const sourceId='p5-canonical',canonical=`fish_head_session_${sourceId}`
+    await source(sourceId)
+    await assertFails(save(canonical,sourceId,{}, {guard:false}))
+    await assertFails(save('fish_head_20260803_v978',sourceId))
+    await assertFails(save('arbitrary-draft',sourceId))
+    await assertFails(save(canonical,sourceId,{}, {guardPatch:{draftId:'another-draft'}}))
+    await assertSucceeds(save(canonical,sourceId))
+    const db=environment.authenticatedContext('u1').firestore()
+    expect((await getDoc(doc(db,'purchaseSettlementSources',canonical))).data()?.draftId).toBe(canonical)
+    const anonymous=environment.unauthenticatedContext().firestore()
+    await assertFails(getDoc(doc(anonymous,'purchaseSettlementDrafts',canonical)))
+    await assertFails(getDoc(doc(anonymous,'purchaseSettlementSources',canonical)))
+  })
+  it('permits current source date and vessel correction while preserving prices, creation and audited previous metadata',async()=>{
+    const sourceId='p5-corrected',id=`fish_head_session_${sourceId}`,db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId)
+    await assertSucceeds(save(id,sourceId))
+    const original=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    await source(sourceId,{weighingDate:'02/10/2026',dateSortKey:20261002,monthKey:'10/2026',monthSortKey:202610,
+      vesselId:'v833',vesselCodeSnapshot:'833',revision:3})
+    const lines=[{...original.lines[0],totalWeightGrams:160_000,amountCents:46_400}]
+    await assertSucceeds(save(id,sourceId,{businessDate:'02/10/2026',dateSortKey:20261002,monthKey:'10/2026',monthSortKey:202610,
+      vesselId:'v833',vesselCodeSnapshot:'833',sourceSessionRevision:3,lines,totalAmountCents:46_400}))
+    const current=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    expect(current.createdAt).toEqual(original.createdAt)
+    expect(current.createdBy).toBe(original.createdBy)
+    expect(current.revision).toBe(2)
+    expect(current.lines[0]).toMatchObject({unitPriceCentsPerKg:290,priceWasEdited:true,totalWeightGrams:160_000,amountCents:46_400})
+    const action=(await getDoc(doc(db,'purchaseSettlementDrafts',id,'actions','2'))).data()!
+    expect(action.beforeSnapshot).toEqual(original)
+    expect(action.afterSnapshot).toEqual(current)
+    expect(action.performedBy).toBe('u1')
+  })
+  it('retains bound legacy document ID and allows corrected metadata without copying it',async()=>{
+    const sourceId='p5-bound-legacy',id='fish_head_20260803_p5-bound',db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId)
+    const original=await seedLegacy(id,sourceId,true)
+    await source(sourceId,{weighingDate:'04/08/2026',dateSortKey:20260804,revision:3})
+    await assertSucceeds(save(id,sourceId,{businessDate:'04/08/2026',dateSortKey:20260804,sourceSessionRevision:3}))
+    const result=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    expect(result.createdAt).toEqual(original.createdAt)
+    expect(result.createdBy).toBe('original-owner')
+    expect(result.lines).toEqual(original.lines)
+    expect(result.revision).toBe(5)
+    expect((await getDoc(doc(db,'purchaseSettlementSources',`fish_head_session_${sourceId}`))).data()?.draftId).toBe(id)
+    expect((await getDoc(doc(db,'purchaseSettlementDrafts',`fish_head_session_${sourceId}`))).exists()).toBe(false)
+    await assertFails(save(`fish_head_session_${sourceId}`,sourceId,{businessDate:'04/08/2026',dateSortKey:20260804,sourceSessionRevision:3}))
+  })
+  it('binds an unbound legacy draft using its previously recorded source entry and retains saved snapshots',async()=>{
+    const sourceId='p5-unbound',id='fish_head_20260803_p5-unbound',db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId)
+    const original=await seedLegacy(id,sourceId)
+    await assertSucceeds(save(id,sourceId,{sourceSessionRevision:2}))
+    const value=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    expect(value).toMatchObject({sourceSessionId:sourceId,sourceSessionRevision:2,createdBy:'original-owner',revision:5})
+    expect(value.createdAt).toEqual(original.createdAt)
+    expect(value.lines).toEqual(original.lines)
+    const before=(await getDoc(doc(db,'purchaseSettlementDrafts',id,'actions','5'))).data()?.beforeSnapshot
+    expect(before).toEqual(original)
+    expect(before.sourceSessionId).toBeUndefined()
+  })
+  it('rejects forged legacy proof from incoming IDs, another source/product, or an entry recorded after the legacy draft',async()=>{
+    for(const kind of ['incoming-only','wrong-session','wrong-product','too-new']) {
+      const sourceId=`p5-proof-${kind}`,id=`legacy-${kind}`
+      await source(sourceId)
+      const original=await seedLegacy(id,sourceId)
+      await environment.withSecurityRulesDisabled(async context=>{
+        const entryRef=doc(context.firestore(),'weighingSessions',sourceId,'entries','saved-entry')
+        if(kind==='incoming-only') {
+          await deleteDoc(entryRef)
+          await setDoc(doc(context.firestore(),'weighingSessions',sourceId,'entries','invented-entry'),{
+            sessionId:sourceId,productType:'fish_head',recordedAt:Timestamp.fromMillis(original.createdAt.toMillis()-60_000)})
+        } else await updateDoc(entryRef,kind==='wrong-session'?{sessionId:'another-session'}:
+          kind==='wrong-product'?{productType:'fish_meal'}:{recordedAt:Timestamp.fromMillis(Date.now())})
+      })
+      await assertFails(save(id,sourceId,{sourceSessionRevision:2,...(kind==='incoming-only'?{sourceEntryIds:['invented-entry']}: {})}))
+    }
+  })
+  it('keeps source binding, source guard, creation, revisions and audit immutable',async()=>{
+    const sourceId='p5-immutable',otherId='p5-immutable-other',id=`fish_head_session_${sourceId}`,db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId)
+    await source(otherId)
+    await assertSucceeds(save(id,sourceId))
+    await assertFails(save(id,otherId))
+    await assertFails(save(id,sourceId,{createdBy:'another-user'}))
+    await assertFails(save(id,sourceId,{createdAt:serverTimestamp()}))
+    await assertFails(save(id,sourceId,{revision:7}))
+    await assertFails(save(id,sourceId,{}, {audit:false}))
+    const guard=doc(db,'purchaseSettlementSources',id)
+    await assertFails(updateDoc(guard,{draftId:'replacement'}))
+    await assertFails(updateDoc(guard,{sourceSessionId:otherId}))
+    await assertFails(deleteDoc(guard))
+    await assertFails(updateDoc(doc(db,'purchaseSettlementDrafts',id,'actions','1'),{performedBy:'another-user'}))
+    await assertFails(deleteDoc(doc(db,'purchaseSettlementDrafts',id)))
+  })
+  it('rejects incorrect source metadata, revision, guard ownership and timestamps',async()=>{
+    const sourceId='p5-metadata',id=`fish_head_session_${sourceId}`
+    await source(sourceId)
+    await assertFails(save(id,sourceId,{monthKey:'09/2026'}))
+    await assertFails(save(id,sourceId,{monthSortKey:202609}))
+    await assertFails(save(id,sourceId,{businessDate:'04/08/2026',dateSortKey:20260804}))
+    await assertFails(save(id,sourceId,{vesselId:'v833',vesselCodeSnapshot:'833'}))
+    await assertFails(save(id,sourceId,{sourceSessionRevision:1}))
+    await assertFails(save(id,sourceId,{}, {guardPatch:{createdBy:'another-user'}}))
+    await assertFails(save(id,sourceId,{}, {guardPatch:{createdAt:Timestamp.fromMillis(0)}}))
+    await assertFails(save(id,sourceId,{}, {guardPatch:{sourceSessionId:'another-session'}}))
+    await assertFails(save(id,sourceId,{}, {guardPatch:{productType:'fish_meal'}}))
+    await assertSucceeds(save(id,sourceId))
+  })
+  it('gives same-vessel same-day source sessions separate canonical drafts',async()=>{
+    for(const sourceId of ['p5-same-tuple-a','p5-same-tuple-b']) {
+      await source(sourceId)
+      await assertSucceeds(save(`fish_head_session_${sourceId}`,sourceId))
+    }
+    const db=environment.authenticatedContext('u1').firestore()
+    const a=(await getDoc(doc(db,'purchaseSettlementDrafts','fish_head_session_p5-same-tuple-a'))).data()!
+    const b=(await getDoc(doc(db,'purchaseSettlementDrafts','fish_head_session_p5-same-tuple-b'))).data()!
+    expect(a.vesselId).toBe(b.vesselId)
+    expect(a.dateSortKey).toBe(b.dateSortKey)
+    expect(a.sourceSessionId).not.toBe(b.sourceSessionId)
+  })
+  it('preserves fish-meal canonical creation and edits under the same source guard',async()=>{
+    const sourceId='p5-fish-meal',id=`fish_meal_session_${sourceId}`,db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId,{productType:'fish_meal'})
+    const line={lineType:'fish_meal',fishMealQuality:'bucket',nameSnapshot:'桶装',totalWeightGrams:100_000,basketCount:1,totalWeightEntryCount:0,
+      defaultUnitPriceCentsPerKg:115,unitPriceCentsPerKg:115,priceWasEdited:false,amountCents:11_500,sourceEntryIds:['saved-entry']}
+    await assertSucceeds(save(id,sourceId,{productType:'fish_meal',lines:[line],totalAmountCents:11_500}))
+    await assertSucceeds(save(id,sourceId,{receiptNo:'meal-updated'}))
+    expect((await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()).toMatchObject({productType:'fish_meal',revision:2,lines:[line]})
+    expect((await getDoc(doc(db,'purchaseSettlementSources',id))).data()?.draftId).toBe(id)
+  })
+  it('allows two devices to concurrently allocate exactly one canonical authoritative draft',async()=>{
+    const sourceId='p5-concurrent',id=`fish_head_session_${sourceId}`
+    await source(sourceId)
+    let arrivals=0
+    let release:()=>void=()=>undefined
+    const bothRead=new Promise<void>(resolve=>{release=resolve})
+    const create=async(userId:string,synchronized=true)=>{
+      const db=environment.authenticatedContext(userId).firestore(),ref=doc(db,'purchaseSettlementDrafts',id)
+      let firstAttempt=true
+      return runTransaction(db,async transaction=>{
+        const guard=doc(db,'purchaseSettlementSources',id)
+        const [current,sourceSnapshot,binding]=await Promise.all([
+          transaction.get(ref),transaction.get(doc(db,'weighingSessions',sourceId)),transaction.get(guard)])
+        expect(sourceSnapshot.exists()).toBe(true)
+        if(firstAttempt&&synchronized) { firstAttempt=false; arrivals+=1; if(arrivals===2)release(); await bothRead }
+        if(current.exists()) { expect(binding.data()?.draftId).toBe(id); return id }
+        const value=draft(sourceId,{createdBy:userId,updatedBy:userId})
+        transaction.set(ref,value)
+        transaction.set(guard,{productType:'fish_head',sourceSessionId:sourceId,draftId:id,createdBy:userId,createdAt:serverTimestamp()})
+        transaction.set(doc(ref,'actions','1'),{beforeSnapshot:null,afterSnapshot:value,performedBy:userId,performedAt:serverTimestamp()})
+        return id
+      })
+    }
+    const outcomes=await Promise.allSettled([create('u1'),create('u2')])
+    expect(outcomes.filter(value=>value.status==='fulfilled').length).toBeGreaterThanOrEqual(1)
+    for(const outcome of outcomes) {
+      if(outcome.status==='fulfilled')expect(outcome.value).toBe(id)
+      // The emulator can reject the stale create against the winner's immutable
+      // guard before the SDK sees an ABORTED conflict. Reload must use that winner.
+      else expect(['permission-denied','aborted']).toContain(outcome.reason.code)
+    }
+    const db=environment.authenticatedContext('u1').firestore()
+    const found=await getDocs(query(collection(db,'purchaseSettlementDrafts'),where('sourceSessionId','==',sourceId)))
+    expect(found.docs.map(item=>item.id)).toEqual([id])
+    expect(found.docs[0].data().revision).toBe(1)
+    expect(found.docs[0].data().lines[0]).toMatchObject({unitPriceCentsPerKg:290,priceWasEdited:true,amountCents:29_000})
+    expect((await getDoc(doc(db,'purchaseSettlementSources',id))).data()?.draftId).toBe(id)
+    expect(await Promise.all([create('u1',false),create('u2',false)])).toEqual([id,id])
+    expect((await getDocs(collection(db,'purchaseSettlementDrafts',id,'actions'))).size).toBe(1)
+  },20_000)
+})
 
 describe('Firestore Rules: retail cash sales', () => {
   const line = makeRetailLine(retailSeed[0], '2', '6.15')
@@ -253,7 +466,7 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
 
   it('allows repeatable settlement drafts but rejects deletion and confirmation status', async () => {
     const db = environment.authenticatedContext('u1').firestore()
-    const draftRef = doc(db, 'purchaseSettlementDrafts', 'fish_head_20260803_v978')
+    const draftRef = doc(db, 'purchaseSettlementDrafts', 'fish_head_session_settlement-source')
     const line = { lineType: 'fish_head', nameSnapshot: '金线', totalWeightGrams: 160500, basketCount: 1, totalWeightEntryCount: 1,
       defaultUnitPriceCentsPerKg: 210, unitPriceCentsPerKg: 210, priceWasEdited: false, amountCents: 33705, sourceEntryIds: ['entry-1'],
       fishSpeciesId: 'jin_xian', fishSpeciesCodeSnapshot: 'jin_xian', fishSpeciesNameSnapshot: '金线' }
@@ -266,6 +479,8 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
       const next={...(before??draft),receiptNo:'FH-001',...patch,revision:before?before.revision+1:1,updatedAt:serverTimestamp()}
       const batch=writeBatch(db)
       batch.set(draftRef,next)
+      const guardRef=doc(db,'purchaseSettlementSources','fish_head_session_settlement-source')
+      if(!(await getDoc(guardRef)).exists())batch.set(guardRef,{productType:'fish_head',sourceSessionId:'settlement-source',draftId:draftRef.id,createdBy:'u1',createdAt:serverTimestamp()})
       if(audit)batch.set(doc(draftRef,'actions',String(next.revision)),{beforeSnapshot:before,afterSnapshot:next,performedBy:'u1',performedAt:serverTimestamp()})
       return batch.commit()
     }

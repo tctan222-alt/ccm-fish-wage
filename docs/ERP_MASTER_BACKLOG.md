@@ -19,8 +19,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，已随 `e85484d` Hosting-only 发布，见下方发布检查点 |
 | 2 | 未完成称重实时价格与金额 | 已合并 [PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)，`e85484d6281e4c1ca101e557bcba0381ed51ea68`；已 Hosting-only 发布并核对线上文件哈希 |
 | 3 | 未完成称重 entry 修改与即时重算 | 已合并 [PR #45](https://github.com/tctan222-alt/ccm-fish-wage/pull/45)，`75bb0e0` 已 Hosting-only 发布，线上文件哈希已核对 |
-| 4 | Fish Head Settlement 待结单首页 | 已实现并完成本地验证；focused PR / CI / merge 状态见 GitHub，未部署 |
-| 5 | Settlement sourceSessionId identity | 待开始；解决 #37 P1 finding |
+| 4 | Fish Head Settlement 待结单首页 | 已合并 [PR #46](https://github.com/tctan222-alt/ccm-fish-wage/pull/46)，`1cc1278` 已 Hosting-only 发布，线上文件哈希已核对 |
+| 5 | Settlement sourceSessionId identity | 本轮已实现；focused PR / CI / merge 以 GitHub 为准，不自动部署；解决 #37 P1 finding |
 | 6 | Settlement stable revision read | 待开始；解决 #37 P2 finding |
 | 7 | Settlement 筛选与历史查询 | 待开始 |
 | 8 | 切鱼头工钱 Daily Details + Print | 待开始 |
@@ -95,6 +95,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 
 本地完整质量检查：587 / 587 application tests passed，typecheck、lint、build 和 `git diff --check` 通过；lint 保留既有 AuthProvider Fast Refresh warning，build 保留既有 bundle-size warning。Rules 未改；focused PR 继续由既有 CI quality / firestore-rules jobs 验证。
 
+**Priority 4 发布检查点（2026-10-03）：**从 clean、synced main `1cc12788f19afc1ca3136b6953c6c27e3a022f04` 重新构建；main CI [run 37088837464](https://github.com/tctan222-alt/ccm-fish-wage/actions/runs/37088837464) 全绿。使用 `firebase-tools@15.29.0` Hosting-only 发布成功。生产 `/fish-head-settlement`、HTML、入口 JS/CSS、结单列表和详情 chunk 均 HTTP 200，SHA-256 与本地构建完全一致（HTML `7c5ec21c16dc151354986f2a4190d90172f8122d27e5fc5f47fb3faf9fbf0bf7`）。未发布 Rules / Functions，未写生产假记录。
+
 ## Priority 5：Settlement source identity 使用 sourceSessionId
 
 **目的：**解决 #37 P1 review finding。
@@ -103,6 +105,14 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 同一 sourceSessionId 始终找回同一个 draft，保留 saved prices；更正 vessel/date 后仍找回原 draft，不允许第二份 settlement draft。
 - Legacy 兼容顺序：sourceSessionId 优先 → legacy key fallback → 安全绑定；不 destructive migration。
 - 同船同日多张 session A / B 必须都可见、分别结单，不串重量或价格，不覆盖彼此 draft。
+
+本轮实现：加载先查询 `sourceSessionId`，保留实际 `draftId`；新草稿 ID 为 `${productType}_session_${sourceSessionId}`。现有绑定草稿不受 date/vessel 更正影响；未绑定 legacy 只有原 source entry IDs 能证明属于当前 session 时才允许在正常保存事务中绑定，不复制或重编号。Legacy tuple 路径若出现同船同日多来源直接报错，要求从 session 列表选择。
+
+每次保存事务重新读取 source、actual draft 和不可改写的 `purchaseSettlementSources` source→draft 指向记录，验证来源 revision、草稿 revision、当前 metadata、原有期限与锁定，并原子保存 audit。指向记录不包含价格或业务草稿副本，仅防止 legacy 绑定和 canonical create 同时建立两份。发现重复 active draft、其他来源绑定或过期装置 identity 时明确报错并显示 IDs，不自动修数据。
+
+价格、默认价快照、priceWasEdited、createdAt/createdBy、真实 legacy ID 均保留；当前重量变化仍通过既有 reconciliation / integer cents 金额逻辑重算。Rules 仅配套 settlement identity / binding / metadata 约束，不放宽其他业务 collection。无 bulk migration 或生产写入；Priority 6 的稳定 revision 读取协议仍未实现。合并后停止，后续需 Owner 明确授权 coordinated Rules + Hosting release。
+
+本地验证：625 / 625 application tests、34 / 34 Rules Emulator tests（CLI 15.29.0）通过；Rules compile / size gate 为 252,010 bytes，低于 253,952 bytes CI budget。真实 Emulator 同时首建只留一份草稿；竞争者可能得到权限／冲突错误，页面明确要求重新载入，并保留赢家价格。没有为此放宽 Rules 或覆盖 stale revision。日期／船号单独及同时更正、跨月、重复更正 legacy 查找、实际 ID 连续保存、fish-meal、审计和原期限均有回归覆盖。
 
 ## Priority 6：Settlement stable revision read
 

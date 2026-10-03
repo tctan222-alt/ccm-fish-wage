@@ -129,7 +129,7 @@ describe('purchase settlement MVP pages',()=>{
     await screen.findByRole('table')
     expect(screen.getByLabelText('船号')).toHaveValue('v978')
     expect(screen.getByLabelText('日期')).toHaveValue('2026-08-03')
-    expect(loader).toHaveBeenCalledWith('fish_head',20260803,'v978')
+    expect(loader).toHaveBeenCalledWith(expect.objectContaining({session:legacy,entries:[expect.objectContaining({id:'jin'})]}),'fish_head')
   })
 
   it('refreshes saved settlement weights while preserving edited prices and revision',async()=>{
