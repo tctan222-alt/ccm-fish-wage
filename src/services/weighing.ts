@@ -1,5 +1,5 @@
 import {
-  collection,doc,getDoc,getDocs,runTransaction,serverTimestamp,setDoc,writeBatch,
+  collection,doc,getDoc,getDocs,getDocFromServer,getDocsFromServer,runTransaction,serverTimestamp,setDoc,writeBatch,
   type DocumentData,
 } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
@@ -177,6 +177,52 @@ export async function loadWeighingBundle(sessionId:string):Promise<WeighingBundl
     actions:actionSnapshot.docs.map(item=>({id:item.id,type:item.data().type,entryId:item.data().entryId??null,
       reason:item.data().reason??null,performedAt:item.data().performedAt,beforeSnapshot:item.data().beforeSnapshot,
       afterSnapshot:item.data().afterSnapshot} as WeighingAction))}
+}
+
+const MAX_STABLE_READ_ATTEMPTS=3
+const STABLE_SOURCE_FIELDS=['revision','productType','status','weighingDate','vesselId','vesselCodeSnapshot','vesselNameSnapshot',
+  'monthKey','dateSortKey','monthSortKey','sessionCode','externalSlipNo','lastSequenceNo','fishHeadBasketCount','fishHeadWeightGrams',
+  'fishMealBucketBasketCount','fishMealBucketWeightGrams','fishMealBagBasketCount','fishMealBagWeightGrams','fishMealTotalWeightGrams',
+  'totalWeightGrams','processedReceiptId','processedReceiptCode','lastActionId'] as const
+function sameSourceTime(first:unknown,second:unknown){
+  if(first===second)return true
+  if(first instanceof Date&&second instanceof Date)return first.getTime()===second.getTime()
+  return Boolean(first&&typeof first==='object'&&'isEqual' in first&&typeof first.isEqual==='function'&&first.isEqual(second))
+}
+function committedServerSnapshot(snapshot:{metadata:{fromCache:boolean;hasPendingWrites:boolean}}){
+  // FromServer still applies local pending writes; those are not an authoritative source.
+  return snapshot.metadata.fromCache===false&&snapshot.metadata.hasPendingWrites===false
+}
+/** Settlement-only read; ordinary weighing retains its existing loader. */
+export async function loadStableWeighingBundle(sessionId:string):Promise<WeighingBundle>{
+  const ref=doc(db,'weighingSessions',sessionId)
+  try{
+    for(let attempt=0;attempt<MAX_STABLE_READ_ATTEMPTS;attempt++){
+      const before=await getDocFromServer(ref)
+      if(!before.exists())throw new Error('找不到现场称重单。')
+      if(before.id!==sessionId||!Number.isInteger(before.data().revision)||before.data().revision<1)throw new Error('称重来源或版本不正确，请重新载入结单。')
+      if(!committedServerSnapshot(before))continue
+      const [entries,actions]=await Promise.all([getDocsFromServer(collection(ref,'entries')),getDocsFromServer(collection(ref,'actions'))])
+      const after=await getDocFromServer(ref)
+      if(!after.exists())throw new Error('找不到现场称重单。')
+      // Every supported financial/metadata mutation atomically advances the parent revision.
+      // sync_conflict-only audit appends do not participate in financial or legacy proof.
+      if(after.id!==sessionId||!committedServerSnapshot(after)||!committedServerSnapshot(entries)||!committedServerSnapshot(actions)
+        ||entries.docs.some(item=>!committedServerSnapshot(item))||actions.docs.some(item=>!committedServerSnapshot(item))
+        ||STABLE_SOURCE_FIELDS.some(key=>before.data()[key]!==after.data()[key])
+        ||['completedAt','updatedAt','processedAt','voidedAt'].some(key=>!sameSourceTime(before.data()[key],after.data()[key])))continue
+      return {session:sessionFrom(after.id,after.data()),
+        entries:entries.docs.map(item=>entryFrom(item.id,sessionId,item.data())).sort((a,b)=>b.recordedAtClient.localeCompare(a.recordedAtClient)||b.id.localeCompare(a.id)),
+        actions:actions.docs.map(item=>({id:item.id,type:item.data().type,entryId:item.data().entryId??null,reason:item.data().reason??null,
+          performedAt:item.data().performedAt,beforeSnapshot:item.data().beforeSnapshot,afterSnapshot:item.data().afterSnapshot} as WeighingAction))}
+    }
+    throw new Error('称重资料正在修改，请稍后重新载入结单。')
+  }catch(problem){
+    const code=problem&&typeof problem==='object'&&'code' in problem?String(problem.code):''
+    if(code==='unavailable'||code==='deadline-exceeded')throw new Error('无法从服务器核对称重资料，请检查网络后重新载入结单。',{cause:problem})
+    if(code==='permission-denied'||code==='unauthenticated')throw new Error('无权限读取称重资料，请重新登录后重试。',{cause:problem})
+    throw problem
+  }
 }
 
 export async function findOpenWeighingSession(vesselId:string,weighingDate:string,productType:WeighingProductType){

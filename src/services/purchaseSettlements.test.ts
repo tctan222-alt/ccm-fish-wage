@@ -1,19 +1,23 @@
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest'
-import { buildPurchaseSettlementLines,draftIdForSourceSession,makeSettlementDraft,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
-import type { WeighingBundle } from './weighing'
+import { buildPurchaseSettlementLines,draftIdForSourceSession,makeSettlementDraft,reconcileSettlementLines,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
+import { loadStableWeighingBundle,loadWeighingBundle,type WeighingBundle } from './weighing'
 
-const state=vi.hoisted(()=>({records:new Map<string,Record<string,unknown>>(),writes:vi.fn(),failPath:'',uid:'u1' as string|null,retries:0,beforeCommit:null as (()=>void)|null,transactionErrorCode:''}))
+const state=vi.hoisted(()=>({records:new Map<string,Record<string,unknown>>(),writes:vi.fn(),failPath:'',uid:'u1' as string|null,retries:0,beforeCommit:null as (()=>void)|null,transactionErrorCode:'',afterServerRead:null as ((path:string)=>void)|null}))
 vi.mock('../firebase',()=>({db:{},firebaseConfigured:true,auth:{get currentUser(){return state.uid?{uid:state.uid}:null}}}))
-vi.mock('./weighing',()=>({loadWeighingSessions:vi.fn(),loadWeighingBundle:vi.fn()}))
+vi.mock('./weighing',()=>({loadWeighingSessions:vi.fn(),loadWeighingBundle:vi.fn(),loadStableWeighingBundle:vi.fn()}))
 vi.mock('firebase/firestore',()=>{
-  const snapshot=(path:string)=>{const value=state.records.get(path);return {id:path.split('/').at(-1),exists:()=>Boolean(value),data:()=>value}}
+  const metadata={fromCache:false,hasPendingWrites:false}
+  const snapshot=(path:string)=>{const value=state.records.get(path);return {id:path.split('/').at(-1),exists:()=>Boolean(value),data:()=>value,metadata}}
+  const collectionSnapshot=(ref:{path:string;filters?:{field:string;value:unknown}[]})=>({metadata,docs:[...state.records].filter(([path,data])=>path.startsWith(`${ref.path}/`)&&!path.slice(ref.path.length+1).includes('/')&&(ref.filters??[]).every(filter=>data[filter.field]===filter.value)).map(([path])=>snapshot(path))})
   return {
-    doc:(parent:{path?:string},...parts:string[])=>({path:[parent.path,...parts].filter(Boolean).join('/')}),
+    doc:(parent:{path?:string},...parts:string[])=>({path:[parent.path,...parts].filter(Boolean).join('/'),id:parts.at(-1)}),
     collection:(parent:{path?:string},...parts:string[])=>({path:[parent.path,...parts].filter(Boolean).join('/')}),
     where:(field:string,_operator:string,value:unknown)=>({field,value}),
     query:(ref:{path:string},...filters:{field:string;value:unknown}[])=>({...ref,filters}),
-    getDocs:async(ref:{path:string;filters?:{field:string;value:unknown}[]})=>({docs:[...state.records].filter(([path,data])=>path.startsWith(`${ref.path}/`)&&!path.slice(ref.path.length+1).includes('/')&&(ref.filters??[]).every(filter=>data[filter.field]===filter.value)).map(([path])=>snapshot(path))}),
+    getDocs:async(ref:{path:string;filters?:{field:string;value:unknown}[]})=>collectionSnapshot(ref),
     getDoc:async(ref:{path:string})=>snapshot(ref.path),
+    getDocFromServer:async(ref:{path:string})=>{const result=snapshot(ref.path);state.afterServerRead?.(ref.path);return result},
+    getDocsFromServer:async(ref:{path:string;filters?:{field:string;value:unknown}[]})=>{const result=collectionSnapshot(ref);state.afterServerRead?.(ref.path);return result},
     serverTimestamp:()=>new Date(),
     runTransaction:async(_db:unknown,callback:(transaction:unknown)=>Promise<unknown>)=>{
       for(let attempt=0;attempt<5;attempt++){
@@ -32,14 +36,15 @@ vi.mock('firebase/firestore',()=>{
     },
   }
 })
-import { loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft } from './purchaseSettlements'
+import { asSettlementSourceEntry,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft } from './purchaseSettlements'
 
 const legacyDraftPath='purchaseSettlementDrafts/fish_head_20260803_v978',draftPath='purchaseSettlementDrafts/fish_head_session_source',sourcePath='weighingSessions/source'
 const guardPath='purchaseSettlementSources/fish_head_session_source'
 function stored(value:PurchaseSettlementDraft){const data={...value};delete data.draftId;return data}
-function bundle():WeighingBundle {
-  return {session:{...state.records.get(sourcePath),id:'source'},entries:[{...state.records.get(`${sourcePath}/entries/entry-1`),id:'entry-1',sessionId:'source'}],
-    actions:[...state.records].filter(([path])=>path.startsWith(`${sourcePath}/actions/`)).map(([path,data])=>({...data,id:path.split('/').at(-1)}))} as WeighingBundle
+function bundle(sessionId='source'):WeighingBundle {
+  const path=`weighingSessions/${sessionId}`
+  return {session:{...state.records.get(path),id:sessionId},entries:[...state.records].filter(([recordPath])=>recordPath.startsWith(`${path}/entries/`)).map(([recordPath,data])=>({...data,id:recordPath.split('/').at(-1),sessionId})),
+    actions:[...state.records].filter(([recordPath])=>recordPath.startsWith(`${path}/actions/`)).map(([recordPath,data])=>({...data,id:recordPath.split('/').at(-1)}))} as WeighingBundle
 }
 function input():PurchaseSettlementDraft {
   const lines=buildPurchaseSettlementLines([{id:'entry-1',productType:'fish_head',fishSpeciesId:'jin_xian',fishSpeciesCodeSnapshot:'jin_xian',fishSpeciesNameSnapshot:'金线',
@@ -47,16 +52,46 @@ function input():PurchaseSettlementDraft {
   return {...makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'',lines,sourceEntryIds:['entry-1']}),
     sourceSessionId:'source',sourceSessionRevision:3}
 }
+async function useRealStableLoader(){
+  const weighing=await vi.importActual<typeof import('./weighing')>('./weighing')
+  vi.mocked(loadStableWeighingBundle).mockImplementation(weighing.loadStableWeighingBundle)
+}
+function setSourceWeight(weightGrams:number){
+  state.records.set(`${sourcePath}/entries/entry-1`,{...state.records.get(`${sourcePath}/entries/entry-1`),weightGrams})
+}
 
 beforeEach(()=>{
   vi.useFakeTimers();vi.setSystemTime(new Date('2026-08-04T02:00:00Z'))
-  state.records.clear();state.writes.mockClear();state.failPath='';state.uid='u1';state.retries=0;state.beforeCommit=null;state.transactionErrorCode=''
+  state.records.clear();state.writes.mockClear();state.failPath='';state.uid='u1';state.retries=0;state.beforeCommit=null;state.transactionErrorCode='';state.afterServerRead=null
   state.records.set(sourcePath,{productType:'fish_head',weighingDate:'03/08/2026',vesselId:'v978',vesselCodeSnapshot:'978',revision:3,status:'completed',completedAt:new Date('2026-08-03T02:00:00Z')})
-  state.records.set(`${sourcePath}/entries/entry-1`,{sessionId:'source',productType:'fish_head',weighingDate:'03/08/2026',vesselId:'v978',voided:false,recordedAt:new Date('2026-08-03T02:00:00Z')})
+  state.records.set(`${sourcePath}/entries/entry-1`,{sessionId:'source',productType:'fish_head',weighingDate:'03/08/2026',vesselId:'v978',voided:false,recordedAt:new Date('2026-08-03T02:00:00Z'),
+    fishSpeciesId:'jin_xian',fishSpeciesCodeSnapshot:'jin_xian',fishSpeciesNameSnapshot:'金线',fishMealQuality:null,displayNameSnapshot:'金线',entryMode:'individual',sequenceNo:1,
+    weightGrams:10000,recordedAtClient:'2026-08-03T10:00:00+08:00'})
+  vi.mocked(loadStableWeighingBundle).mockReset().mockImplementation(async sessionId=>{
+    if(!state.records.has(`weighingSessions/${sessionId}`))throw new Error('找不到来源称重单。')
+    return bundle(sessionId)
+  })
+  vi.mocked(loadWeighingBundle).mockReset().mockImplementation(async sessionId=>bundle(sessionId))
 })
 afterEach(()=>vi.useRealTimers())
 
 describe('source-authoritative draft lookup',()=>{
+  it('returns the accepted stable session and entries through the legacy vessel/date route',async()=>{
+    await useRealStableLoader()
+    state.records.set(sourcePath,{...state.records.get(sourcePath),revision:10})
+    setSourceWeight(100000)
+    const discovered=bundle().session
+    state.afterServerRead=path=>{
+      if(path!==`${sourcePath}/entries`)return
+      state.afterServerRead=null
+      setSourceWeight(80000)
+      state.records.set(sourcePath,{...state.records.get(sourcePath),revision:11})
+    }
+    const source=await loadPurchaseSettlementSource('v978','03/08/2026','fish_head',async()=>[discovered])
+    expect(source).toMatchObject({session:{id:'source',revision:11},bundle:{session:{revision:11},entries:[{id:'entry-1',weightGrams:80000}]}})
+    await expect(loadPurchaseSettlementSource('v978','03/08/2026','fish_head',async()=>[discovered,{...discovered,id:'other'}])).rejects.toThrow('结单列表')
+  })
+
   it('finds a saved bound document by sourceSessionId before the mutable tuple',async()=>{
     state.records.set(legacyDraftPath,{...input(),revision:4})
     state.records.set(sourcePath,{...state.records.get(sourcePath),weighingDate:'04/08/2026',vesselId:'v833',vesselCodeSnapshot:'833'})
@@ -132,7 +167,94 @@ describe('source-authoritative draft lookup',()=>{
   })
 })
 
+describe('stable settlement source integration',()=>{
+  it.each(['fish_head','fish_meal'] as const)('keeps %s saved prices, actual draft ID and immutable source pointer after a basket correction during reload',async productType=>{
+    await useRealStableLoader()
+    const actualId=`${productType}_20260803_v978`,actualPath=`purchaseSettlementDrafts/${actualId}`,pointerPath=`purchaseSettlementSources/${productType}_session_source`
+    state.records.set(sourcePath,{...state.records.get(sourcePath),productType,revision:10})
+    state.records.set(`${sourcePath}/entries/entry-1`,{...state.records.get(`${sourcePath}/entries/entry-1`),productType,weightGrams:100000,
+      ...(productType==='fish_meal'?{fishSpeciesId:null,fishSpeciesCodeSnapshot:null,fishSpeciesNameSnapshot:null,fishMealQuality:'bag',displayNameSnapshot:'包鱼仔'}:{})})
+    const originalLines=buildPurchaseSettlementLines(bundle().entries.map(asSettlementSourceEntry),productType,'978')
+    const saved={...input(),productType,sourceSessionRevision:10,lines:originalLines.map(line=>({...line,unitPriceCentsPerKg:290,priceWasEdited:true,amountCents:29000})),totalAmountCents:29000,
+      revision:4,createdBy:'original-user',createdAt:new Date('2026-08-03T03:00:00Z')}
+    const pointer={productType,sourceSessionId:'source',draftId:actualId,createdBy:'original-user',createdAt:new Date('2026-08-03T03:00:00Z')}
+    state.records.set(actualPath,saved);state.records.set(pointerPath,pointer)
+    const discovered=bundle().session
+    state.afterServerRead=path=>{
+      if(path!==`${sourcePath}/entries`)return
+      state.afterServerRead=null
+      setSourceWeight(80000)
+      state.records.set(sourcePath,{...state.records.get(sourcePath),revision:11})
+    }
+    const source=await loadPurchaseSettlementSource('v978','03/08/2026',productType,async()=>[discovered])
+    const accepted=source.bundle!
+    const loaded=(await loadPurchaseSettlementDraftForSource(accepted,productType))!
+    const lines=reconcileSettlementLines(buildPurchaseSettlementLines(accepted.entries.map(asSettlementSourceEntry),productType,accepted.session.vesselCodeSnapshot),loaded.lines)
+    const updated=await savePurchaseSettlementDraft({...loaded,lines,totalAmountCents:23200,sourceSessionRevision:accepted.session.revision})
+    expect(updated).toMatchObject({draftId:actualId,sourceSessionId:'source',sourceSessionRevision:11,revision:5,totalAmountCents:23200,
+      lines:[{unitPriceCentsPerKg:290,priceWasEdited:true,totalWeightGrams:80000,amountCents:23200}]})
+    expect(state.records.get(pointerPath)).toBe(pointer)
+    expect(state.records.has(`purchaseSettlementDrafts/${productType}_session_source`)).toBe(false)
+    expect(await loadPurchaseSettlementDraftForSource(accepted,productType)).toMatchObject({draftId:actualId,sourceSessionId:'source',sourceSessionRevision:11,lines:[{unitPriceCentsPerKg:290,totalWeightGrams:80000}]})
+  })
+
+  it('rejects a correction after stable load with the original save conflict and leaves the saved draft and source pointer intact',async()=>{
+    await useRealStableLoader()
+    setSourceWeight(100000)
+    state.records.set(sourcePath,{...state.records.get(sourcePath),revision:10})
+    const lines=buildPurchaseSettlementLines(bundle().entries.map(asSettlementSourceEntry),'fish_head','978')
+    const saved={...input(),lines,totalAmountCents:21000,sourceSessionRevision:10,revision:4}
+    const pointer={productType:'fish_head',sourceSessionId:'source',draftId:'fish_head_20260803_v978'}
+    state.records.set(legacyDraftPath,saved);state.records.set(guardPath,pointer)
+    const source=await loadPurchaseSettlementSource('v978','03/08/2026','fish_head',async()=>[bundle().session])
+    const loaded=(await loadPurchaseSettlementDraftForSource(source.bundle!,'fish_head'))!
+    setSourceWeight(80000)
+    state.records.set(sourcePath,{...state.records.get(sourcePath),revision:11})
+    await expect(savePurchaseSettlementDraft({...loaded,sourceSessionRevision:source.bundle!.session.revision})).rejects.toThrow('称重资料已变更，请重新载入后检查结单。')
+    expect(state.writes).not.toHaveBeenCalled()
+    expect(state.records.get(legacyDraftPath)).toBe(saved)
+    expect(state.records.get(guardPath)).toBe(pointer)
+  })
+
+  it('uses retried entries and audited metadata history to preserve legacy ownership proof during first-save discovery',async()=>{
+    await useRealStableLoader()
+    const actualId='fish_head_20260804_v833',actualPath=`purchaseSettlementDrafts/${actualId}`
+    const legacy={...input(),businessDate:'04/08/2026',dateSortKey:20260804,vesselId:'v833',vesselCodeSnapshot:'833',createdAt:new Date('2026-08-03T03:00:00Z')}
+    delete legacy.sourceSessionId;delete legacy.sourceSessionRevision
+    state.records.set(actualPath,legacy)
+    state.records.set(sourcePath,{...state.records.get(sourcePath),weighingDate:'05/08/2026',revision:10})
+    state.records.set(`${sourcePath}/entries/entry-1`,{...state.records.get(`${sourcePath}/entries/entry-1`),weighingDate:'05/08/2026'})
+    const discovered=bundle().session
+    state.afterServerRead=path=>{
+      if(path!==`${sourcePath}/entries`)return
+      state.afterServerRead=null
+      setSourceWeight(80000)
+      state.records.set(sourcePath,{...state.records.get(sourcePath),revision:11})
+      state.records.set(`${sourcePath}/actions/correction`,{type:'session_update',beforeSnapshot:{weighingDate:'04/08/2026',vesselId:'v833'},afterSnapshot:{weighingDate:'05/08/2026',vesselId:'v978'}})
+    }
+    const source=await loadPurchaseSettlementSource('v978','05/08/2026','fish_head',async()=>[discovered])
+    expect(source.bundle).toMatchObject({session:{revision:11},entries:[{id:'entry-1',weightGrams:80000}],actions:[{id:'correction',type:'session_update'}]})
+    expect(await loadPurchaseSettlementDraftForSource(source.bundle!,'fish_head')).toMatchObject({draftId:actualId})
+    await expect(savePurchaseSettlementDraft({...input(),businessDate:'05/08/2026',dateSortKey:20260805,sourceSessionRevision:11})).rejects.toThrow(actualId)
+    expect(state.writes).not.toHaveBeenCalled()
+    expect(state.records.get(actualPath)).toBe(legacy)
+    expect(state.records.has(draftPath)).toBe(false)
+    expect(state.records.has(guardPath)).toBe(false)
+  })
+})
+
 describe('settlement draft transactions',()=>{
+  it('rejects an unstable first-save ownership read before creating a draft, guard or audit',async()=>{
+    await useRealStableLoader()
+    state.afterServerRead=path=>{
+      if(path===`${sourcePath}/entries`)state.records.set(sourcePath,{...state.records.get(sourcePath),revision:Number(state.records.get(sourcePath)?.revision)+1})
+    }
+    await expect(savePurchaseSettlementDraft(input())).rejects.toThrow('称重资料正在修改')
+    expect(state.writes).not.toHaveBeenCalled()
+    expect(state.records.has(draftPath)).toBe(false)
+    expect(state.records.has(guardPath)).toBe(false)
+  })
+
   it('saves the source revision and immutable before/after audit, preserving original creation fields',async()=>{
     const first=await savePurchaseSettlementDraft(input())
     state.uid='u2'

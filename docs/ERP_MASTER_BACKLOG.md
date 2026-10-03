@@ -20,8 +20,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | 2 | 未完成称重实时价格与金额 | 已合并 [PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)，`e85484d6281e4c1ca101e557bcba0381ed51ea68`；已 Hosting-only 发布并核对线上文件哈希 |
 | 3 | 未完成称重 entry 修改与即时重算 | 已合并 [PR #45](https://github.com/tctan222-alt/ccm-fish-wage/pull/45)，`75bb0e0` 已 Hosting-only 发布，线上文件哈希已核对 |
 | 4 | Fish Head Settlement 待结单首页 | 已合并 [PR #46](https://github.com/tctan222-alt/ccm-fish-wage/pull/46)，`1cc1278` 已 Hosting-only 发布，线上文件哈希已核对 |
-| 5 | Settlement sourceSessionId identity | 本轮已实现；focused PR / CI / merge 以 GitHub 为准，不自动部署；解决 #37 P1 finding |
-| 6 | Settlement stable revision read | 待开始；解决 #37 P2 finding |
+| 5 | Settlement sourceSessionId identity | 已合并 [PR #47](https://github.com/tctan222-alt/ccm-fish-wage/pull/47)，`1be7ce6`；#37 P1 已 resolved，尚未部署 |
+| 6 | Settlement stable revision read | 本轮已实现；focused PR / CI / merge 以 GitHub 为准，不自动部署；解决 #37 P2 finding |
 | 7 | Settlement 筛选与历史查询 | 待开始 |
 | 8 | 切鱼头工钱 Daily Details + Print | 待开始 |
 | 9 | Retail Master Data 与 Owner seed dataset | 待开始；完整 dataset 必须先找回 |
@@ -121,6 +121,14 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 必须取得同一稳定 revision 的 session + entries，才允许 build settlement、计算金额或 save draft。
 - 例如读 session revision A → 读 entries → 再读 session revision B；A ≠ B 时 retry 或 reject stale bundle。
 - 保存时继续验证 sourceSessionId、source revision、draft revision。
+
+本轮实现：增加结单专用 `loadStableWeighingBundle()`；每次 server session A → server entries + actions → server session B，比较 revision、source ID、类型、状态、日期、船号、必要 metadata / totals 和时间 token。最多 3 次 attempt，变化时丢弃整份数据；耗尽明确报错并允许原页重试，不显示旧行、RM0 或无资料提示。读取拒绝缓存与 pending writes；网络/权限失败给中文错误，不 fallback stale bundle。
+
+所有正式 source path 统一：鱼头／鱼仔 sessionId 详情、旧 vessel/date source resolver、首次保存前 legacy ownership discovery。旧 tuple 只用于发现来源，返回 stable bundle.session；发现期间日期／船号更正时要求重新选择，避免旧 UI context 配新数据。用于证明旧草稿的 entry snapshots 与 session_update audit 在同一 attempt 读取；独立 sync_conflict audit 不改变财务或 ownership proof。一般 `loadWeighingBundle()`、现场 offline queue 与 Priority 1–3 读取策略不改。
+
+并发 invariant 已核查：所有 entry create/update/species change/soft void、metadata、reopen、completion、process 均原子递增 session revision，现有 Rules 强制；新增 Emulator 回归证明未递增／跳号拒绝且不留下半笔写入。保存继续 transaction reread，与 accepted stable revision 不符即拒绝；P5 actual ID、source pointer、saved RM2.90、默认 snapshot、audit 和原锁定期限不变。Rules 未修改，compiled size 仍 252,010 bytes；无生产数据写入、迁移或部署。P5 + P6 后续等待 Owner 明确授权 coordinated Rules + Hosting release。
+
+本地验证：662 / 662 application tests、38 / 38 Rules Emulator tests（CLI 15.29.0）、typecheck、lint、build、配置语法及 `git diff --check` 通过。核心 loader race、pending metadata 和错误状态均先红后绿；恢复旧 source resolver / 新保存 preflight 会使实际 loader 回归失败。Standards / Spec review 无 blocker。既有 Fast Refresh / bundle-size warnings 保留，不影响质量 gate。
 
 ## Priority 7：Settlement 筛选与历史查询
 
