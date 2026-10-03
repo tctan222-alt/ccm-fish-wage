@@ -5,8 +5,8 @@ import { buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,
 import { canModifyWeighing,formatWeightKg,type WeighingEntry,type WeighingProductType,type WeighingSession } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
 import { loadVessels } from '../services/purchaseMasterData'
-import { loadPurchaseSettlementDraft,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
-import { loadWeighingBundle } from '../services/weighing'
+import { loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
+import { loadWeighingBundle,type WeighingBundle } from '../services/weighing'
 
 function lineKey(line:PurchaseSettlementLine){return line.sourceEntryIds.join('|')}
 function priceText(value:number|null){return value===null?'':(value/100).toFixed(2)}
@@ -23,7 +23,8 @@ export function PurchaseSettlementPage({
   productType,
   vesselLoader=loadVessels,
   sourceLoader=loadPurchaseSettlementSource,
-  draftLoader=loadPurchaseSettlementDraft,
+  draftLoader=loadPurchaseSettlementDraftForSource,
+  legacyDraftLoader=loadPurchaseSettlementDraft,
   draftSaver=savePurchaseSettlementDraft,
   bundleLoader=loadWeighingBundle,
   today=malaysiaBusinessDate,
@@ -32,9 +33,10 @@ export function PurchaseSettlementPage({
   productType:WeighingProductType
   vesselLoader?:()=>Promise<Vessel[]>
   sourceLoader?:(vesselId:string,businessDate:string,productType:WeighingProductType)=>Promise<PurchaseSettlementSource>
-  draftLoader?:(productType:WeighingProductType,dateSortKey:number,vesselId:string)=>Promise<PurchaseSettlementDraft|null>
+  draftLoader?:(source:WeighingBundle,productType:WeighingProductType)=>Promise<PurchaseSettlementDraft|null>
+  legacyDraftLoader?:(productType:WeighingProductType,dateSortKey:number,vesselId:string)=>Promise<PurchaseSettlementDraft|null>
   draftSaver?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>
-  bundleLoader?:(sessionId:string)=>Promise<{session:WeighingSession;entries:WeighingEntry[]}>
+  bundleLoader?:(sessionId:string)=>Promise<WeighingBundle>
   today?:()=>string
   now?:()=>Date
 }){
@@ -46,6 +48,7 @@ export function PurchaseSettlementPage({
   const [loading,setLoading]=useState(true)
   const [sourceSession,setSourceSession]=useState<WeighingSession|null>(null)
   const [loadedKey,setLoadedKey]=useState(''),[draftRevision,setDraftRevision]=useState(0)
+  const [draftId,setDraftId]=useState<string|undefined>()
   const saveLock=useRef(false)
   const requestedVesselId=sessionId?'':vesselId,requestedDate=sessionId?'':businessDate
   const contextKey=sessionId?`${productType}:${sessionId}`:`${productType}:${vesselId}:${businessDate}`
@@ -57,25 +60,27 @@ export function PurchaseSettlementPage({
   useEffect(()=>{
     if(!sessionId&&!requestedVesselId){setLoading(false);return}
     let cancelled=false
-    setLoading(true);setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setError('');setMessage('')
+    setLoading(true);setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setMessage('')
     void (async()=>{
       const source=sessionId?await bundleLoader(sessionId):(await sourceLoader(requestedVesselId,requestedDate,productType)).bundle
+      if(sessionId&&source?.session.id!==sessionId)throw new Error('来源现场单与当前路径不一致，请重新载入。')
       if(source?.session.productType&&source.session.productType!==productType)throw new Error('结单类型与来源称重单不一致。')
       const date=source?businessDateFromLegacy(source.session.weighingDate):requestedDate
       const sourceVesselId=source?.session.vesselId??requestedVesselId
-      const draft=await draftLoader(productType,sortKeyFromBusinessDate(date),sourceVesselId)
+      const draft=source?await draftLoader(source,productType):await legacyDraftLoader(productType,sortKeyFromBusinessDate(date),sourceVesselId)
       if(cancelled)return
       if(draft?.sourceSessionId&&source&&draft.sourceSessionId!==source.session.id)throw new Error('结单关联了另一张称重单，请核查来源。')
       const sourceEntries=source?.entries??[]
       const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'')
       const nextLines=source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
       setSourceSession(source?.session??null);setEntries(sourceEntries);setReceiptNo(draft?.receiptNo??source?.session.externalSlipNo??'');setDraftRevision(draft?.revision??0)
+      setDraftId(draft?.draftId)
       setLines(nextLines);setPriceInputs(Object.fromEntries(nextLines.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])))
       if(sessionId){setVesselId(sourceVesselId);setBusinessDate(date)}
       setLoadedKey(contextKey)
     })().catch(problem=>{if(!cancelled)setError(problem instanceof Error?problem.message:'无法载入结单资料。')}).finally(()=>{if(!cancelled)setLoading(false)})
     return()=>{cancelled=true}
-  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,bundleLoader,sessionId,contextKey])
+  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,sessionId,contextKey])
 
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const total=useMemo(()=>totalSettlementAmountCents(lines),[lines])
@@ -94,8 +99,8 @@ export function PurchaseSettlementPage({
       const monthKey=monthKeyFromBusinessDate(businessDate)
       const saved=await draftSaver({...makeSettlementDraft({productType,businessDate,dateSortKey:sortKeyFromBusinessDate(businessDate),monthKey,monthSortKey:monthSortKeyFromMonthKey(monthKey),
         vesselId:sourceSession.vesselId,vesselCodeSnapshot:sourceSession.vesselCodeSnapshot,receiptNo:receiptNo.trim(),lines:validatedLines,sourceEntryIds:entries.filter(item=>!item.voided&&item.productType===productType).map(item=>item.id),revision:draftRevision}),
-        sourceSessionId:sourceSession.id,sourceSessionRevision:sourceSession.revision})
-      setDraftRevision(saved.revision)
+        ...(draftId?{draftId}:{}),sourceSessionId:sourceSession.id,sourceSessionRevision:sourceSession.revision})
+      setDraftRevision(saved.revision);setDraftId(saved.draftId)
       setMessage(`结单草稿已保存（第 ${saved.revision} 版）。`)
     }catch(problem){setError(problem instanceof Error?problem.message:'无法保存结单草稿。')}finally{setBusy(false);saveLock.current=false}
   }
