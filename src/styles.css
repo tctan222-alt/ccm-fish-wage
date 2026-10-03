@@ -729,6 +729,7 @@ html,body,#root,main{
 @media print{.back-button{display:none!important}}
 
 /* Daily wage report print */
+main.daily-details-page{padding-top:64px;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
 .daily-details-page header{padding-right:0}
 .daily-details-page h1{font-size:1.65rem;overflow-wrap:anywhere}
 .daily-details-page .daily-navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}

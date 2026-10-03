@@ -5,6 +5,10 @@ const css = readFileSync('src/styles.css', 'utf8')
 const dailyPrint = css.slice(css.indexOf('/* Daily wage report print */'))
 
 describe('daily wage report print stylesheet', () => {
+  it('reserves space for the real App sign-out and mobile Back controls', () => {
+    expect(dailyPrint).toMatch(/main\.daily-details-page\{padding-top:64px;padding-bottom:calc\(72px \+ env\(safe-area-inset-bottom\)\)\}/)
+    expect(dailyPrint).toMatch(/@media print\{[\s\S]*main\.daily-details-page\{[^}]*padding:0/)
+  })
   it('prints the full report and hides screen controls and audit history', () => {
     expect(dailyPrint).toContain('@media print')
     expect(dailyPrint).toMatch(/\.daily-details-page \.daily-report-print\s*\{[^}]*display:\s*block/)

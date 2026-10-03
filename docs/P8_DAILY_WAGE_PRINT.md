@@ -27,11 +27,11 @@ The named A4 page applies only to this report. Headers stay with following conte
 
 ## Local verification
 
-The memory-only local fixture blocks non-local browser requests and does not use production records. Actual Chromium checks at 320/375/390/430px show no page/table overflow, 16px date input text and minimum 44px action targets. With all screen details closed, print media still contains every active basket and excludes screen controls/audit history.
+The memory-only local fixture blocks non-local browser requests and does not use production records. Actual Chromium checks at 320/375/390/430px show no page/table overflow, 16px date input text and minimum 44px action targets. A follow-up check includes App-equivalent fixed Sign Out and Back controls: the daily page reserves screen space above the header and below the final content so they cannot cover the title or end-of-page controls. Print removes those screen safe areas. With all screen details closed, print media still contains every active basket and excludes screen controls/audit history.
 
 The normal three-basket report prints on one A4 page; the 70-basket report prints on three A4 pages. All 70 stored rates and the independent expected 5,138kg / RM619.56 grand totals remain in the printed content. Page text stays inside the A4 margins; rendered pages have no clipped content or orphaned worker headings. Long tables repeat column headings across pages. These are local viewport and browser print checks, not physical iPhone/AirPrint certification.
 
-The completed local quality gate passes config syntax, typecheck, lint, 725/725 application tests, production build and `git diff --check`. Rules are unchanged; 38/38 Firestore Emulator tests and the 252,010-byte compile/size gate pass (budget 253,952). Existing Fast Refresh and build chunk-size warnings remain. The local fixture, browser outputs and preview server were removed after verification.
+The final local quality gate passes config syntax, typecheck, lint, 726/726 application tests, production build and `git diff --check`. Rules are unchanged; 38/38 Firestore Emulator tests and the 252,010-byte compile/size gate pass (budget 253,952). Independent Standards/Spec reviews have no unresolved blockers, including the App shell follow-up. Existing Fast Refresh and build chunk-size warnings remain. The local fixture, browser outputs and preview server were removed after verification.
 
 ## Release boundary
 
