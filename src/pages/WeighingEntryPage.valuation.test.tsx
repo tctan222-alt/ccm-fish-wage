@@ -125,8 +125,8 @@ describe('鱼头采购现场估值',()=>{
     expect(summaryRow('金线')).toHaveTextContent('10 kg')
     const history=screen.getByRole('heading',{name:'完整历史记录'}).closest('section')!
     fireEvent.click(within(history).getByRole('button',{name:/第 1 篮.*金线/}))
-    fireEvent.change(screen.getByLabelText('作废原因'),{target:{value:'重复称重'}})
-    fireEvent.click(screen.getByRole('button',{name:'作废'}))
+    fireEvent.change(screen.getByLabelText('删除原因（选填）'),{target:{value:'重复称重'}})
+    fireEvent.click(screen.getByRole('button',{name:'删除此篮'}))
     await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
     const entries=await store.getEntries('live-session')
     expect(entries).toHaveLength(2)

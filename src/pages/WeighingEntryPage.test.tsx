@@ -94,7 +94,9 @@ describe('iPhone 现场称重单页',()=>{
   it('切换船号后鱼头单号仍可输入，且会在下一篮保存到该草稿单',async()=>{
     const {store}=setup()
     await screen.findByLabelText('重量（kg）')
+    await waitFor(()=>expect(screen.getByRole('option',{name:'833'})).toHaveValue('v833'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v833')
     const slip=screen.getByLabelText('鱼头单号')
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FH-833-A'}})
@@ -210,8 +212,12 @@ describe('iPhone 现场称重单页',()=>{
 
     const history=screen.getByRole('heading',{name:'完整历史记录'}).closest('section')!
     fireEvent.click(within(history).getByRole('button',{name:/第 1 篮.*金线/}))
-    fireEvent.change(screen.getByLabelText('作废原因'),{target:{value:'输入错误'}})
-    fireEvent.click(screen.getByRole('button',{name:'作废'}))
+    fireEvent.change(screen.getByLabelText('删除原因（选填）'),{target:{value:'输入错误'}})
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(true)
+    try{
+      fireEvent.click(screen.getByRole('button',{name:'删除此篮'}))
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining('删除第 1 篮？'))
+    }finally{confirm.mockRestore()}
 
     await waitFor(()=>expect(screen.queryByRole('region',{name:'现场汇总'})).not.toBeInTheDocument())
   })
@@ -265,7 +271,9 @@ describe('iPhone 现场称重单页',()=>{
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'meal-session-switch':`${kind}-meal-switch`}/></MemoryRouter>)
     await screen.findByLabelText('重量（kg）')
+    await waitFor(()=>expect(screen.getByRole('option',{name:'833'})).toHaveValue('v833'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
+    expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v833')
     const slip=screen.getByLabelText('鱼仔单号')
     await waitFor(()=>expect(slip).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FM-833-A'}})

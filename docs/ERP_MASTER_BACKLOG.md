@@ -16,9 +16,9 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | Priority | 业务范围 | 当前状态 / PR |
 |---|---|---|
 | 0 | 当前 main、PR、生产发布状态核对 | 已完成；详情见下 |
-| 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，`49477b13b19468527e635c4007883e51e619b35e`；本地 482 tests / typecheck / lint / build、CI / review 通过；尚未部署 |
-| 2 | 未完成称重实时价格与金额 | 已实现，[PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)；本地 505 tests / typecheck / lint / build 通过，CI / review / 合并状态见 PR；尚未部署 |
-| 3 | 未完成称重 entry 修改与即时重算 | 待开始 |
+| 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，已随 `e85484d` Hosting-only 发布，见下方发布检查点 |
+| 2 | 未完成称重实时价格与金额 | 已合并 [PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)，`e85484d6281e4c1ca101e557bcba0381ed51ea68`；已 Hosting-only 发布并核对线上文件哈希 |
+| 3 | 未完成称重 entry 修改与即时重算 | 已实现；focused PR / 完整验证进行中，尚未部署 |
 | 4 | Fish Head Settlement 待结单首页 | 待开始 |
 | 5 | Settlement sourceSessionId identity | 待开始；解决 #37 P1 finding |
 | 6 | Settlement stable revision read | 待开始；解决 #37 P2 finding |
@@ -51,7 +51,7 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 
 **交付：**独立 focused PR，完成并报告后再继续 Priority 2。
 
-本轮实现：默认选项立即可用，IndexedDB 缓存独立读取，网络后台更新；保留用户船号 / 鱼名 / kg，输入与确认分别控制。确认仍等待当前真实船号的现场单核对，保留原锁定及离线同步规则。新增 3 秒网络延迟、缓存晚到、切船、canonical ID 变更、锁定和重复确认回归；无 Rules / schema / 生产数据迁移。Priority 1 尚未发布。
+本轮实现：默认选项立即可用，IndexedDB 缓存独立读取，网络后台更新；保留用户船号 / 鱼名 / kg，输入与确认分别控制。确认仍等待当前真实船号的现场单核对，保留原锁定及离线同步规则。新增 3 秒网络延迟、缓存晚到、切船、canonical ID 变更、锁定和重复确认回归；无 Rules / schema / 生产数据迁移。
 
 ## Priority 2：未完成称重显示价格和金额
 
@@ -65,7 +65,9 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 
 **交付：**独立 focused PR。
 
-本轮实现：现场汇总同步调用正式 `buildPurchaseSettlementLines()`，复用默认价格、船号溢价、同鱼合计重量和 integer cents half-up 金额；不复制价格或另写金额公式。保存、撤回、作废及现有 entry 修改后立即重算，缺价显示破折号和未定价鱼种数。仅为只读预览，不写篮价格快照或 settlement draft，不改变称重状态、schema、Rules 或生产数据。跨模块、页面联动和 Priority 1 慢网络回归已覆盖；320 / 375 / 390 / 430px 本地浏览器检查无横向溢出。合并后停止，Priority 3 留待下一轮。
+本轮实现：现场汇总同步调用正式 `buildPurchaseSettlementLines()`，复用默认价格、船号溢价、同鱼合计重量和 integer cents half-up 金额；不复制价格或另写金额公式。保存、撤回、作废及现有 entry 修改后立即重算，缺价显示破折号和未定价鱼种数。仅为只读预览，不写篮价格快照或 settlement draft，不改变称重状态、schema、Rules 或生产数据。跨模块、页面联动和 Priority 1 慢网络回归已覆盖；320 / 375 / 390 / 430px 本地浏览器检查无横向溢出。
+
+**Priority 1 + 2 发布检查点（2026-09-30）：**Owner 授权后，从 clean、synced main `e85484d6281e4c1ca101e557bcba0381ed51ea68` 重新构建，使用 `firebase-tools@15.29.0` Hosting-only 发布。main CI [run 36730291415](https://github.com/tctan222-alt/ccm-fish-wage/actions/runs/36730291415) 第二次执行通过；首次切船测试失败，诊断发现它可能在异步 mock option 尚未出现时选择 `v833`，导致空选择。本轮补充明确 option-ready 前置条件，不增加 timeout 或修改 P1 runtime。生产 `/fish-head-purchase`、HTML、入口 JS/CSS、称重页面及结单计算 chunk 均 HTTP 200，SHA-256 与本地构建完全一致。未发布 Rules / Functions，未写生产测试记录。
 
 ## Priority 3：未完成称重 entry 修改与即时重算
 
@@ -73,6 +75,10 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 不 hard delete；保留 audit / revision。先确认现有 EntryDialog 和 void/revision 能力，仅补齐缺口。
 - 修改后立即重算总篮数、总 kg、每鱼篮数 / kg / default price / RM，以及 grand total RM。
 - 不改变 7-day rule、settlement、pricing source 或 offline queue semantics。
+
+本轮补齐：历史行显示编辑入口，既有 EntryDialog 显示篮号、当前鱼名/kg、记录时间、revision/sync；删除使用现场用语及带鱼名/kg 的确认，底层仍调用 soft void 并保留审计。本机保存失败保留输入，离线成功明确提示待同步；修改沿用正式估值并不写 purchase price snapshot，旧值保留于审计 before payload。复用 #42 单队列，修复同时间 revision 字符串排序以及旧服务器回执覆盖新本机修改的问题：按数值修订排序，同一 IndexedDB transaction 内保留后续 pending 状态与本机总数、应用回执和移除已确认操作。不修改 Firestore schema、Rules 或 7 天复核流程；Priority 4–10 尚未开始。
+
+本地验收：真实浏览器 IndexedDB 的 create → update → void、迟到回包和重叠 flush 验证通过，最终 pending 0、本机与模拟服务器总数一致。320 / 375 / 390 / 430px 弹窗与长鱼名滚动已视觉检查，实点改 kg / 鱼种即时更新金额；内置浏览器自动化在原生删除确认框处阻塞，删除确认 / 取消 / soft void 已由页面回归测试覆盖，未宣称完成真实 iPhone 验收。
 
 ## Priority 4：Fish Head Settlement 待结单首页
 
