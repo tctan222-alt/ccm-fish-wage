@@ -5,9 +5,10 @@ import { formatRetailDate } from '../lib/retailDate'
 import { RETAIL_EDIT_WINDOW_MS, retailEditStatus } from '../lib/retailInvoice'
 import { retailHistoryRange, shiftRetailWeek, type RetailHistoryRange } from '../lib/retailHistory'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
-import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, watchRetailSales, type RetailHistorySnapshot } from '../services/retailSales'
+import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, watchRetailSales, reconcilePendingRetailSale, type PendingRetailSale, type RetailHistorySnapshot } from '../services/retailSales'
 import { RetailFishPicker } from '../components/RetailFishPicker'
 import { RetailReceipt, RetailReceiptActions } from '../components/RetailReceipt'
+import { RetailVesselPicker, useRetailVessels } from '../components/RetailVesselPicker'
 import './retailSales.css'
 
 function message(error: unknown) {
@@ -62,13 +63,14 @@ function RetailEditEntry({ sale, now }: { sale: RetailSale; now: number }) {
 
 export function RetailSalesPage() {
   const { fish, error: loadError } = useFish()
+  const vesselOptions = useRetailVessels(), [vesselId, setVesselId] = useState('')
   const [businessDate, setDate] = useState(retailToday), [vendorName, setVendor] = useState(''), [remark, setRemark] = useState('')
   const [search, setSearch] = useState(''), [selected, setSelected] = useState<RetailFish | null>(null)
   const [createdFish, setCreatedFish] = useState<RetailFish[]>([]), [quickBusy, setQuickBusy] = useState(false)
   const [pickerVersion, setPickerVersion] = useState(0)
   const [weight, setWeight] = useState(''), [price, setPrice] = useState(''), [lines, setLines] = useState<RetailLine[]>([])
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [sale, setSale] = useState<RetailSale | null>(null)
-  const [pending, setPending] = useState<{ id: string; input: RetailSaleInput } | null>(null)
+  const [pending, setPending] = useState<PendingRetailSale | null>(null), [canRepairVessel, setCanRepairVessel] = useState(false)
   const saving = useRef(false), weightInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [recoveryError, setRecoveryError] = useState('')
   const availableFish = fish === null ? null : [...fish, ...createdFish.filter(created => !fish.some(item => item.id === created.id))]
@@ -76,7 +78,7 @@ export function RetailSalesPage() {
   useEffect(() => {
     try {
       const restored = loadPendingRetailSale()
-      if (restored) { setPending(restored); setDate(restored.input.businessDate); setVendor(restored.input.vendorName); setLines(restored.input.lines); setRemark(restored.input.remark ?? '') }
+      if (restored) { setPending(restored); setDate(restored.input.businessDate); setVendor(restored.input.vendorName); setLines(prepareRetailSale(restored.input).lines); setRemark(restored.input.remark ?? ''); setVesselId(restored.vesselCorrection?.vesselId ?? restored.input.vesselId ?? '') }
     } catch { setRecoveryError('无法读取待确认结算，请从销售历史核对；暂不允许新结算。 Unable to restore the pending sale. Check Sales History before starting another checkout.') }
   }, [])
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0)
@@ -103,22 +105,46 @@ export function RetailSalesPage() {
     try {
       if (!attempt) {
         if (selected || search.trim() || weight || price) throw new Error('请先加入或清除当前品名，再结算。 Add or clear the current fish before checkout.')
-        const input = prepareRetailSale({ businessDate, vendorName, remark, lines })
+        const vessel = vesselOptions.vessels?.find(item => item.id === vesselId)
+        if (!vessel) throw new Error('请先选择船号。 Please select a vessel.')
+        const input = prepareRetailSale({ businessDate, vendorName, remark, lines, vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode })
         attempt = { id: newRetailSaleId(), input }; rememberPendingRetailSale(attempt); setPending(attempt)
+      } else if (canRepairVessel) {
+        const vessel = vesselOptions.vessels?.find(item => item.id === vesselId)
+        if (!vessel) throw new Error('请选择有效船号再重试。 Select an active vessel before retrying.')
+        attempt = { ...attempt, vesselCorrection: { vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode } }
+        rememberPendingRetailSale(attempt); setPending(attempt)
       }
-      saving.current = true; setBusy(true)
-      const result = await saveRetailSale(attempt.id, attempt.input)
+      // Freeze this attempted correction too: a lost response may hide a commit.
+      // Another vessel change requires a fresh server reconciliation first.
+      setCanRepairVessel(false); saving.current = true; setBusy(true)
+      const result = attempt.vesselCorrection ? await saveRetailSale(attempt.id, attempt.input, attempt.vesselCorrection) : await saveRetailSale(attempt.id, attempt.input)
       clearPendingRetailSale(); setSale(result); setPending(null); saved()
     } catch (problem) { setError(message(problem)) } finally { saving.current = false; setBusy(false) }
   }
+  async function repairVessel() {
+    if (!pending || saving.current) return
+    saving.current = true; setBusy(true); setError(''); setCanRepairVessel(false)
+    try {
+      const result = await reconcilePendingRetailSale(pending)
+      if (result) { clearPendingRetailSale(); setSale(result); setPending(null); saved() }
+      else { setCanRepairVessel(true); vesselOptions.retry() }
+    } catch (problem) { setError(message(problem)) }
+    finally { saving.current = false; setBusy(false) }
+  }
   function nextVendor() {
-    setSale(null); setLines([]); setVendor(''); setRemark(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); saved()
+    setSale(null); setLines([]); setVendor(''); setRemark(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成 Checkout Complete" /><p className="success retail-no-print" role="status">现金结算已保存。 Cash sale saved.</p>
     <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩 Next Vendor</button></div></main>
   return <main className="retail-page retail-compact retail-entry"><RetailHeader title="门市销售 Retail Sales" />
     {(error || loadError || recoveryError) && <p className="error" role="alert">{error || loadError || recoveryError}</p>}
     {pending && <p className="notice">正在确认结算结果。失败时请点「重试结算」，系统会核对同一单号，避免重复保存。 Confirming checkout. If it fails, choose Retry Checkout; the same invoice ID prevents duplicate saves. 操作参考 Operation Reference：{pending.id}</p>}
+    {pending && <button type="button" disabled={busy || quickBusy} onClick={() => void repairVessel()}>核对并重选船号 Verify and Reselect Vessel</button>}
+    {canRepairVessel && <p className="notice">服务器确认此单尚未保存，可重选船号后重试；原单号及明细保留。 The server confirmed this invoice is not saved. Reselect a vessel and retry; the original ID and items are retained.</p>}
+    <fieldset disabled={busy || quickBusy || (!!pending && !canRepairVessel)} className="retail-fields">
+      <RetailVesselPicker {...vesselOptions} value={vesselId} onChange={setVesselId} historical={pending?.input} />
+    </fieldset>
     <fieldset disabled={busy || quickBusy || !!pending} className="retail-fields">
       <section className="retail-context"><DateField value={businessDate} onChange={setDate} /><label>小贩 Vendor<input value={vendorName} maxLength={100} onChange={event => setVendor(event.target.value)} placeholder="直接输入小贩名 Enter vendor name" /></label></section>
       <section><RetailFishPicker key={pickerVersion} fish={availableFish} query={search} inputRef={searchInput} selectedFishId={selected?.id}
@@ -150,7 +176,7 @@ export function RetailFishPage() {
     <p>建议价只供新交易带出，现场可改价；历史结算的名称和价格保持不变。 Suggested prices apply to new sales and can be overridden; historical names and prices stay unchanged.</p>
     {(error || loadError) && <p className="error" role="alert">{error || loadError}</p>}
     <button className="primary-action" disabled={fish === null || busy} onClick={() => setEditing(null)}>新增鱼种 Add Fish</button>
-    {fish === null ? <p role="status">正在载入鱼种… Loading fish…</p> : fish.length === 0 ? <section><p>首次使用 First Use：建立 Create 甘丰 / kembung / RM6、马丰 / mabong / RM8、上过 / kerabu / RM33。</p><button disabled={busy} onClick={() => void initialize()}>建立初始三种鱼 Create Three Starter Fish</button></section> : null}
+    {fish === null ? <p role="status">正在载入鱼种… Loading fish…</p> : fish.length === 0 ? <section><p>首次使用 First Use：建立 OWNER 已批准的 31 种门市鱼。仅甘丰 RM6、马丰 RM8、上过 RM33；其他建议价留空。 Create 31 approved Retail fish; unconfirmed prices remain blank.</p><button disabled={busy} onClick={() => void initialize()}>建立 31 种鱼 Create 31 Approved Fish</button></section> : null}
     <div className="master-card-list">{fish?.map(item => <article className="master-card" key={item.id}><h2>{item.chineseName}</h2><p>{item.malayName || '—'}</p><p>{item.suggestedPriceCents === null ? '—' : `${retailMoney(item.suggestedPriceCents)}/kg`} · {item.active ? '启用 Active' : '停用 Inactive'}</p><p>别名 Aliases：{item.aliases?.join(' / ') || '—'}</p><p>排序 Order：{item.sortOrder ?? 0}</p><button onClick={() => setEditing(item)}>修改 Edit {item.chineseName}</button></article>)}</div>
     {editing !== undefined && <RetailFishForm item={editing} close={() => setEditing(undefined)} />}
   </main>
@@ -240,7 +266,7 @@ export function RetailHistoryPage() {
           : <><p className="retail-history-summary">{filtered.length} 单 Sales · 合计 Total <strong>{retailMoney(filtered.reduce((sum, item) => sum + item.totalAmountCents, 0))}</strong></p>
             <div className="retail-history-columns" aria-hidden="true"><span>日期 Date</span><span>小贩 Vendor</span><span>总额 Total</span><span /></div>
             <ul className="retail-history-list" aria-label="销售记录 Sales Records">{filtered.map(item => <li key={item.id}><Link className="retail-history-row" to={`/retail-sales/history/${item.id}`} aria-label={`查看结算单 View Invoice ${formatRetailDate(item.businessDate)} ${item.vendorName} ${retailMoney(item.totalAmountCents)}`}>
-              <time dateTime={legacyIsoDateFromBusinessDate(item.businessDate)}>{formatRetailDate(item.businessDate)}</time><span className="retail-history-vendor">{item.vendorName}<small>单号 No. {item.invoiceNumber ?? item.id}</small></span><strong>{retailMoney(item.totalAmountCents)}</strong><span aria-hidden="true">›</span>
+              <time dateTime={legacyIsoDateFromBusinessDate(item.businessDate)}>{formatRetailDate(item.businessDate)}</time><span className="retail-history-vendor">{item.vendorName}<small>船号 Vessel：{item.vesselCodeSnapshot || '—'}</small><small>单号 No. {item.invoiceNumber ?? item.id}</small></span><strong>{retailMoney(item.totalAmountCents)}</strong><span aria-hidden="true">›</span>
             </Link>{retailEditStatus(item, now) === 'editable' && <Link className="retail-history-edit" to={`/retail-sales/history/${item.id}/edit`} aria-label={`编辑 Edit ${item.invoiceNumber ?? item.id} ${item.vendorName}`}>编辑 Edit</Link>}</li>)}</ul></>}
       </>}
   </main>
@@ -276,6 +302,7 @@ export function RetailEditPage() {
 
 function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reload: () => void }) {
   const { fish, error: fishError } = useFish()
+  const vesselOptions = useRetailVessels(), [vesselId, setVesselId] = useState(original.vesselId ?? '')
   const [vendorName, setVendor] = useState(original.vendorName), [remark, setRemark] = useState(original.remark ?? '')
   const [lines, setLines] = useState(() => original.lines.map(editableLine)), nextLineKey = useRef(original.lines.length)
   const [changingKey, setChangingKey] = useState<number | null>(null), [fishQuery, setFishQuery] = useState('')
@@ -312,7 +339,10 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
       // An uncertain committed update may be retried after expiry using the same operation ID.
       if (!update) {
         if (retailEditStatus(original) !== 'editable') throw new Error(editWindowMessage(retailEditStatus(original)))
-        update = { input: prepareRetailSale({ businessDate: original.businessDate, vendorName, remark, lines: lines.map(editedLine) }), operationId: newRetailSaleId(), originalLineIndices: lines.map(line => line.sourceIndex) }
+        const vessel = vesselOptions.vessels?.find(item => item.id === vesselId)
+        const vesselFields = vesselId === (original.vesselId ?? '') ? { vesselId: original.vesselId, vesselCodeSnapshot: original.vesselCodeSnapshot } : vessel ? { vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode } : null
+        if (!vesselFields) throw new Error('请选择有效船号。 Select a valid vessel.')
+        update = { input: prepareRetailSale({ businessDate: original.businessDate, vendorName, remark, ...vesselFields, lines: lines.map(editedLine) }), operationId: newRetailSaleId(), originalLineIndices: lines.map(line => line.sourceIndex) }
         setPending(update)
       }
       saving.current = true; setBusy(true)
@@ -330,6 +360,7 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
     {status !== 'editable' && <p role="status">{editWindowMessage(status)}</p>}
     <fieldset className="retail-fields" disabled={busy || quickBusy || !!pending || status !== 'editable'}>
       <section><label>小贩 Vendor<input required maxLength={100} value={vendorName} onChange={event => setVendor(event.target.value)} /></label></section>
+      <RetailVesselPicker {...vesselOptions} value={vesselId} onChange={setVesselId} historical={original} />
       <section><h2>本单明细 Items ({lines.length})</h2><ol className="retail-edit-lines">{lines.map((line, index) => {
         let amount: number | null = null; try { amount = editedLine(line).amountCents } catch { /* Invalid values remain editable until submit. */ }
         return <li key={line.key}><h3>明细 Item {index + 1}</h3><button type="button" aria-label={`替换鱼种 Change Fish ${index + 1}`} onClick={() => { setChangingKey(line.key); setFishQuery('') }}>替换鱼种 Change Fish</button>

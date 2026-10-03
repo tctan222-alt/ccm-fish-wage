@@ -98,7 +98,7 @@ function monthReference(monthKey:string){
   return doc(db,'fishHeadWageMonths',monthKey)
 }
 
-export async function loadWageMonthClosingData(monthKey:string):Promise<WageMonthClosingData> {
+export async function loadWageMonthClosingData(monthKey:string,includePayments=true):Promise<WageMonthClosingData> {
   if(!firebaseConfigured)throw new Error('Firebase is not configured')
   const monthRef=monthReference(monthKey)
   const monthSnapshot=await getDoc(monthRef)
@@ -109,7 +109,7 @@ export async function loadWageMonthClosingData(monthKey:string):Promise<WageMont
 
   const [statementSnapshot,paymentSnapshot]=await Promise.all([
     getDocs(query(collection(monthRef,'statements'),where('closeVersion','==',month.closeVersion))),
-    getDocs(query(collection(monthRef,'payments'),where('closeVersion','==',month.closeVersion))),
+    includePayments?getDocs(query(collection(monthRef,'payments'),where('closeVersion','==',month.closeVersion))):Promise.resolve({docs:[]}),
   ])
   const statements=statementSnapshot.docs
     .map(item=>({id:item.id,...item.data()} as WageStatementRecord))
@@ -122,6 +122,8 @@ export async function loadWageMonthClosingData(monthKey:string):Promise<WageMont
     .sort((a,b)=>b.paymentDate.localeCompare(a.paymentDate))
   return {month,statements,payments}
 }
+
+export function loadWageMonthSummaryData(monthKey:string){return loadWageMonthClosingData(monthKey,false)}
 
 export async function closeWageMonth(monthKey:string):Promise<void> {
   const user=requireUser()

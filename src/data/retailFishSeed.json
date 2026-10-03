@@ -1,5 +1,250 @@
 [
-  { "id": "initial-kembung", "chineseName": "甘丰", "malayName": "kembung", "suggestedPriceCents": 600, "active": true },
-  { "id": "initial-mabong", "chineseName": "马丰", "malayName": "mabong", "suggestedPriceCents": 800, "active": true },
-  { "id": "initial-kerabu", "chineseName": "上过", "malayName": "kerabu", "suggestedPriceCents": 3300, "active": true }
+  {
+    "id": "initial-kembung",
+    "chineseName": "甘丰",
+    "malayName": "kembung",
+    "suggestedPriceCents": 600,
+    "active": true,
+    "sortOrder": 14
+  },
+  {
+    "id": "initial-mabong",
+    "chineseName": "马丰",
+    "malayName": "mabong",
+    "suggestedPriceCents": 800,
+    "active": true,
+    "sortOrder": 15
+  },
+  {
+    "id": "initial-kerabu",
+    "chineseName": "上过",
+    "malayName": "kerabu",
+    "suggestedPriceCents": 3300,
+    "active": true,
+    "sortOrder": 16
+  },
+  {
+    "id": "retail-approved-001",
+    "chineseName": "来戈",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 0
+  },
+  {
+    "id": "retail-approved-002",
+    "chineseName": "金线",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 1
+  },
+  {
+    "id": "retail-approved-003",
+    "chineseName": "朱力",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 2
+  },
+  {
+    "id": "retail-approved-004",
+    "chineseName": "什鱼",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 3
+  },
+  {
+    "id": "retail-approved-005",
+    "chineseName": "戈里",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 4
+  },
+  {
+    "id": "retail-approved-006",
+    "chineseName": "肉江",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 5
+  },
+  {
+    "id": "retail-approved-007",
+    "chineseName": "丁温",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 6
+  },
+  {
+    "id": "retail-approved-008",
+    "chineseName": "成鱼",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 7
+  },
+  {
+    "id": "retail-approved-009",
+    "chineseName": "目力",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 8
+  },
+  {
+    "id": "retail-approved-010",
+    "chineseName": "代仔",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 9
+  },
+  {
+    "id": "retail-approved-011",
+    "chineseName": "红目林",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 10
+  },
+  {
+    "id": "retail-approved-012",
+    "chineseName": "白月",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 11
+  },
+  {
+    "id": "retail-approved-013",
+    "chineseName": "白竹占",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 12
+  },
+  {
+    "id": "retail-approved-014",
+    "chineseName": "大目",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 13
+  },
+  {
+    "id": "retail-approved-018",
+    "chineseName": "红介",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 17
+  },
+  {
+    "id": "retail-approved-019",
+    "chineseName": "白皂",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 18
+  },
+  {
+    "id": "retail-approved-020",
+    "chineseName": "红皂",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 19
+  },
+  {
+    "id": "retail-approved-021",
+    "chineseName": "竹加",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 20
+  },
+  {
+    "id": "retail-approved-022",
+    "chineseName": "马加",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 21
+  },
+  {
+    "id": "retail-approved-023",
+    "chineseName": "文冬",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 22
+  },
+  {
+    "id": "retail-approved-024",
+    "chineseName": "长里",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 23
+  },
+  {
+    "id": "retail-approved-025",
+    "chineseName": "水昌",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 24
+  },
+  {
+    "id": "retail-approved-026",
+    "chineseName": "大乌昌",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 25
+  },
+  {
+    "id": "retail-approved-027",
+    "chineseName": "乌昌",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 26
+  },
+  {
+    "id": "retail-approved-028",
+    "chineseName": "大中乌昌",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 27
+  },
+  {
+    "id": "retail-approved-029",
+    "chineseName": "中乌昌",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 28
+  },
+  {
+    "id": "retail-approved-030",
+    "chineseName": "乌昌仔",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 29
+  },
+  {
+    "id": "retail-approved-031",
+    "chineseName": "小乌昌仔",
+    "malayName": "",
+    "suggestedPriceCents": null,
+    "active": true,
+    "sortOrder": 30
+  }
 ]

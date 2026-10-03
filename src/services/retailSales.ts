@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import seed from '../data/retailFishSeed.json'
 import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
@@ -18,17 +18,25 @@ export function watchRetailFish(next: (items: RetailFish[]) => void, error: (err
 
 export async function initializeRetailFish() {
   const uid = userId()
-  const existing = await getDocs(collection(db, 'retailFish'))
-  const items = existing.docs.map(item => ({ ...item.data(), id: item.id }) as RetailFish)
+  const emptyMaster = async () => {
+    const existing = await getDocsFromServer(collection(db, 'retailFish'))
+    if (!existing.docs.length) return true
+    // A completed initialization retry is a no-op, including subsequent edits.
+    if (seed.every(item => existing.docs.some(saved => saved.id === item.id))) return false
+    throw new Error('鱼种资料已存在，请使用审核后的补充计划；不会自动补写。 Retail Master exists. Use the reviewed reconciliation plan; no automatic additions were made.')
+  }
+  if (!await emptyMaster()) return
   // Stable IDs and transaction reads make retries safe without overwriting later edits.
   await runTransaction(db, async transaction => {
     const refs = seed.map(item => doc(db, 'retailFish', item.id))
     const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)))
+    // Recheck against the server after transaction reads, not the page's stale
+    // empty-state snapshot. Existing Masters use the separate review-only plan.
+    if (!await emptyMaster()) return
     seed.forEach((input, index) => {
-      if (!snapshots[index].exists() && !items.some(item => item.chineseName.trim() === input.chineseName)) {
-        assertRetailFishUnique(input.id, input, items)
+      if (!snapshots[index].exists()) {
         transaction.set(refs[index], {
-          ...normalizeRetailFish({ ...input, sortOrder: nextRetailFishOrder(items) + index }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          ...normalizeRetailFish({ ...input, sortOrder: input.sortOrder }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         })
       }
     })
@@ -58,17 +66,23 @@ export async function quickAddRetailFish(input: RetailFishInput): Promise<Retail
 
 export const newRetailSaleId = () => doc(collection(db, 'retailSales')).id
 
-export interface PendingRetailSale { id: string; input: RetailSaleInput }
+export type RetailVesselCorrection = { vesselId: string; vesselCodeSnapshot: string }
+export interface PendingRetailSale { id: string; input: RetailSaleInput; vesselCorrection?: RetailVesselCorrection }
+function correctedCheckoutInput(input: RetailSaleInput, correction?: RetailVesselCorrection) {
+  return prepareRetailSale(correction ? { ...input, vesselId: correction.vesselId, vesselCodeSnapshot: correction.vesselCodeSnapshot } : input)
+}
 const pendingKey = () => `ccm:retail-pending:${userId()}`
-export function loadPendingRetailSale(): { id: string; input: Omit<RetailSale, 'id' | 'createdAt'> } | null {
+export function loadPendingRetailSale(): PendingRetailSale | null {
   const value = sessionStorage.getItem(pendingKey())
   if (!value) return null
   const pending = JSON.parse(value) as PendingRetailSale
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id)) throw new Error('待确认结算编号无效，请从销售历史核对。 Invalid pending invoice ID. Check Sales History.')
-  return { id: pending.id, input: prepareRetailSale(pending.input) }
+  const corrected = correctedCheckoutInput(pending.input, pending.vesselCorrection)
+  return { id: pending.id, input: prepareRetailSale(pending.input), ...(pending.vesselCorrection ? { vesselCorrection: { vesselId: corrected.vesselId!, vesselCodeSnapshot: corrected.vesselCodeSnapshot! } } : {}) }
 }
 export function rememberPendingRetailSale(pending: PendingRetailSale) {
-  sessionStorage.setItem(pendingKey(), JSON.stringify({ id: pending.id, input: prepareRetailSale(pending.input) }))
+  const corrected = correctedCheckoutInput(pending.input, pending.vesselCorrection)
+  sessionStorage.setItem(pendingKey(), JSON.stringify({ id: pending.id, input: prepareRetailSale(pending.input), ...(pending.vesselCorrection ? { vesselCorrection: { vesselId: corrected.vesselId!, vesselCodeSnapshot: corrected.vesselCodeSnapshot! } } : {}) }))
 }
 export function clearPendingRetailSale() { sessionStorage.removeItem(pendingKey()) }
 
@@ -96,7 +110,14 @@ function sameInput(id: string, data: Record<string, unknown>, clean: RetailSaleI
 }
 
 function saleHeader(clean: ReturnType<typeof prepareRetailSale>) {
-  return { businessDate: clean.businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, remark: clean.remark ?? '', totalAmountCents: clean.totalAmountCents }
+  return { businessDate: clean.businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, ...(clean.vesselId ? { vesselId: clean.vesselId, vesselCodeSnapshot: clean.vesselCodeSnapshot } : {}), remark: clean.remark ?? '', totalAmountCents: clean.totalAmountCents }
+}
+
+async function assertRetailVessel(transaction: Transaction, clean: RetailSaleInput, previous?: RetailSale) {
+  if (previous && clean.vesselId === previous.vesselId && clean.vesselCodeSnapshot === previous.vesselCodeSnapshot) return
+  if (!clean.vesselId) throw new Error('请先选择船号。 Please select a vessel.')
+  const snapshot = await transaction.get(doc(db, 'vessels', clean.vesselId))
+  if (!snapshot.exists() || snapshot.data().active !== true || snapshot.data().vesselCode !== clean.vesselCodeSnapshot) throw new Error('船号已停用或资料已变更，请重新选择。 Vessel is inactive or has changed. Please select again.')
 }
 
 function assertReplay(data: Record<string, unknown>, id: string, uid: string, clean: RetailSaleInput, type: 'create' | 'update', revision: number) {
@@ -104,6 +125,27 @@ function assertReplay(data: Record<string, unknown>, id: string, uid: string, cl
     || !sameInput(id, data.afterSnapshot as Record<string, unknown>, clean)) {
     throw retailError('retail/conflict', '操作编号已用于其他修改，请重新载入。 This operation ID was used for another change. Please reload.')
   }
+}
+
+function assertCheckoutReplay(id: string, data: Record<string, unknown>, action: Record<string, unknown> | undefined, uid: string, original: RetailSaleInput, corrected: RetailSaleInput) {
+  const matches = (input: RetailSaleInput) => {
+    if (action) assertReplay(action, id, uid, input, 'create', 1)
+    else if (data.createdBy !== uid || !sameInput(id, data, input)) throw retailError('retail/conflict', '结算编号已使用，请从历史核对。 This invoice ID is already in use. Check Sales History.')
+  }
+  try { matches(corrected) } catch { matches(original) }
+}
+
+// Never unlock an uncertain checkout based on a cached absence. Keep the original
+// ID/input so a competing original commit can still be reconciled, not overwritten.
+export async function reconcilePendingRetailSale(pending: PendingRetailSale): Promise<RetailSale | null> {
+  const uid = userId(), original = prepareRetailSale(pending.input)
+  assertOperationId(pending.id)
+  const ref = doc(db, 'retailSales', pending.id)
+  const existing = await getDocFromServer(ref)
+  if (!existing.exists()) return null
+  const action = await getDocFromServer(doc(ref, 'actions', pending.id))
+  assertCheckoutReplay(pending.id, existing.data(), action.exists() ? action.data() : undefined, uid, original, correctedCheckoutInput(original, pending.vesselCorrection))
+  return saleFromDocument(pending.id, existing.data())
 }
 
 async function prepareGroups(id: string, input: RetailSaleInput, uid: string, groupSetId = 'initial') {
@@ -133,8 +175,8 @@ async function prepareGroups(id: string, input: RetailSaleInput, uid: string, gr
   return lineGroups
 }
 
-export async function saveRetailSale(id: string, input: RetailSaleInput): Promise<RetailSale> {
-  const uid = userId(), clean = prepareRetailSale(input), ref = doc(db, 'retailSales', id)
+export async function saveRetailSale(id: string, input: RetailSaleInput, vesselCorrection?: RetailVesselCorrection): Promise<RetailSale> {
+  const uid = userId(), original = prepareRetailSale(input), clean = correctedCheckoutInput(original, vesselCorrection), ref = doc(db, 'retailSales', id)
   assertOperationId(id)
   const actionRef = doc(ref, 'actions', id)
   try {
@@ -145,11 +187,11 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
         const data = existing.data()
         // A lost response must not consume a second number, even if another device
         // has already edited the invoice since the original checkout committed.
-        if (action.exists()) assertReplay(action.data(), id, uid, clean, 'create', 1)
-        else if (data.createdBy !== uid || !sameInput(id, data, clean)) throw new Error('结算编号已使用，请从历史核对。 This invoice ID is already in use. Check Sales History.')
+        assertCheckoutReplay(id, data, action.exists() ? action.data() : undefined, uid, original, clean)
         return
       }
       const counterRef = doc(db, 'retailInvoiceCounters', String(clean.dateSortKey))
+      await assertRetailVessel(transaction, clean)
       const counter = await transaction.get(counterRef)
       const lastSequence = counter.exists() ? counter.data().lastSequence : 0
       if (!Number.isSafeInteger(lastSequence) || lastSequence < 0) throw new Error('单号计数器无效，请联系管理员。 Invalid invoice counter. Contact the administrator.')
@@ -205,6 +247,7 @@ export async function updateRetailSale(id: string, input: RetailSaleInput, expec
       if (action.exists()) { assertReplay(action.data(), id, uid, clean, 'update', revision); return }
       const data = existing.data()
       assertEditable(id, data, clean, expectedRevision)
+      await assertRetailVessel(transaction, clean, saleFromDocument(id, data))
       await assertActiveReplacements(transaction, saleFromDocument(id, data), clean, originalLineIndices)
       const after = { ...data, ...saleHeader(clean), lineGroups, revision, groupSetId: operationId, lastActionId: operationId, updatedBy: uid, updatedAt: serverTimestamp() }
       transaction.set(ref, after)

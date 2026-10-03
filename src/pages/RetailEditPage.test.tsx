@@ -1,3 +1,4 @@
+vi.mock('../services/purchaseMasterData', () => ({ loadActiveVessels: async () => [{ id: 'v833', vesselCode: '833', active: true }, { id: 'v978', vesselCode: '978', active: true }] }))
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -30,6 +31,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Retail 30-day editing', () => {
+  it('allows a vessel change within 30 days using the same invoice update and original revision', async () => {
+    service.load.mockResolvedValue({ ...original, vesselId: 'v833', vesselCodeSnapshot: '833' })
+    await editReady(); await screen.findByRole('option', { name: '978' }); fill('船号 Vessel', 'v978')
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' }))
+    await screen.findByText('修改已保存。 Changes saved.')
+    expect(service.update).toHaveBeenCalledWith(original.id, expect.objectContaining({ vesselId: 'v978', vesselCodeSnapshot: '978' }), 1, 'edit-operation', [0])
+    expect(service.save).not.toHaveBeenCalled()
+  })
+  it('retains inactive historical vessel snapshots and permits unrelated edits without reselecting', async () => {
+    service.load.mockResolvedValue({ ...original, vesselId: 'retired', vesselCodeSnapshot: '历史船' })
+    await editReady(); expect(screen.getByLabelText('船号 Vessel')).toHaveValue('retired')
+    fill('小贩 Vendor', '新小贩'); fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' }))
+    await screen.findByText('修改已保存。 Changes saved.')
+    expect(service.update.mock.calls[0][1]).toMatchObject({ vesselId: 'retired', vesselCodeSnapshot: '历史船' })
+  })
   it('loads saved snapshots and price without applying later Master changes and keeps identity read-only', async () => {
     await editReady()
     expect(screen.getByLabelText('中文鱼名 Chinese Fish Name 1')).toHaveValue('历史甘丰')
@@ -50,10 +66,10 @@ describe('Retail 30-day editing', () => {
   })
   it('searches aliases through the P9 picker and only a changed fish gets its current default price', async () => {
     await editReady(); fireEvent.click(screen.getByRole('button', { name: '替换鱼种 Change Fish 1' })); fill('鱼名 Fish', '旧称')
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    fireEvent.keyDown(screen.getByRole('combobox', { name: '鱼名 Fish' }), { key: 'Enter' })
     expect(screen.getByLabelText('单价 Unit Price (RM/kg) 1')).toHaveValue('6.15')
     fireEvent.click(screen.getByRole('button', { name: '替换鱼种 Change Fish 1' })); fill('鱼名 Fish', '马鱼')
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    fireEvent.keyDown(screen.getByRole('combobox', { name: '鱼名 Fish' }), { key: 'Enter' })
     expect(screen.getByLabelText('中文鱼名 Chinese Fish Name 1')).toHaveValue('马丰')
     expect(screen.getByLabelText('马来文名 Malay Name 1')).toHaveValue('mabong')
     expect(screen.getByLabelText('单价 Unit Price (RM/kg) 1')).toHaveValue('7.05')
@@ -62,7 +78,7 @@ describe('Retail 30-day editing', () => {
     service.watch.mockImplementation(next => { next(fish.map(item => ({ ...item, active: false }))); return vi.fn() })
     await editReady(); expect(screen.getByLabelText('中文鱼名 Chinese Fish Name 1')).toHaveValue('历史甘丰')
     fireEvent.click(screen.getByRole('button', { name: '替换鱼种 Change Fish 1' })); fill('鱼名 Fish', '马鱼')
-    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /马丰/ })).not.toBeInTheDocument()
     expect(screen.getByText(/此鱼种已停用/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' })); await screen.findByText('修改已保存。 Changes saved.')
     expect(service.update.mock.calls[0][1].lines).toEqual(original.lines)
@@ -71,7 +87,7 @@ describe('Retail 30-day editing', () => {
     await editReady()
     for (const query of ['马鱼', '旧称']) {
       fireEvent.click(screen.getByRole('button', { name: '替换鱼种 Change Fish 1' })); fill('鱼名 Fish', query)
-      fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+      fireEvent.keyDown(screen.getByRole('combobox', { name: '鱼名 Fish' }), { key: 'Enter' })
     }
     expect(screen.getByLabelText('中文鱼名 Chinese Fish Name 1')).toHaveValue('最新鱼名')
     expect(screen.getByLabelText('单价 Unit Price (RM/kg) 1')).toHaveValue('999.00')

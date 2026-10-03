@@ -1,8 +1,11 @@
-import { act,cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
+import { act,cleanup,fireEvent,render,screen,within } from '@testing-library/react'
 import { MemoryRouter,Route,Routes,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import type { WeighingEntry,WeighingSession } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
+import { SettlementListPage } from './SettlementListPage'
+import { settlementSummaryFromSession,type SettlementPageLoader,type SettlementCursor,type SettlementSummary } from '../services/settlementSearch'
+import { legacyIsoDateFromBusinessDate,businessDateFromLegacy } from '../lib/businessDate'
 import { FishHeadSettlementListPage } from './FishHeadSettlementListPage'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 
@@ -26,10 +29,6 @@ function deferred<T>(){
   let reject!:(reason:unknown)=>void
   const promise=new Promise<T>((resolvePromise,rejectPromise)=>{resolve=resolvePromise;reject=rejectPromise})
   return {promise,resolve,reject}
-}
-
-function renderList(loader:()=>Promise<WeighingSession[]>,initialPath="/fish-head-settlement"){
-  return render(<MemoryRouter initialEntries={[initialPath]}><LocationProbe/><FishHeadSettlementListPage loader={loader} today={()=>"03/10/2026"}/></MemoryRouter>)
 }
 
 function LocationProbe(){
@@ -61,7 +60,7 @@ function renderListWithDetail(items:WeighingSession[],initialPath='/fish-head-se
   const draftLoader=vi.fn(async()=>null)
   const draftSaver=vi.fn(async draft=>draft)
   render(<MemoryRouter initialEntries={[initialPath]}><LocationProbe/><Routes>
-    <Route path="/fish-head-settlement" element={<FishHeadSettlementListPage loader={async()=>items}/>}/>
+    <Route path="/fish-head-settlement" element={<FishHeadSettlementListPage pageLoader={fixtureLoader(items)} vesselLoader={async()=>[vessel]} today={()=>"03/10/2026"}/>}/>
     <Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head"
       vesselLoader={async()=>[vessel]} bundleLoader={bundleLoader} sourceLoader={sourceLoader}
       draftLoader={draftLoader} draftSaver={draftSaver} today={()=>'03/10/2026'}
@@ -73,207 +72,130 @@ function renderListWithDetail(items:WeighingSession[],initialPath='/fish-head-se
 
 afterEach(()=>{cleanup();vi.restoreAllMocks()})
 
-describe('Fish Head Settlement session list',()=>{
-  it('opens with all-date pending only, including a prior-month completed session',async()=>{
-    const old=makeSession({id:'old-pending',sessionCode:'FH-OLD-PENDING',weighingDate:'20/09/2026',dateSortKey:20260920})
-    const processed=makeSession({id:'done',sessionCode:'FH-DONE',status:'processed'})
-    renderList(async()=>[old,processed])
-    await screen.findByRole('article',{name:'现场单 FH-OLD-PENDING'})
-    expect(screen.queryByRole('article',{name:'现场单 FH-DONE'})).not.toBeInTheDocument()
-    expect(screen.getByRole('button',{name:'待结单'})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByRole('button',{name:'全部日期'})).toHaveAttribute('aria-pressed','true')
-  })
+function fixtureLoader(items:WeighingSession[]):SettlementPageLoader {
+  return async search=>({items:items.filter(item=>item.productType===search.productType&&item.status!=='voided'
+    &&(search.status==='all'||item.status===search.status)&&(!search.vesselId||item.vesselId===search.vesselId)
+    &&legacyIsoDateFromBusinessDate(businessDateFromLegacy(item.weighingDate))>=search.from&&legacyIsoDateFromBusinessDate(businessDateFromLegacy(item.weighingDate))<=search.to)
+    .sort((a,b)=>b.weighingDate.localeCompare(a.weighingDate)).map(settlementSummaryFromSession),cursor:null})
+}
 
-  it('shows a completed fish-head session as pending with its date, weekday and source snapshots',async()=>{
-    const loader=vi.fn(async()=>[baseSession])
-    renderList(loader)
-    const item=await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(loader).toHaveBeenCalledTimes(1)
-    expect(item).toHaveTextContent('03/10/2026')
-    expect(item).toHaveTextContent(/星期六|Sat/)
-    expect(item).toHaveTextContent('833')
-    expect(item).toHaveTextContent('SLIP-833-A')
-    expect(item).toHaveTextContent(baseSession.sessionCode)
-    expect(item).toHaveTextContent('2 篮')
-    expect(item).toHaveTextContent('160.5 kg')
-    expect(within(item).getByText('待结单')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('待结单 1 张')
-    expect(within(item).getByRole('link',{name:'查看结单'})).toHaveAttribute('href','/fish-head-settlement/head-833-a')
-    expect(screen.queryByLabelText('日期')).not.toBeInTheDocument()
-    expect(screen.queryByLabelText('船号')).not.toBeInTheDocument()
+describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',productType=>{
+  const item=(overrides:Partial<SettlementSummary>={}):SettlementSummary=>({...settlementSummaryFromSession(baseSession),productType,totalAmountCents:963,referenceNumber:'REFERENCE-1',...overrides})
+  const renderSearch=(pageLoader:SettlementPageLoader=async()=>({items:[item()],cursor:null}),path='/list')=>render(<MemoryRouter initialEntries={[path]}><LocationProbe/><SettlementListPage productType={productType} pageLoader={pageLoader} vesselLoader={async()=>[vessel,{...vessel,id:'old',vesselCode:'旧船',active:false}]} today={()=>'03/10/2026'}/></MemoryRouter>)
+  const search=()=>fireEvent.click(screen.getByRole('button',{name:'查询 Search'}))
+  const ready=async()=>(await screen.findAllByRole('article'))[0]
+  it('defaults to the selected month-to-today and all vessels with product isolation',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}))
+    renderSearch(loader);await ready()
+    expect(loader).toHaveBeenCalledWith({productType,from:'2026-10-01',to:'2026-10-03',vesselId:'',status:'all'},null,expect.any(AbortSignal))
+    expect(screen.getByLabelText('船号 Vessel')).toHaveValue('')
   })
-
-  it('shows weighing and processed sessions with their distinct existing-session actions',async()=>{
-    const weighing=makeSession({id:'weighing',sessionCode:'FH-WEIGHING',status:'weighing',completedAt:null})
-    const processed=makeSession({id:'processed',sessionCode:'FH-PROCESSED',status:'processed',processedReceiptId:'receipt-1'})
-    renderList(async()=>[weighing,processed],"/fish-head-settlement?status=all")
-    await screen.findByRole('article',{name:'现场单 FH-WEIGHING'})
-    expect(within(card(weighing)).getByText('称重中')).toBeInTheDocument()
-    expect(within(card(weighing)).getByRole('link',{name:'继续称重'})).toHaveAttribute('href','/weighing/weighing')
-    expect(within(card(processed)).getByText('已结单')).toBeInTheDocument()
-    expect(within(card(processed)).getByRole('link',{name:'查看结单'})).toHaveAttribute('href','/fish-head-settlement/processed')
-    expect(within(card(processed)).queryByRole('link',{name:'继续称重'})).not.toBeInTheDocument()
+  it('queries Today only after Search; changing controls never creates a request storm',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
+    fireEvent.click(screen.getByRole('button',{name:'今天 Today'}));expect(loader).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('article')).not.toBeInTheDocument();search();await ready()
+    expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({from:'2026-10-03',to:'2026-10-03'})
   })
-
-  it('excludes voided, fish-meal and untyped sessions by default',async()=>{
-    const voided=makeSession({id:'voided',sessionCode:'FH-VOID',status:'voided'})
-    const meal=makeSession({id:'meal',sessionCode:'FM-833',productType:'fish_meal'})
-    const untyped=makeSession({id:'legacy-untyped',sessionCode:'LEGACY-UNTYPED',productType:undefined})
-    renderList(async()=>[voided,meal,untyped,baseSession])
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(screen.getAllByRole('article')).toHaveLength(1)
-    expect(screen.queryByText('FH-VOID')).not.toBeInTheDocument()
-    expect(screen.queryByText('FM-833')).not.toBeInTheDocument()
-    expect(screen.queryByText('LEGACY-UNTYPED')).not.toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('待结单 1 张')
+  it('queries Monday-Sunday and supports previous and next weeks',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
+    fireEvent.click(screen.getByRole('button',{name:'按周 Week'}));expect(screen.getByText('28/09/2026 – 04/10/2026')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'上一周'}));search();await ready();expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({from:'2026-09-21',to:'2026-09-27'})
+    fireEvent.click(screen.getByRole('button',{name:'下一周'}));search();await ready();expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({from:'2026-09-28',to:'2026-10-04'})
   })
-
-  it('sorts by newest business date before update time',async()=>{
-    const older=makeSession({id:'older',sessionCode:'FH-OLD',weighingDate:'02/10/2026',dateSortKey:20261002,updatedAt:new Date('2026-10-04T02:00:00Z')})
-    const newer=makeSession({id:'newer',sessionCode:'FH-NEW',weighingDate:'03/10/2026',dateSortKey:20261003,updatedAt:new Date('2026-10-03T00:00:00Z')})
-    renderList(async()=>[older,newer])
-    await screen.findByRole('article',{name:'现场单 FH-NEW'})
-    expect(screen.getAllByRole('article').map(item=>item.getAttribute('aria-label'))).toEqual(['现场单 FH-NEW','现场单 FH-OLD'])
+  it('queries inclusive custom ranges without requiring a vessel',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
+    fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:'2026-09-20'}})
+    fireEvent.change(screen.getByLabelText('结束日期 End Date'),{target:{value:'2026-09-20'}});search();await ready()
+    expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({from:'2026-09-20',to:'2026-09-20',vesselId:''})
   })
-
-  it('uses Firestore update timestamps and falls back to creation time for same-day ordering',async()=>{
-    const earliest=makeSession({id:'early',sessionCode:'FH-EARLY',updatedAt:{toMillis:()=>Date.parse('2026-10-03T00:00:00Z')}})
-    const latest=makeSession({id:'latest',sessionCode:'FH-LATEST',updatedAt:{toDate:()=>new Date('2026-10-03T05:00:00Z')}})
-    const createdOnly=makeSession({id:'created-only',sessionCode:'FH-CREATED',updatedAt:undefined,createdAt:{seconds:Date.parse('2026-10-03T03:00:00Z')/1000}})
-    renderList(async()=>[earliest,createdOnly,latest])
-    await screen.findByRole('article',{name:'现场单 FH-LATEST'})
-    expect(screen.getAllByRole('article').map(item=>item.getAttribute('aria-label'))).toEqual(['现场单 FH-LATEST','现场单 FH-CREATED','现场单 FH-EARLY'])
+  it('rejects a reversed range without an additional query or empty state',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
+    fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:'2026-10-04'}})
+    expect(screen.getByRole('alert')).toHaveTextContent('开始日期不能晚于结束日期')
+    expect(screen.getByRole('button',{name:'查询 Search'})).toBeDisabled();expect(loader).toHaveBeenCalledTimes(1)
   })
-
-  it('keeps two sessions from the same vessel and business date as separate navigation identities',async()=>{
-    const second=makeSession({id:'head-833-b',sessionCode:'FH-833-20261003-02',externalSlipNo:'SLIP-833-B'})
-    renderList(async()=>[baseSession,second])
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(screen.getAllByRole('article')).toHaveLength(2)
-    expect(screen.getByRole('status')).toHaveTextContent('待结单 2 张')
-    expect(within(card(baseSession)).getByRole('link',{name:'查看结单'})).toHaveAttribute('href','/fish-head-settlement/head-833-a')
-    expect(within(card(second)).getByRole('link',{name:'查看结单'})).toHaveAttribute('href','/fish-head-settlement/head-833-b')
+  it('rejects missing custom dates',async()=>{
+    renderSearch();await ready();fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:''}})
+    expect(screen.getByRole('alert')).toHaveTextContent('请选择开始日期和结束日期')
   })
-
-  it('shows missing handwritten slip fallback and tolerates absent legacy timestamps',async()=>{
-    const legacy=makeSession({externalSlipNo:'',weighingDate:'2026-10-03',dateSortKey:undefined,updatedAt:undefined,createdAt:undefined})
-    renderList(async()=>[legacy])
-    const item=await screen.findByRole('article',{name:`现场单 ${legacy.sessionCode}`})
-    expect(item).toHaveTextContent('没有手写单号')
-    expect(item).toHaveTextContent('03/10/2026')
-    expect(item).toHaveTextContent(/星期六|Sat/)
-    expect(within(item).getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/fish-head-settlement/${legacy.id}`)
+  it('retains full months, December-January navigation and leap February',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader,'/list?mode=month&month=2026-12');await ready()
+    fireEvent.click(screen.getByRole('button',{name:'下一月'}));search();await ready();expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({from:'2027-01-01',to:'2027-01-31'})
+    fireEvent.change(screen.getByLabelText('月份 Month'),{target:{value:'2028-02'}});search();await ready();expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({to:'2028-02-29'})
+  })
+  it('uses an optional inactive historical vessel and status as server criteria',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
+    await screen.findByRole('option',{name:/旧船/});fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'old'}})
+    fireEvent.click(screen.getByRole('button',{name:'已结单'}));search();await ready()
+    expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({vesselId:'old',status:'processed'})
+  })
+  it('renders only summary data and preserves selected-session detail identity',async()=>{
+    renderSearch();const row=await ready();expect(row).toHaveTextContent('160.5 kg');expect(row).toHaveTextContent('RM 9.63');expect(row).toHaveTextContent('REFERENCE-1')
+    expect(within(row).getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/head-833-a`)
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+  })
+  it('keeps weighing actions distinct from processed read-only details',async()=>{
+    renderSearch(async()=>({items:[item({status:'weighing'}),item({id:'done',sessionCode:'DONE',status:'processed'})],cursor:null}));await ready()
+    expect(screen.getByRole('link',{name:'继续称重'})).toHaveAttribute('href','/weighing/head-833-a')
+    expect(screen.getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/done`)
+  })
+  it('keeps same-vessel same-date sessions separate and shows unknown RM instead of zero',async()=>{
+    renderSearch(async()=>({items:[item({totalAmountCents:null}),item({id:'second',sessionCode:'SECOND'})],cursor:null}));await screen.findByRole('article',{name:'现场单 SECOND'})
+    expect(screen.getAllByRole('article')).toHaveLength(2);expect(screen.getAllByRole('article')[0]).toHaveTextContent('RM —')
+  })
+  it('shows loading until summary resolution and then the explicit empty state',async()=>{
+    const pending=deferred<{items:SettlementSummary[];cursor:null}>();renderSearch(()=>pending.promise)
+    expect(screen.getByRole('status')).toHaveTextContent('正在载入');expect(screen.queryByText(/这个日期范围没有/)).not.toBeInTheDocument()
+    await act(async()=>pending.resolve({items:[],cursor:null}));expect(screen.getByText(/这个日期范围没有/)).toBeInTheDocument()
+  })
+  it('shows query errors, retry and refresh instead of an empty result',async()=>{
+    const loader=vi.fn<SettlementPageLoader>().mockRejectedValueOnce(new Error('permission-denied')).mockResolvedValue({items:[item()],cursor:null})
+    renderSearch(loader);expect(await screen.findByRole('alert')).toHaveTextContent('permission-denied')
+    fireEvent.click(screen.getByRole('button',{name:'重试'}));await ready();fireEvent.click(screen.getByRole('button',{name:'刷新'}));await ready();expect(loader).toHaveBeenCalledTimes(3)
+  })
+  it('ignores stale results and errors after query replacement',async()=>{
+    const pending=deferred<{items:SettlementSummary[];cursor:null}>()
+    const loader=vi.fn<SettlementPageLoader>().mockImplementationOnce(()=>pending.promise).mockResolvedValue({items:[item({sessionCode:'CURRENT'})],cursor:null})
+    renderSearch(loader);fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:'2026-09-01'}});search()
+    await screen.findByRole('article',{name:'现场单 CURRENT'});await act(async()=>pending.reject(new Error('old error')))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
-
-  it('shows loading until the initial session query resolves',async()=>{
-    const pending=deferred<WeighingSession[]>()
-    renderList(()=>pending.promise)
-    expect(screen.getByRole('status')).toHaveTextContent('正在载入鱼头现场单…')
-    expect(screen.queryByText('目前没有待结单鱼头现场单。')).not.toBeInTheDocument()
-    await act(async()=>pending.resolve([baseSession]))
-    expect(card(baseSession)).toBeInTheDocument()
-    expect(screen.queryByText('正在载入鱼头现场单…')).not.toBeInTheDocument()
+  it('restores filter URL state on remount without depending on previous navigation',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader,'/list?mode=custom&start=2026-09-01&end=2026-09-30&vessel=old&status=processed');await ready()
+    expect(loader.mock.calls[0][0]).toMatchObject({from:'2026-09-01',to:'2026-09-30',vesselId:'old',status:'processed'})
+    expect(screen.getByLabelText('船号 Vessel')).toHaveValue('old')
   })
-
-  it('shows the explicit empty state after a successful empty query',async()=>{
-    renderList(async()=>[])
-    expect(await screen.findByText('目前没有待结单鱼头现场单。')).toBeInTheDocument()
-    expect(screen.queryByRole('article')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在载入鱼头现场单…')).not.toBeInTheDocument()
+  it('distinguishes a resumable empty partial page from a confirmed empty range',async()=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:true},canonical:{buffer:[],after:null,done:false},monthIndex:6,isoCenturyIndex:0} satisfies SettlementCursor
+    renderSearch(async()=>({items:[],cursor}))
+    expect(await screen.findByText('当前已查询部分暂无记录，请载入更多继续查询较早月份。')).toBeInTheDocument()
+    expect(screen.queryByText(/这个日期范围没有/)).not.toBeInTheDocument();expect(screen.getByRole('button',{name:/载入更多/})).toBeEnabled()
   })
-
-  it('shows no pending by default and retains other history behind the all-status filter',async()=>{
-    const weighing=makeSession({id:'weighing-only',sessionCode:'FH-WEIGHING-ONLY',status:'weighing',completedAt:null})
-    const processed=makeSession({id:'processed-only',sessionCode:'FH-PROCESSED-ONLY',status:'processed'})
-    renderList(async()=>[weighing,processed])
-    expect(await screen.findByText('目前没有待结单鱼头现场单。')).toBeInTheDocument()
-    expect(screen.queryByRole('article')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'全部'}))
-    expect(card(weighing)).toBeInTheDocument()
-    expect(card(processed)).toBeInTheDocument()
+  it.each(['resolve','reject'])('unlocks a timed-out next page even when it ignores abort and later %s',async outcome=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
+    const stalled=deferred<{items:SettlementSummary[];cursor:null}>()
+    const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockImplementationOnce(()=>stalled.promise).mockResolvedValueOnce({items:[item({id:'recovered',sessionCode:'RECOVERED'})],cursor:null})
+    renderSearch(loader);await ready();vi.useFakeTimers()
+    try{
+      fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+      await act(async()=>{await vi.advanceTimersByTimeAsync(20000)})
+      expect(screen.getByRole('alert')).toHaveTextContent('下一页载入超时');expect(screen.getByRole('button',{name:/载入更多/})).toBeEnabled()
+      fireEvent.click(screen.getByRole('button',{name:/载入更多/}));await act(async()=>{})
+      expect(screen.getByRole('article',{name:'现场单 RECOVERED'})).toBeInTheDocument()
+      await act(async()=>{if(outcome==='resolve')stalled.resolve({items:[item({id:'late',sessionCode:'LATE'})],cursor:null});else stalled.reject(new Error('late error'))})
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('article',{name:'现场单 LATE'})).not.toBeInTheDocument()
+    }finally{vi.useRealTimers()}
   })
-
-  it('shows a load error instead of a misleading empty state and retry loads records',async()=>{
-    const loader=vi.fn<()=>Promise<WeighingSession[]>>()
-      .mockRejectedValueOnce(new Error('permission-denied'))
-      .mockResolvedValueOnce([baseSession])
-    renderList(loader)
-    expect(await screen.findByRole('alert')).toHaveTextContent(/无法|失败|permission-denied/)
-    expect(screen.queryByText('目前没有待结单鱼头现场单。')).not.toBeInTheDocument()
-    expect(screen.queryByText('正在载入鱼头现场单…')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'重试'}))
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(loader).toHaveBeenCalledTimes(2)
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('refreshes the same mounted list after a weighing session completes',async()=>{
-    const weighing=makeSession({status:'weighing',completedAt:null})
-    const loader=vi.fn<()=>Promise<WeighingSession[]>>()
-      .mockResolvedValueOnce([weighing]).mockResolvedValueOnce([baseSession])
-    renderList(loader,"/fish-head-settlement?status=all")
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(within(card(baseSession)).getByText('称重中')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'刷新'}))
-    await waitFor(()=>expect(within(card(baseSession)).getByText('待结单')).toBeInTheDocument())
-    expect(loader).toHaveBeenCalledTimes(2)
-    expect(within(card(baseSession)).getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/fish-head-settlement/${baseSession.id}`)
-  })
-
-  it('queries again on returning to the list and immediately shows the newly completed session',async()=>{
-    const weighing=makeSession({status:'weighing',completedAt:null})
-    const loader=vi.fn<()=>Promise<WeighingSession[]>>()
-      .mockResolvedValueOnce([weighing]).mockResolvedValueOnce([baseSession])
-    const first=renderList(loader,"/fish-head-settlement?status=all")
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    first.unmount()
-    renderList(loader)
-    const item=await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(within(item).getByText('待结单')).toBeInTheDocument()
-    expect(loader).toHaveBeenCalledTimes(2)
-  })
-
-  it('ignores a stale query result after the loader changes',async()=>{
-    const oldRequest=deferred<WeighingSession[]>()
-    const old=makeSession({id:'old',sessionCode:'FH-STALE'})
-    const current=makeSession({id:'current',sessionCode:'FH-CURRENT'})
-    const firstLoader=()=>oldRequest.promise
-    const currentLoader=async()=>[current]
-    const result=renderList(firstLoader)
-    result.rerender(<MemoryRouter><FishHeadSettlementListPage loader={currentLoader}/></MemoryRouter>)
-    await screen.findByRole('article',{name:'现场单 FH-CURRENT'})
-    await act(async()=>oldRequest.resolve([old]))
-    expect(card(current)).toBeInTheDocument()
-    expect(screen.queryByText('FH-STALE')).not.toBeInTheDocument()
-  })
-
-  it('ignores a stale query error after a replacement query has succeeded',async()=>{
-    const oldRequest=deferred<WeighingSession[]>()
-    const result=renderList(()=>oldRequest.promise)
-    const currentLoader=async()=>[baseSession]
-    result.rerender(<MemoryRouter><FishHeadSettlementListPage loader={currentLoader}/></MemoryRouter>)
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    await act(async()=>oldRequest.reject(new Error('old query failed')))
-    expect(card(baseSession)).toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('does not revive a previous mount when its query settles after navigation away',async()=>{
-    const oldRequest=deferred<WeighingSession[]>()
-    const old=makeSession({id:'old-mount',sessionCode:'FH-OLD-MOUNT'})
-    const first=renderList(()=>oldRequest.promise)
-    first.unmount()
-    renderList(async()=>[baseSession])
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    await act(async()=>oldRequest.resolve([old]))
-    expect(card(baseSession)).toBeInTheDocument()
-    expect(screen.queryByText('FH-OLD-MOUNT')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  it('loads another cursor page, deduplicates IDs and preserves results on a retryable page error',async()=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
+    const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({items:[item(),item({id:'second',sessionCode:'SECOND'})],cursor:null})
+    renderSearch(loader);await ready();fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('offline');expect(screen.getAllByRole('article')).toHaveLength(1)
+    fireEvent.click(screen.getByRole('button',{name:/载入更多/}));await screen.findByRole('article',{name:'现场单 SECOND'});expect(screen.getAllByRole('article')).toHaveLength(2)
+    expect(loader.mock.calls[1][1]).toBe(cursor)
   })
 })
-
 describe('Fish Head Settlement list to existing detail routes',()=>{
   it('opens the clicked same-vessel same-day session in the real existing settlement page',async()=>{
     const second=makeSession({id:'head-833-b',sessionCode:'FH-833-20261003-02',externalSlipNo:'SLIP-833-B'})
@@ -326,117 +248,5 @@ describe('Fish Head Settlement list to existing detail routes',()=>{
     expect(screen.queryByRole('article')).not.toBeInTheDocument()
     expect(screen.getByLabelText('金线单价')).toBeEnabled()
     expect(screen.getByLabelText('日期')).toBeDisabled()
-  })
-})
-
-describe('Fish Head Settlement combined filters',()=>{
-  const click=(name:string)=>fireEvent.click(screen.getByRole('button',{name}))
-  const dateSession=(id:string,date:string,overrides:Partial<WeighingSession>={})=>makeSession({id,sessionCode:`FH-${id}`,weighingDate:date,...overrides})
-  const ids=()=>screen.queryAllByRole('article').map(item=>item.getAttribute('aria-label'))
-
-  it('filters Today using the current business date and never refetches for filter changes',async()=>{
-    const loader=vi.fn(async()=>[baseSession,dateSession('yesterday','02/10/2026')])
-    renderList(loader,'/fish-head-settlement?mode=today&anchor=2026-09-01')
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    expect(ids()).toEqual([`现场单 ${baseSession.sessionCode}`])
-    click('全部日期')
-    expect(ids()).toHaveLength(2)
-    click('今天 Today')
-    expect(ids()).toHaveLength(1)
-    expect(loader).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows Monday-Sunday boundaries and navigates previous and next weeks',async()=>{
-    renderList(async()=>[dateSession('previous','23/09/2026'),baseSession,dateSession('next','06/10/2026')])
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    click('按周 Week')
-    expect(screen.getByText(/28\/09\/2026 – 04\/10\/2026/)).toBeInTheDocument()
-    expect(ids()).toEqual([`现场单 ${baseSession.sessionCode}`])
-    click('上一周')
-    expect(ids()).toEqual(['现场单 FH-previous'])
-    click('下一周');click('下一周')
-    expect(ids()).toEqual(['现场单 FH-next'])
-    expect(screen.getByText(/05\/10\/2026 – 11\/10\/2026/)).toBeInTheDocument()
-  })
-
-  it('navigates full months across December-January and supports leap-year February',async()=>{
-    const items=[dateSession('dec','31/12/2026'),dateSession('jan','01/01/2027'),dateSession('leap','29/02/2028')]
-    renderList(async()=>items,'/fish-head-settlement?mode=month&month=2026-12')
-    await screen.findByRole('article',{name:'现场单 FH-dec'})
-    expect(screen.getByText(/01\/12\/2026 – 31\/12\/2026/)).toBeInTheDocument()
-    click('下一月')
-    expect(ids()).toEqual(['现场单 FH-jan'])
-    click('上一月')
-    expect(ids()).toEqual(['现场单 FH-dec'])
-    fireEvent.change(screen.getByLabelText('月份 Month'),{target:{value:'2028-02'}})
-    expect(ids()).toEqual(['现场单 FH-leap'])
-    expect(screen.getByText(/01\/02\/2028 – 29\/02\/2028/)).toBeInTheDocument()
-  })
-
-  it('combines custom range, vessel and pending status inclusively',async()=>{
-    const target=dateSession('978-target','20/09/2026',{vesselId:'v978',vesselCodeSnapshot:'978'})
-    const wrongStatus=dateSession('978-done','20/09/2026',{vesselId:'v978',status:'processed'})
-    renderList(async()=>[target,wrongStatus,baseSession,dateSession('too-old','19/09/2026',{vesselId:'v978'})])
-    await screen.findByRole('article',{name:'现场单 FH-978-target'})
-    click('自订范围 Custom Range')
-    fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:'2026-09-20'}})
-    fireEvent.change(screen.getByLabelText('结束日期 End Date'),{target:{value:'2026-09-20'}})
-    fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'v978'}})
-    expect(ids()).toEqual(['现场单 FH-978-target'])
-    expect(screen.getByTestId('current-path')).toHaveTextContent('vessel=v978')
-    expect(screen.getByTestId('current-path')).toHaveTextContent('mode=custom')
-  })
-
-  it('rejects reversed or missing custom dates without results, empty state or another query',async()=>{
-    const loader=vi.fn(async()=>[baseSession])
-    renderList(loader)
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    click('自订范围 Custom Range')
-    fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:'2026-10-04'}})
-    expect(screen.getByRole('alert')).toHaveTextContent(/开始|结束|范围/)
-    expect(ids()).toEqual([])
-    expect(screen.queryByText('这个筛选范围没有鱼头现场单。')).not.toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('开始日期 Start Date'),{target:{value:''}})
-    expect(screen.getByRole('alert')).toHaveTextContent(/开始/)
-    expect(loader).toHaveBeenCalledTimes(1)
-  })
-
-  it('keeps historical vessels filterable and combines month, vessel and processed status',async()=>{
-    const processed=dateSession('833-done','02/10/2026',{status:'processed'})
-    const history=dateSession('inactive-vessel','20/09/2026',{vesselId:'v-old',vesselCodeSnapshot:'旧船'})
-    renderList(async()=>[processed,history,baseSession,dateSession('other-vessel','02/10/2026',{vesselId:'v978',status:'processed'})])
-    await screen.findByRole('article',{name:'现场单 FH-inactive-vessel'})
-    expect(screen.getByRole('option',{name:/旧船/})).toHaveValue('v-old')
-    click('按月 Month');click('已结单')
-    fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'v833'}})
-    expect(ids()).toEqual(['现场单 FH-833-done'])
-    fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:''}})
-    expect(ids()).toHaveLength(2)
-  })
-
-  it('distinguishes a successful filtered empty result from the default pending empty state',async()=>{
-    renderList(async()=>[dateSession('old','20/09/2026')])
-    await screen.findByRole('article',{name:'现场单 FH-old'})
-    click('今天 Today')
-    expect(screen.getByText('这个筛选范围没有鱼头现场单。')).toBeInTheDocument()
-    expect(screen.queryByText('目前没有待结单鱼头现场单。')).not.toBeInTheDocument()
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-  })
-
-  it('restores validated filters from the URL after remount',async()=>{
-    const selected=dateSession('selected','03/10/2026',{vesselId:'v978',vesselCodeSnapshot:'978',status:'processed'})
-    const loader=vi.fn(async()=>[selected,baseSession])
-    const first=renderList(loader)
-    await screen.findByRole('article',{name:`现场单 ${baseSession.sessionCode}`})
-    click('按月 Month');click('已结单')
-    fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'v978'}})
-    const address=screen.getByTestId('current-path').textContent!
-    first.unmount()
-    renderList(loader,address)
-    await screen.findByRole('article',{name:'现场单 FH-selected'})
-    expect(ids()).toEqual(['现场单 FH-selected'])
-    expect(screen.getByRole('button',{name:'已结单'})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByRole('button',{name:'按月 Month'})).toHaveAttribute('aria-pressed','true')
-    expect(screen.getByLabelText('船号 Vessel')).toHaveValue('v978')
   })
 })

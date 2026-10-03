@@ -1,4 +1,4 @@
-import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
+import { act,cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { useLayoutEffect } from 'react'
 import { Link,MemoryRouter,Route,Routes,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
@@ -33,9 +33,37 @@ function PrintSafetyObserver({onNavigation}:{onNavigation:(search:string,printDi
   return null
 }
 
-afterEach(()=>{cleanup();vi.restoreAllMocks()})
+afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks()})
 
 describe('切鱼头工钱当日汇总',()=>{
+  it('shows a void-history error without disabling Print or counting voided wages',async()=>{
+    render(<MemoryRouter><TodaySummaryPage entryLoader={async()=>[entry(),entry({id:'voided',deleted:true,wageRm:'999.99'})]} voidHistoryLoader={async()=>{throw new Error('offline')}}/></MemoryRouter>)
+    await waitFor(()=>expect(screen.getByRole('button',{name:'打印 Print'})).toBeEnabled())
+    expect(screen.getByRole('alert')).toHaveTextContent('无法载入作废历史')
+    expect(screen.getByLabelText('每日工钱打印报表')).not.toHaveTextContent('999.99')
+  })
+  it('turns a stalled active query into an explicit retryable timeout and ignores its late result',async()=>{
+    vi.useFakeTimers();const pending=deferred<DailyWageData['entries']>()
+    const firstLoader=()=>pending.promise
+    const rendered=render(<MemoryRouter><TodaySummaryPage entryLoader={firstLoader} voidHistoryLoader={async()=>[]}/></MemoryRouter>)
+    await act(async()=>{await vi.advanceTimersByTimeAsync(15_000)})
+    expect(screen.getByRole('alert')).toHaveTextContent('载入每日工钱超时')
+    expect(screen.getByRole('button',{name:'打印 Print'})).toBeDisabled()
+    rendered.rerender(<MemoryRouter><TodaySummaryPage entryLoader={async()=>[entry()]} voidHistoryLoader={async()=>[]}/></MemoryRouter>)
+    await act(async()=>{});expect(screen.getByRole('button',{name:'打印 Print'})).toBeEnabled()
+    await act(async()=>pending.resolve([entry({workerName:'过期结果'})]))
+    expect(screen.queryByText('过期结果')).not.toBeInTheDocument()
+  })
+  it('prints ready active entries while the independent void-history request is still pending',async()=>{
+    const history=deferred<DailyWageData['voids']>()
+    const coupled=deferred<DailyWageData>()
+    const print=vi.spyOn(window,'print').mockImplementation(()=>{})
+    render(<MemoryRouter initialEntries={['/daily?date=2026-10-03']}><TodaySummaryPage loader={()=>coupled.promise} entryLoader={async()=>[entry()]} voidHistoryLoader={()=>history.promise}/></MemoryRouter>)
+    await waitFor(()=>expect(screen.getByRole('button',{name:'打印 Print'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'打印 Print'}))
+    expect(print).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status')).toHaveTextContent('正在载入作废历史')
+  })
   it('返回工钱录入入口指向真实切鱼头工钱页面，保留月度及 Master Data 入口',()=>{
     render(<MemoryRouter><TodaySummaryPage loader={async()=>({entries:[],voids:[]})}/></MemoryRouter>)
     expect(screen.getByRole('link',{name:'← 返回工钱录入'})).toHaveAttribute('href','/fish-head-wages')

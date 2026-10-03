@@ -1,11 +1,12 @@
 import { useCallback,useEffect,useMemo,useRef,useState } from 'react'
 import { Link } from 'react-router-dom'
 import { MonthlyClosingPanel } from '../components/MonthlyClosingPanel'
+import { summarizeMonthlyWages } from '../lib/monthlyWageSummary'
 import { FIXED_RATE_CENTS,malaysiaMonthKey,money,rmStringToCents } from '../lib/wage'
 import {
   closeWageMonth,
   createWagePayment,
-  loadWageMonthClosingData,
+  loadWageMonthSummaryData,
   reopenWageMonth,
   voidWagePayment,
   type CreatePaymentInput,
@@ -69,7 +70,7 @@ function rateLabel(rateCents:number|null){
 
 export function MonthlySummaryPage({
   loader=loadMonthlyWageData,
-  closingLoader=loadWageMonthClosingData,
+  closingLoader=loadWageMonthSummaryData,
   closeHandler=closeWageMonth,
   paymentHandler=createWagePayment,
   voidPaymentHandler=voidWagePayment,
@@ -134,7 +135,7 @@ export function MonthlySummaryPage({
     Promise.all([loader(targetMonthKey),closingLoader(targetMonthKey)])
       .then(([result,closing])=>{
         if(requestIdRef.current!==requestId||!mountedRef.current)return
-        setEntries([...result.entries].sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||a.workerName.localeCompare(b.workerName)))
+        setEntries(result.entries.filter(entry=>entry.deleted===false).sort((a,b)=>a.dateKey.localeCompare(b.dateKey)||a.workerName.localeCompare(b.workerName)))
         setVoids([...result.voids].sort((a,b)=>b.dateKey.localeCompare(a.dateKey)||a.workerName.localeCompare(b.workerName)))
         setClosingData(closing)
       })
@@ -178,6 +179,9 @@ export function MonthlySummaryPage({
   },[entries])
 
   const monthlyDayCount=useMemo(()=>new Set(entries.map(entry=>entry.dateKey)).size,[entries])
+  const aggregation=useMemo(()=>summarizeMonthlyWages(entries),[entries])
+  const workerCents=workerGroups.reduce((sum, worker)=>sum+worker.totalWageCents,0)
+  const dailyCents=aggregation.days.reduce((sum, day)=>sum+day.wageCents,0)
 
   const totals=useMemo(()=>({
     workers:workerGroups.length,
@@ -187,6 +191,10 @@ export function MonthlySummaryPage({
     wageCents:entries.reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0),
     voids:voids.length,
   }),[entries,monthlyDayCount,voids.length,workerGroups.length])
+  const closedMonth=closingData.month?.status==='closed'?closingData.month:null
+  const totalsMatch=workerCents===dailyCents&&dailyCents===aggregation.monthWageCents
+    &&(!closedMonth||(closedMonth.totalWageCents===totals.wageCents&&closedMonth.workerCount===totals.workers
+      &&closedMonth.basketCount===totals.baskets&&closedMonth.totalWeightKg===totals.weight))
 
   function workerDayGroups(group:WorkerMonthlySummary):WorkerDaySummary[]{
     const grouped=new Map<string,WorkerDaySummary>()
@@ -218,11 +226,11 @@ export function MonthlySummaryPage({
       .reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0)
   }
 
-  return <main>
+  return <main className="monthly-wage-page">
     <header>
       <p className="eyebrow">CCM Fishery</p>
       <h1>Monthly Summary</h1>
-      <Link className="page-link" to="/">Back to wage entry</Link>
+      <Link className="page-link" to="/fish-head-wages">Back to wage entry</Link>
       <Link className="page-link" to="/master-data">Master Data</Link>
     </header>
 
@@ -252,13 +260,14 @@ export function MonthlySummaryPage({
       monthKey={monthKey}
       liveEntries={entries}
       data={closingData}
+      showPaymentTracking={false}
       onClose={async target=>{await closeHandler(target);loadMonth(target)}}
       onPayment={async input=>{await paymentHandler(input);loadMonth(input.monthKey)}}
       onVoidPayment={async(target,paymentId,reason)=>{await voidPaymentHandler(target,paymentId,reason);loadMonth(target)}}
       onReopen={async(target,reason)=>{await reopenHandler(target,reason);loadMonth(target)}}
     />}
 
-    {closingData.month?.status!=='closed'&&<><section className="monthly-grand-total" aria-label="Monthly totals">
+    <section className="monthly-grand-total" aria-label="Monthly totals">
       <div><span>Workers</span><strong>{totals.workers}</strong></div>
       <div><span>Work days</span><strong>{totals.days}</strong></div>
       <div><span>Baskets</span><strong>{totals.baskets}</strong></div>
@@ -266,6 +275,8 @@ export function MonthlySummaryPage({
       <div><span>Total wage</span><strong>RM{money(totals.wageCents)}</strong></div>
       <div><span>Voided</span><strong>{totals.voids}</strong></div>
     </section>
+    {!loading&&!error&&<p role={totalsMatch?'status':'alert'} className={totalsMatch?'notice':'error'}>{totalsMatch?'个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.':'月结汇总不一致，请核对记录及已结月快照。 Totals differ; check wage records and closing snapshots.'}</p>}
+    <h2>个人月总结 Monthly Summary by Worker</h2>
 
     {loading?<p className="notice">Loading monthly records...</p>:
       entries.length===0?<p className="notice">No active wage records for this month.</p>:
@@ -280,6 +291,7 @@ export function MonthlySummaryPage({
           </div>
 
           <div className="monthly-worker-total">
+            <div><span>工作天数 Work days</span><strong>{group.days.size}</strong></div>
             <div><span>Baskets</span><strong>{group.entries.length}</strong></div>
             <div><span>Total kg</span><strong>{group.totalWeight}kg</strong></div>
             <div><span>Total wage</span><strong>RM{money(group.totalWageCents)}</strong></div>
@@ -314,7 +326,12 @@ export function MonthlySummaryPage({
           </details>
         </section>)}
       </div>
-    }</>}
+    }
+    {!loading&&!error&&<section aria-label="每日全体工钱 Daily Wages" className="monthly-daily-summary"><h2>每日全体工钱 Daily Wages</h2>
+      {aggregation.days.length===0?<p className="notice">本月没有有效工钱记录。 No active wages this month.</p>:<ul>{aggregation.days.map(day=><li key={day.dateKey}><Link to={`/today?date=${day.dateKey}`}>
+        <strong>{formatShortDate(day.dateKey)}</strong><span>{day.workers} 人 Workers · {day.baskets} 篮 Baskets · {day.weightKg} kg</span><strong>RM{money(day.wageCents)}</strong>
+      </Link></li>)}</ul>}
+    </section>}
 
     <section className="void-history">
       <details>
