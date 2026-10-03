@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeRetailLine, type RetailSaleInput } from '../lib/retailSales'
 import seed from '../data/retailFishSeed.json'
 
-const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), serverReads: vi.fn(), serverError: false, failPath: '', uid: 'u1', nextId: 0, beforeCommit: null as ((paths: string[]) => void) | null }))
+const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), collectionReads: 0, beforeCollectionRead: null as ((count: number) => void) | null, serverReads: vi.fn(), serverError: false, failPath: '', uid: 'u1', nextId: 0, beforeCommit: null as ((paths: string[]) => void) | null }))
 vi.mock('../firebase', () => ({ db: {}, auth: { get currentUser() { return { uid: state.uid } } } }))
 vi.mock('firebase/firestore', () => {
   const snapshot = (path: string) => ({ id: path.split('/').at(-1), exists: () => state.records.has(path), data: () => state.records.get(path) })
@@ -13,6 +13,7 @@ vi.mock('firebase/firestore', () => {
       return { path, id: path.split('/').at(-1) }
     },
     getDoc: async (ref: { path: string }) => snapshot(ref.path),
+    getDocsFromServer: async (ref: { path: string }) => { state.collectionReads++; state.beforeCollectionRead?.(state.collectionReads); return { docs: [...state.records.keys()].filter(path => path.startsWith(ref.path+'/') && path.split('/').length === 2).map(snapshot) } },
     getDocFromServer: async (ref: { path: string }) => { state.serverReads(ref.path); if (state.serverError) throw new Error('server unavailable'); return snapshot(ref.path) },
     getDocs: async (ref?: { path: string }) => ({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref?.path ?? 'retailSales'}/`) && path.split('/').length === 2).map(snapshot) }),
     onSnapshot: (ref: { path: string }, next: (data: unknown) => void) => {
@@ -46,7 +47,7 @@ vi.mock('firebase/firestore', () => {
 })
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, reconcilePendingRetailSale } from './retailSales'
 const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', vesselId: 'v833', vesselCodeSnapshot: '833', lines: [makeRetailLine(seed[0], '2', '6.15')] }
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.serverReads.mockClear(); state.serverError = false; state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.collectionReads = 0; state.beforeCollectionRead = null; state.serverReads.mockClear(); state.serverError = false; state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
 
 it('stores independent same-day vessel snapshots and audits a vessel change without changing invoice identity', async () => {
   state.records.set('vessels/v978', { active: true, vesselCode: '978' })
@@ -76,12 +77,18 @@ describe('retail quick-add fish', () => {
     await expect(quickAddRetailFish({ ...second, chineseName: '旧称' })).rejects.toThrow(/停用/)
     expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(2)
   })
-  it('preserves an existing starter with a nonstarter ID without duplicating or overwriting it', async () => {
+  it('refuses bulk initialization of an existing Master and preserves its nonstarter ID', async () => {
     state.records.set('retailFish/original', { ...seed[0], suggestedPriceCents: 999 })
-    await initializeRetailFish()
+    await expect(initializeRetailFish()).rejects.toThrow('审核')
     expect(state.records.has(`retailFish/${seed[0].id}`)).toBe(false)
     expect(state.records.get('retailFish/original')?.suggestedPriceCents).toBe(999)
-    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(31)
+    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(1)
+    expect(state.writes).not.toHaveBeenCalled()
+  })
+  it('rechecks server Master data during initialization and refuses a stale empty-state click',async()=>{
+    state.beforeCollectionRead=count=>{if(count===2)state.records.set('retailFish/concurrent',{...seed[0],id:'concurrent'})}
+    await expect(initializeRetailFish()).rejects.toThrow('审核')
+    expect(state.writes).not.toHaveBeenCalled();expect(state.records.has('retailFish/concurrent')).toBe(true)
   })
   const fishInput = { chineseName: ' 新鱼 ', malayName: ' ikan baru ', suggestedPriceCents: 650, active: true }
   it('persists a reusable master item and preserves sale snapshots after later master changes', async () => {

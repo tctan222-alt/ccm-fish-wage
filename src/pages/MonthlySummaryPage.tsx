@@ -182,8 +182,6 @@ export function MonthlySummaryPage({
   const aggregation=useMemo(()=>summarizeMonthlyWages(entries),[entries])
   const workerCents=workerGroups.reduce((sum, worker)=>sum+worker.totalWageCents,0)
   const dailyCents=aggregation.days.reduce((sum, day)=>sum+day.wageCents,0)
-  const totalsMatch=workerCents===dailyCents&&dailyCents===aggregation.monthWageCents
-    &&(closingData.month?.status!=='closed'||closingData.month.totalWageCents===aggregation.monthWageCents)
 
   const totals=useMemo(()=>({
     workers:workerGroups.length,
@@ -193,6 +191,10 @@ export function MonthlySummaryPage({
     wageCents:entries.reduce((sum,entry)=>sum+rmStringToCents(entry.wageRm),0),
     voids:voids.length,
   }),[entries,monthlyDayCount,voids.length,workerGroups.length])
+  const closedMonth=closingData.month?.status==='closed'?closingData.month:null
+  const totalsMatch=workerCents===dailyCents&&dailyCents===aggregation.monthWageCents
+    &&(!closedMonth||(closedMonth.totalWageCents===totals.wageCents&&closedMonth.workerCount===totals.workers
+      &&closedMonth.basketCount===totals.baskets&&closedMonth.totalWeightKg===totals.weight))
 
   function workerDayGroups(group:WorkerMonthlySummary):WorkerDaySummary[]{
     const grouped=new Map<string,WorkerDaySummary>()
@@ -273,7 +275,7 @@ export function MonthlySummaryPage({
       <div><span>Total wage</span><strong>RM{money(totals.wageCents)}</strong></div>
       <div><span>Voided</span><strong>{totals.voids}</strong></div>
     </section>
-    {!loading&&!error&&<p role={totalsMatch?'status':'alert'} className={totalsMatch?'notice':'error'}>{totalsMatch?'个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.':'月结金额不一致，请核对记录及已结月快照。 Totals differ; check wage records and closing snapshots.'}</p>}
+    {!loading&&!error&&<p role={totalsMatch?'status':'alert'} className={totalsMatch?'notice':'error'}>{totalsMatch?'个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.':'月结汇总不一致，请核对记录及已结月快照。 Totals differ; check wage records and closing snapshots.'}</p>}
     <h2>个人月总结 Monthly Summary by Worker</h2>
 
     {loading?<p className="notice">Loading monthly records...</p>:

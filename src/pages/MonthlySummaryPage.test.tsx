@@ -86,6 +86,13 @@ it('shows worker work days and daily all-worker totals with exact month cross-ch
   expect(screen.queryByRole('textbox', { name: /remark|备注/i })).not.toBeInTheDocument()
 })
 
+it.each(['workerCount','basketCount','totalWeightKg'] as const)('flags a closed snapshot %s mismatch even if wage cents match',async field=>{
+  const month={monthKey:'2026-07',status:'closed' as const,closeVersion:1,workerCount:2,basketCount:3,totalWeightKg:225,totalWageCents:3393,paidCents:0,closedBy:'admin',reopenedBy:null,lastActionId:'close',closingToken:null,closingBy:null,statementIds:[],[field]:999}
+  render(<MemoryRouter><MonthlySummaryPage loader={async()=>data} closingLoader={async()=>({month,statements:[],payments:[]})}/></MemoryRouter>)
+  expect(await screen.findByRole('alert')).toHaveTextContent('请核对')
+  expect(screen.queryByText('个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.')).not.toBeInTheDocument()
+})
+
 function deferred<T>(){
   let resolve!:(value:T)=>void
   let reject!:(reason?:unknown)=>void

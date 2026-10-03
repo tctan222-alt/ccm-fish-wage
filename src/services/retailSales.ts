@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocFromServer, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocFromServer, getDocs, getDocsFromServer, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import seed from '../data/retailFishSeed.json'
 import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
@@ -18,15 +18,23 @@ export function watchRetailFish(next: (items: RetailFish[]) => void, error: (err
 
 export async function initializeRetailFish() {
   const uid = userId()
-  const existing = await getDocs(collection(db, 'retailFish'))
-  const items = existing.docs.map(item => ({ ...item.data(), id: item.id }) as RetailFish)
+  const emptyMaster = async () => {
+    const existing = await getDocsFromServer(collection(db, 'retailFish'))
+    if (!existing.docs.length) return true
+    // A completed initialization retry is a no-op, including subsequent edits.
+    if (seed.every(item => existing.docs.some(saved => saved.id === item.id))) return false
+    throw new Error('鱼种资料已存在，请使用审核后的补充计划；不会自动补写。 Retail Master exists. Use the reviewed reconciliation plan; no automatic additions were made.')
+  }
+  if (!await emptyMaster()) return
   // Stable IDs and transaction reads make retries safe without overwriting later edits.
   await runTransaction(db, async transaction => {
     const refs = seed.map(item => doc(db, 'retailFish', item.id))
     const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)))
+    // Recheck against the server after transaction reads, not the page's stale
+    // empty-state snapshot. Existing Masters use the separate review-only plan.
+    if (!await emptyMaster()) return
     seed.forEach((input, index) => {
-      if (!snapshots[index].exists() && !items.some(item => item.chineseName.trim() === input.chineseName)) {
-        assertRetailFishUnique(input.id, input, items)
+      if (!snapshots[index].exists()) {
         transaction.set(refs[index], {
           ...normalizeRetailFish({ ...input, sortOrder: input.sortOrder }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         })
