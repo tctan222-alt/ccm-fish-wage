@@ -3,7 +3,8 @@ import { Link,useSearchParams } from 'react-router-dom'
 import { businessDateFromLegacy } from '../lib/businessDate'
 import { malaysiaDateKey,money,rmStringToCents } from '../lib/wage'
 import {
-  loadDailyWageData,
+  loadWageEntriesByDate,
+  loadVoidsByDate,
   voidWageEntry,
   type DailyWageData,
   type StoredWageEntry,
@@ -20,6 +21,8 @@ interface WorkerSummary {
 
 interface Props {
   loader?:(dateKey:string)=>Promise<DailyWageData>
+  entryLoader?:(dateKey:string)=>Promise<StoredWageEntry[]>
+  voidHistoryLoader?:(dateKey:string)=>Promise<WageVoidRecord[]>
   voider?:(entry:StoredWageEntry,reason:string)=>Promise<void>
 }
 
@@ -111,7 +114,9 @@ function DailyGrandTotal({total}:{total:GrandTotal}){
 }
 
 export function TodaySummaryPage({
-  loader=loadDailyWageData,
+  loader,
+  entryLoader,
+  voidHistoryLoader,
   voider=voidWageEntry,
 }:Props){
   const [searchParams,setSearchParams]=useSearchParams()
@@ -121,11 +126,13 @@ export function TodaySummaryPage({
   const [voids,setVoids]=useState<WageVoidRecord[]>([])
   const [loadingState,setLoading]=useState(true)
   const [loadError,setLoadError]=useState('')
+  const [voidHistoryLoading,setVoidHistoryLoading]=useState(true)
+  const [voidHistoryError,setVoidHistoryError]=useState('')
   const [error,setError]=useState('')
   const [message,setMessage]=useState('')
   const [refreshKey,setRefreshKey]=useState(0)
-  const [completedRequest,setCompletedRequest]=useState<{dateKey:string;refreshKey:number;loader:Props['loader']}|null>(null)
-  const currentRequest=completedRequest?.dateKey===dateKey&&completedRequest.refreshKey===refreshKey&&completedRequest.loader===loader
+  const [completedRequest,setCompletedRequest]=useState<{dateKey:string;refreshKey:number;loader:Props['loader'];entryLoader:Props['entryLoader']}|null>(null)
+  const currentRequest=completedRequest?.dateKey===dateKey&&completedRequest.refreshKey===refreshKey&&completedRequest.loader===loader&&completedRequest.entryLoader===entryLoader
   // URL navigation changes the date before effects run; never show or print the previous report under a new date.
   const loading=loadingState||!currentRequest
 
@@ -139,40 +146,69 @@ export function TodaySummaryPage({
     let active=true
     setLoading(true)
     setLoadError('')
+    setVoidHistoryLoading(true)
+    setVoidHistoryError('')
     setError('')
     setPendingVoid(null)
     setEntries([])
     setVoids([])
 
-    loader(dateKey)
-      .then(result=>{
-        if(!active)return
-        setEntries(
-          result.entries.filter(entry=>entry.deleted===false).sort(
-            (a,b)=>timestampMillis(a.createdAt)-timestampMillis(b.createdAt)||a.id.localeCompare(b.id),
-          ),
-        )
+    // The audit history is independent of active wages: a slow audit query must not block Print.
+    // Keep the combined loader as a single-call injection seam for existing consumers.
+    const combined=loader&&(!entryLoader||!voidHistoryLoader)?loader(dateKey):null
+    const entriesRequest=entryLoader?Promise.resolve().then(()=>entryLoader(dateKey)):
+      combined?combined.then(result=>result.entries):loadWageEntriesByDate(dateKey)
+    const voidsRequest=voidHistoryLoader?Promise.resolve().then(()=>voidHistoryLoader(dateKey)):
+      combined?combined.then(result=>result.voids):loadVoidsByDate(dateKey)
+    let entriesFinished=false
+    let historyFinished=false
+    const completeEntries=()=>{
+      entriesFinished=true
+      setCompletedRequest({dateKey,refreshKey,loader,entryLoader})
+      setLoading(false)
+    }
+    const deadline=window.setTimeout(()=>{
+      if(!active)return
+      if(!entriesFinished){
+        setLoadError('载入每日工钱超时，请检查网络后重试。')
+        completeEntries()
+      }
+      if(!historyFinished){
+        historyFinished=true
+        setVoidHistoryLoading(false)
+        setVoidHistoryError('载入作废历史超时；有效工钱仍可查看和打印。请重试。')
+      }
+    },15_000)
+    entriesRequest.then(result=>{
+        if(!active||entriesFinished)return
+        setEntries(result.filter(entry=>entry.deleted===false).sort(
+          (a,b)=>timestampMillis(a.createdAt)-timestampMillis(b.createdAt)||a.id.localeCompare(b.id),
+        ))
+        completeEntries()
+      }).catch(()=>{
+        if(!active||entriesFinished)return
+        setLoadError('无法载入每日工钱记录，请检查网络后重试。')
+        completeEntries()
+      })
+    voidsRequest.then(result=>{
+        if(!active||historyFinished)return
         setVoids(
-          [...result.voids].sort(
+          [...result].sort(
             (a,b)=>timestampMillis(b.voidedAt)-timestampMillis(a.voidedAt)||a.id.localeCompare(b.id),
           ),
         )
+        historyFinished=true
+        setVoidHistoryLoading(false)
       })
       .catch(()=>{
-        if(!active)return
-        setEntries([])
-        setVoids([])
-        setLoadError('无法载入每日工钱记录，请检查网络后重试。')
-      })
-      .finally(()=>{
-        if(active){
-          setCompletedRequest({dateKey,refreshKey,loader})
-          setLoading(false)
-        }
+        if(!active||historyFinished)return
+        historyFinished=true
+        setVoidHistoryLoading(false)
+        setVoidHistoryError('无法载入作废历史；有效工钱仍可查看和打印。请检查网络后重试。')
       })
 
-    return ()=>{active=false}
-  },[dateKey,loader,refreshKey])
+    return ()=>{active=false;window.clearTimeout(deadline)}
+  },[dateKey,loader,entryLoader,voidHistoryLoader,refreshKey])
 
   const groups=useMemo(()=>{
     const grouped=new Map<string,WorkerSummary>()
@@ -333,6 +369,8 @@ export function TodaySummaryPage({
     </section>}
 
     {reportReady&&<section className="void-history daily-void-history">
+      {voidHistoryLoading?<p className="notice" role="status">正在载入作废历史；有效工钱已就绪，可打印。</p>:
+        voidHistoryError?<div><p className="error" role="alert">{voidHistoryError}</p><button type="button" onClick={()=>setRefreshKey(value=>value+1)}>重试作废历史</button></div>:
       <details>
         <summary>作废记录 ({voids.length})</summary>
         {voids.length===0?<p className="notice">此日期没有作废记录。</p>:
@@ -349,7 +387,7 @@ export function TodaySummaryPage({
             </li>)}
           </ol>
         }
-      </details>
+      </details>}
     </section>}
 
     {pendingVoid&&<div className="void-overlay daily-void-modal" role="presentation" onClick={closeVoid}>

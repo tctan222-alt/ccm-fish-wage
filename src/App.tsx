@@ -5,6 +5,7 @@ import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { auth } from './firebase'
 import { LoginPage } from './pages/LoginPage'
 import { BackButton } from './components/BackButton'
+import { HomeNavigation } from './components/HomeNavigation'
 
 const FishHeadWagePage = lazy(() => import('./pages/FishHeadWagePage').then(module => ({ default: module.FishHeadWagePage })))
 const WorkersPage = lazy(() => import('./pages/WorkersPage').then(module => ({ default: module.WorkersPage })))
@@ -33,6 +34,7 @@ const IceMonthlySettlementPage = lazy(() => import('./pages/IceMonthlySettlement
 const CcmAdminPage = lazy(() => import('./pages/CcmAdminPage').then(module => ({ default: module.CcmAdminPage })))
 const PurchaseWeighingPage = lazy(() => import('./pages/PurchaseWeighingPage').then(module => ({ default: module.PurchaseWeighingPage })))
 const PurchaseSettlementPage = lazy(() => import('./pages/PurchaseSettlementPage').then(module => ({ default: module.PurchaseSettlementPage })))
+const SettlementListPage = lazy(() => import('./pages/SettlementListPage').then(module => ({ default: module.SettlementListPage })))
 const FishHeadSettlementListPage = lazy(() => import('./pages/FishHeadSettlementListPage').then(module => ({ default: module.FishHeadSettlementListPage })))
 const RetailSalesPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailSalesPage })))
 const RetailFishPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailFishPage })))
@@ -58,6 +60,7 @@ function AuthenticatedApp() {
   return <BrowserRouter>
     <SignOutButton />
     <BackButton />
+    <HomeNavigation />
     <Suspense fallback={<LoadingScreen />}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -72,7 +75,7 @@ function AuthenticatedApp() {
         <Route path="/fish-meal-purchase" element={<PurchaseWeighingPage productType="fish_meal" />} />
         <Route path="/fish-head-settlement" element={<FishHeadSettlementListPage />} />
         <Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" />} />
-        <Route path="/fish-meal-settlement" element={<PurchaseSettlementPage productType="fish_meal" />} />
+        <Route path="/fish-meal-settlement" element={<SettlementListPage productType="fish_meal" />} />
         <Route path="/fish-meal-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_meal" />} />
         <Route path="/fish-head-wages" element={<FishHeadWagePage />} />
         <Route path="/daily" element={<TodaySummaryPage />} />

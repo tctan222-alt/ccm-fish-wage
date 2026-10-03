@@ -44,8 +44,18 @@ vi.mock('firebase/firestore', () => {
   }
 })
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish } from './retailSales'
-const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', lines: [makeRetailLine(seed[0], '2', '6.15')] }
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
+const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', vesselId: 'v833', vesselCodeSnapshot: '833', lines: [makeRetailLine(seed[0], '2', '6.15')] }
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
+
+it('stores independent same-day vessel snapshots and audits a vessel change without changing invoice identity', async () => {
+  state.records.set('vessels/v978', { active: true, vesselCode: '978' })
+  const first = await saveRetailSale('vessel-first', input)
+  const second = await saveRetailSale('vessel-second', { ...input, vesselId: 'v978', vesselCodeSnapshot: '978' })
+  expect([first.vesselCodeSnapshot, second.vesselCodeSnapshot]).toEqual(['833', '978'])
+  const edited = await updateRetailSale(first.id, { ...input, vesselId: 'v978', vesselCodeSnapshot: '978' }, 1, 'vessel-edit')
+  expect(edited).toMatchObject({ id: first.id, invoiceNumber: first.invoiceNumber, createdAt: first.createdAt, revision: 2, vesselId: 'v978', vesselCodeSnapshot: '978' })
+  expect(state.records.get('retailSales/vessel-first/actions/vessel-edit')).toMatchObject({ beforeSnapshot: { vesselId: 'v833' }, afterSnapshot: { vesselId: 'v978' } })
+})
 
 describe('retail quick-add fish', () => {
   it('rejects saved aliases and Other Chinese names colliding with Malay, but allows two Malay translations to match', async () => {
@@ -63,14 +73,14 @@ describe('retail quick-add fish', () => {
     await saveRetailFish(first.id, { ...first, aliases: ['旧称'], active: false })
     expect(state.records.get(`retailFish/${first.id}`)).toMatchObject({ createdBy: before.createdBy, createdAt: before.createdAt, aliases: ['旧称'], active: false })
     await expect(quickAddRetailFish({ ...second, chineseName: '旧称' })).rejects.toThrow(/停用/)
-    expect(state.records.size).toBe(2)
+    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(2)
   })
   it('preserves an existing starter with a nonstarter ID without duplicating or overwriting it', async () => {
     state.records.set('retailFish/original', { ...seed[0], suggestedPriceCents: 999 })
     await initializeRetailFish()
     expect(state.records.has(`retailFish/${seed[0].id}`)).toBe(false)
     expect(state.records.get('retailFish/original')?.suggestedPriceCents).toBe(999)
-    expect(state.records.size).toBe(3)
+    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(31)
   })
   const fishInput = { chineseName: ' 新鱼 ', malayName: ' ikan baru ', suggestedPriceCents: 650, active: true }
   it('persists a reusable master item and preserves sale snapshots after later master changes', async () => {
@@ -90,7 +100,7 @@ describe('retail quick-add fish', () => {
   ])('rejects incomplete or invalid quick-add data before any write: %j', async invalid => {
     await expect(quickAddRetailFish({ ...fishInput, ...invalid })).rejects.toThrow()
     expect(state.writes).not.toHaveBeenCalled()
-    expect(state.records.size).toBe(0)
+    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(0)
   })
   it('still allows optional Malay name and suggested price from master administration', async () => {
     await expect(saveRetailFish(null, { ...fishInput, malayName: '', suggestedPriceCents: null })).resolves.toMatchObject({ id: 'auto-1', malayName: '', suggestedPriceCents: null })
@@ -99,7 +109,7 @@ describe('retail quick-add fish', () => {
   it('propagates persistence failures instead of returning an unpersisted fish', async () => {
     state.failPath = 'retailFish/auto-1'
     await expect(quickAddRetailFish(fishInput)).rejects.toThrow('connection interrupted')
-    expect(state.records.size).toBe(0)
+    expect([...state.records.keys()].filter(path => !path.startsWith('vessels/')).length).toBe(0)
   })
 })
 describe('retail persistence', () => {
@@ -163,7 +173,7 @@ describe('retail persistence', () => {
     const key = `retailFish/${seed[0].id}`
     state.records.set(key, { ...state.records.get(key), chineseName: '修正名', suggestedPriceCents: 999, active: false })
     await initializeRetailFish()
-    expect(state.writes).toHaveBeenCalledTimes(3)
+    expect(state.writes).toHaveBeenCalledTimes(31)
     expect(state.records.get(key)).toMatchObject({ chineseName: '修正名', suggestedPriceCents: 999, active: false })
   })
   it('restores only the current user pending sale and clears it after confirmation', () => {

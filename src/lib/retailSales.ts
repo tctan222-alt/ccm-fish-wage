@@ -25,6 +25,9 @@ export type RetailLineInput = RetailLine | (Omit<RetailLine, 'weightDeciKg'> & {
 export interface RetailSaleInput {
   businessDate: string
   vendorName: string
+  // Optional only for legacy snapshots; new invoice creation requires a vessel.
+  vesselId?: string
+  vesselCodeSnapshot?: string
   lines: RetailLineInput[]
   remark?: string
 }
@@ -110,7 +113,9 @@ export function prepareRetailSale(input: RetailSaleInput): Omit<RetailSale, 'id'
   if (remark.length > 500) throw new Error('备注最多 500 字。 Remark must be no longer than 500 characters.')
   if (!input.lines.length || input.lines.length > MAX_RETAIL_LINES) throw new Error(`每单须有 1–${MAX_RETAIL_LINES} 条明细。 Each sale must have 1–${MAX_RETAIL_LINES} lines.`)
   const lines = input.lines.map(normalizeRetailLine)
-  return { businessDate, vendorName, remark, lines, dateSortKey: sortKeyFromBusinessDate(businessDate), totalAmountCents: lines.reduce((sum, line) => sum + line.amountCents, 0) }
+  const vessel = input.vesselId === undefined && input.vesselCodeSnapshot === undefined ? {} : { vesselId: input.vesselId?.trim(), vesselCodeSnapshot: input.vesselCodeSnapshot?.trim() }
+  if (Object.keys(vessel).length && (!vessel.vesselId || !/^[^/]{1,80}$/.test(vessel.vesselId) || !vessel.vesselCodeSnapshot || vessel.vesselCodeSnapshot.length > 30)) throw new Error('请选择有效船号。 Select a valid vessel.')
+  return { businessDate, vendorName, ...vessel, remark, lines, dateSortKey: sortKeyFromBusinessDate(businessDate), totalAmountCents: lines.reduce((sum, line) => sum + line.amountCents, 0) }
 }
 
 export const retailToday = () => malaysiaBusinessDate()

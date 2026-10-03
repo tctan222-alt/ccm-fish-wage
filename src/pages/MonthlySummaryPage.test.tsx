@@ -74,6 +74,18 @@ function setup(loader=vi.fn(async()=>data),requestTimeoutMs?:number){
   return loader
 }
 
+it('shows worker work days and daily all-worker totals with exact month cross-check and no payment or remark controls', async () => {
+  setup(); await screen.findByText('个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.')
+  expect(screen.getByRole('heading', { name: '个人月总结 Monthly Summary by Worker' })).toBeInTheDocument()
+  const daily = screen.getByLabelText('每日全体工钱 Daily Wages')
+  expect(within(daily).getByRole('link', { name: /1 Jul/ })).toHaveAttribute('href', '/today?date=2026-07-01')
+  expect(daily).toHaveTextContent('RM8.88'); expect(daily).toHaveTextContent('RM25.05')
+  expect(screen.getByLabelText('Monthly totals')).toHaveTextContent('RM33.93')
+  expect(screen.getAllByText('工作天数 Work days')).toHaveLength(2)
+  expect(screen.queryByText(/^Paid|Not Paid|Unpaid|Outstanding$/i)).not.toBeInTheDocument()
+  expect(screen.queryByRole('textbox', { name: /remark|备注/i })).not.toBeInTheDocument()
+})
+
 function deferred<T>(){
   let resolve!:(value:T)=>void
   let reject!:(reason?:unknown)=>void

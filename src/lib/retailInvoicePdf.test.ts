@@ -44,6 +44,10 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('retail invoice PDF', () => {
+  it.each(['833', undefined])('includes the saved vessel snapshot %s or the legacy blank in PDF content', async vesselCodeSnapshot => {
+    await createRetailInvoicePdf({ ...sample, vesselId: vesselCodeSnapshot ? 'v833' : undefined, vesselCodeSnapshot })
+    expect(drawn.map(item => item.text)).toContain(`船号 Vessel：${vesselCodeSnapshot || '—'}`)
+  })
   it('includes the formal number, shared date formatter and remark in the PDF and share filename', async () => {
     const sale = { ...sample, businessDate: '03/10/2026', invoiceNumber: '03102026007', remark: '现价已核对' }
     const file = await createRetailInvoicePdf(sale)

@@ -9,6 +9,7 @@ const firebase = vi.hoisted(() => ({
   wageScreen: vi.fn(),
   settlementListScreen: vi.fn(),
   settlementDetailScreen: vi.fn(),
+  sharedSettlementListScreen: vi.fn(),
 }))
 
 vi.mock('./firebase', () => ({ auth: {}, db: {}, firebaseConfigured: true }))
@@ -19,6 +20,7 @@ vi.mock('firebase/auth', () => ({
 }))
 vi.mock('./pages/FishHeadWagePage', () => ({ FishHeadWagePage: () => { firebase.wageScreen(); return <h1>Fish Head Wage</h1> } }))
 vi.mock('./pages/FishHeadSettlementListPage', () => ({ FishHeadSettlementListPage: () => { firebase.settlementListScreen(); return <h1>鱼头现场单列表</h1> } }))
+vi.mock('./pages/SettlementListPage', () => ({ SettlementListPage: ({ productType }: { productType: string }) => { firebase.sharedSettlementListScreen(productType); return <h1>共享结单列表</h1> } }))
 vi.mock('./pages/PurchaseSettlementPage', async () => {
   const { useParams } = await import('react-router-dom')
   return { PurchaseSettlementPage: ({ productType }: { productType: string }) => {
@@ -37,6 +39,7 @@ beforeEach(() => {
   firebase.wageScreen.mockReset()
   firebase.settlementListScreen.mockReset()
   firebase.settlementDetailScreen.mockReset()
+  firebase.sharedSettlementListScreen.mockReset()
 })
 afterEach(() => { cleanup(); window.history.replaceState(null, '', '/') })
 
@@ -48,6 +51,17 @@ async function showLogin() {
 }
 
 describe('authentication gate', () => {
+  it.each(['/fish-head-wages', '/fish-head-settlement', '/fish-head-settlement/session-B'])('shared Home returns from %s to the Dashboard without signing out', async path => {
+    window.history.replaceState(null, '', path)
+    render(<App />)
+    firebase.authState?.({ uid: 'admin' } as User)
+    fireEvent.click(await screen.findByRole('link', { name: '← 主页 Home' }))
+    await screen.findByRole('heading', { name: 'CCM 首页' })
+    expect(window.location.pathname).toBe('/dashboard')
+    expect(firebase.signOut).not.toHaveBeenCalled()
+    expect(screen.queryByRole('link', { name: '← 主页 Home' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '退出登录' })).toBeInTheDocument()
+  })
   it('shows login when unauthenticated and does not load wage services', async () => {
     await showLogin()
     expect(screen.getByLabelText('电邮')).toHaveAttribute('type', 'email')
@@ -120,12 +134,20 @@ describe('authentication gate', () => {
     expect(firebase.settlementListScreen).not.toHaveBeenCalled()
   })
 
-  it('preserves the fish-meal base route as the existing settlement form', async () => {
+  it('opens the fish-meal base route as the shared list without fetching detail', async () => {
     window.history.replaceState(null, '', '/fish-meal-settlement')
     render(<App />)
     firebase.authState?.({ uid: 'admin' } as User)
-    await screen.findByRole('heading', { name: '结单详情' })
-    expect(firebase.settlementDetailScreen).toHaveBeenCalledWith({ productType: 'fish_meal', sessionId: undefined })
+    await screen.findByRole('heading', { name: '共享结单列表' })
+    expect(firebase.sharedSettlementListScreen).toHaveBeenCalledWith('fish_meal')
+    expect(firebase.settlementDetailScreen).not.toHaveBeenCalled()
     expect(firebase.settlementListScreen).not.toHaveBeenCalled()
+  })
+  it('preserves direct fish-meal detail identity and only loads detail after navigation', async () => {
+    window.history.replaceState(null, '', '/fish-meal-settlement/meal-B')
+    render(<App />); firebase.authState?.({ uid: 'admin' } as User)
+    await screen.findByRole('heading', { name: '结单详情 meal-B' })
+    expect(firebase.settlementDetailScreen).toHaveBeenCalledWith({ productType: 'fish_meal', sessionId: 'meal-B' })
+    expect(firebase.sharedSettlementListScreen).not.toHaveBeenCalled()
   })
 })

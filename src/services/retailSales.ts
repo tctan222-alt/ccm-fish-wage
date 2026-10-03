@@ -28,7 +28,7 @@ export async function initializeRetailFish() {
       if (!snapshots[index].exists() && !items.some(item => item.chineseName.trim() === input.chineseName)) {
         assertRetailFishUnique(input.id, input, items)
         transaction.set(refs[index], {
-          ...normalizeRetailFish({ ...input, sortOrder: nextRetailFishOrder(items) + index }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+          ...normalizeRetailFish({ ...input, sortOrder: input.sortOrder }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
         })
       }
     })
@@ -96,7 +96,14 @@ function sameInput(id: string, data: Record<string, unknown>, clean: RetailSaleI
 }
 
 function saleHeader(clean: ReturnType<typeof prepareRetailSale>) {
-  return { businessDate: clean.businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, remark: clean.remark ?? '', totalAmountCents: clean.totalAmountCents }
+  return { businessDate: clean.businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, ...(clean.vesselId ? { vesselId: clean.vesselId, vesselCodeSnapshot: clean.vesselCodeSnapshot } : {}), remark: clean.remark ?? '', totalAmountCents: clean.totalAmountCents }
+}
+
+async function assertRetailVessel(transaction: Transaction, clean: RetailSaleInput, previous?: RetailSale) {
+  if (previous && clean.vesselId === previous.vesselId && clean.vesselCodeSnapshot === previous.vesselCodeSnapshot) return
+  if (!clean.vesselId) throw new Error('请先选择船号。 Please select a vessel.')
+  const snapshot = await transaction.get(doc(db, 'vessels', clean.vesselId))
+  if (!snapshot.exists() || snapshot.data().active !== true || snapshot.data().vesselCode !== clean.vesselCodeSnapshot) throw new Error('船号已停用或资料已变更，请重新选择。 Vessel is inactive or has changed. Please select again.')
 }
 
 function assertReplay(data: Record<string, unknown>, id: string, uid: string, clean: RetailSaleInput, type: 'create' | 'update', revision: number) {
@@ -150,6 +157,7 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
         return
       }
       const counterRef = doc(db, 'retailInvoiceCounters', String(clean.dateSortKey))
+      await assertRetailVessel(transaction, clean)
       const counter = await transaction.get(counterRef)
       const lastSequence = counter.exists() ? counter.data().lastSequence : 0
       if (!Number.isSafeInteger(lastSequence) || lastSequence < 0) throw new Error('单号计数器无效，请联系管理员。 Invalid invoice counter. Contact the administrator.')
@@ -205,6 +213,7 @@ export async function updateRetailSale(id: string, input: RetailSaleInput, expec
       if (action.exists()) { assertReplay(action.data(), id, uid, clean, 'update', revision); return }
       const data = existing.data()
       assertEditable(id, data, clean, expectedRevision)
+      await assertRetailVessel(transaction, clean, saleFromDocument(id, data))
       await assertActiveReplacements(transaction, saleFromDocument(id, data), clean, originalLineIndices)
       const after = { ...data, ...saleHeader(clean), lineGroups, revision, groupSetId: operationId, lastActionId: operationId, updatedBy: uid, updatedAt: serverTimestamp() }
       transaction.set(ref, after)

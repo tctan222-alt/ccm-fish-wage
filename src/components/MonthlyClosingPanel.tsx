@@ -11,6 +11,7 @@ import type {
 } from '../services/monthClosing'
 
 interface Props {
+  showPaymentTracking?:boolean
   monthKey:string
   liveEntries:StoredWageEntry[]
   data:WageMonthClosingData
@@ -32,7 +33,7 @@ function timestampLabel(value:unknown){
   return 'Recorded'
 }
 
-export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment,onVoidPayment,onReopen}:Props){
+export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment,onVoidPayment,onReopen,showPaymentTracking=true}:Props){
   const [confirmClose,setConfirmClose]=useState(false)
   const [paymentStatement,setPaymentStatement]=useState<WageStatementRecord|null>(null)
   const [paymentAmount,setPaymentAmount]=useState('')
@@ -123,9 +124,10 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
         <div><span>Baskets</span><strong>{data.month!.basketCount}</strong></div>
         <div><span>Total kg</span><strong>{data.month!.totalWeightKg}kg</strong></div>
         <div><span>Gross wage</span><strong>RM{money(data.month!.totalWageCents)}</strong></div>
-        <div><span>Paid total</span><strong>RM{money(data.month!.paidCents)}</strong></div>
-        <div><span>Outstanding</span><strong>RM{money(data.month!.totalWageCents-data.month!.paidCents)}</strong></div>
+        {showPaymentTracking&&<><div><span>Paid total</span><strong>RM{money(data.month!.paidCents)}</strong></div>
+        <div><span>Outstanding</span><strong>RM{money(data.month!.totalWageCents-data.month!.paidCents)}</strong></div></>}
       </div>
+      {showPaymentTracking&&<>
       <div className="statement-list">
         {data.statements.map(statement=>{
           const status=paymentStatus(statement.paidCents,statement.wageCents)
@@ -182,8 +184,9 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
         <button className="secondary-action" type="button" onClick={()=>setVoidPayment(null)}>Cancel</button>
       </form>}
 
+      </>}
       <button className="reopen-action" type="button" disabled={busy||data.month!.paidCents>0} onClick={()=>setShowReopen(true)}>Reopen Month</button>
-      {data.month!.paidCents>0&&<p className="warning">Void all valid payments before reopening this month.</p>}
+      {data.month!.paidCents>0&&<p className="warning">{showPaymentTracking?'Void all valid payments before reopening this month.':'历史记录限制重新开月，请联系管理员核对。 Legacy records prevent reopening; contact the administrator.'}</p>}
       {showReopen&&<form className="action-form" aria-label="Reopen month" onSubmit={event=>{
         event.preventDefault()
         void perform(async()=>{await onReopen(monthKey,reopenReason);setShowReopen(false);setReopenReason('')})

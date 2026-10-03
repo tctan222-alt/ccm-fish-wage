@@ -6,14 +6,52 @@ import { createIceWorkRecord, createIceWorkSettlement } from './lib/iceWork'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, type RetailLineInput } from './lib/retailSales'
 import { retailInvoiceNumber } from './lib/retailInvoice'
 import retailSeed from './data/retailFishSeed.json'
+import { createSettlementPageLoader,type ProjectedDocument } from './services/settlementSearch'
 
 let environment: RulesTestEnvironment
 
+describe('Firestore Emulator: projected settlement queries', () => {
+  it.each(['fish_head', 'fish_meal'] as const)('executes real REST projection, range, product and cursor queries for %s without basket reads', async productType => {
+    const prefix = `rest-${productType}`
+    await environment.withSecurityRulesDisabled(async context => {
+      const db = context.firestore()
+      await Promise.all(Array.from({ length: 27 }, (_, index) => setDoc(doc(db, 'weighingSessions', `${prefix}-${String(index).padStart(2, '0')}`), {
+        sessionCode: `${prefix}-${index}`, productType, weighingDate: index % 2 ? '2026-10-03' : '03/10/2026', monthKey: index % 2 ? '2026-10' : '10/2026',
+        vesselId: 'rest-inactive', vesselCodeSnapshot: '历史船', status: 'completed', revision: 1,
+        fishHeadBasketCount: 1, fishHeadWeightGrams: 80500, fishMealBucketBasketCount: 1, fishMealBagBasketCount: 0, fishMealTotalWeightGrams: 80500,
+        notes: 'must not download this field',
+      })))
+    })
+    // Unsigned identity is accepted only by the local Firebase Emulator; never a production credential.
+    const token = `${Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url')}.${Buffer.from(JSON.stringify({ sub: 'rest-user', user_id: 'rest-user', aud: 'demo-ccm-rules', iss: 'https://securetoken.google.com/demo-ccm-rules', iat: 0, exp: 4102444800, firebase: { sign_in_provider: 'custom' } })).toString('base64url')}.`
+    const endpoint = `http://${process.env.FIRESTORE_EMULATOR_HOST}/v1/projects/demo-ccm-rules/databases/(default)/documents:runQuery`
+    const load = createSettlementPageLoader(async query => {
+      const response = await fetch(endpoint, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: query }) })
+      if (!response.ok) throw new Error(`Local query HTTP ${response.status}: ${await response.text()}`)
+      const rows = await response.json() as { document?: ProjectedDocument }[]
+      expect(rows.every(row => !row.document?.fields.notes)).toBe(true)
+      return rows.flatMap(row => row.document ? [row.document] : [])
+    })
+    const criteria = { productType, from: '2026-10-03', to: '2026-10-03', vesselId: 'rest-inactive', status: 'completed' as const }
+    const first = await load(criteria), second = await load(criteria, first.cursor)
+    expect(first.items).toHaveLength(25); expect(second.items).toHaveLength(2)
+    expect(new Set([...first.items, ...second.items].map(item => item.id)).size).toBe(27)
+    expect(second.cursor).toBeNull()
+  })
+})
+
 type RulesFirestore = ReturnType<ReturnType<RulesTestEnvironment['authenticatedContext']>['firestore']>
-async function createNumberedRetailSale(db: RulesFirestore, id: string, businessDate = '03/10/2026', uid = 'u1') {
+async function retailVesselFixture(sale: DocumentReference, uid = 'u1') {
+  const db = sale.firestore
+  const ref = doc(db, 'vessels', 'retail-833')
+  await runTransaction(db, async tx => { if (!(await tx.get(ref)).exists()) tx.set(ref, { vesselCode: '833', displayName: '833', defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order: 0, notes: '', createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }) })
+  return { vesselId: ref.id, vesselCodeSnapshot: '833' }
+}
+async function createNumberedRetailSale(db: RulesFirestore, id: string, businessDate = '03/10/2026', uid = 'u1', vesselFields?: DocumentData) {
   const ref = doc(db, 'retailSales', id)
   const saved = await getDoc(ref)
   if (saved.exists()) return saved.data()
+  const vessel = vesselFields ?? await retailVesselFixture(ref, uid)
   const clean = prepareRetailSale({ businessDate, vendorName: '阿明', lines: [makeRetailLine(retailSeed[0], '2', '6.15')] })
   const lineGroups = { first: clean.lines, second: [], third: [], fourth: [] }
   for (const [key, lines] of Object.entries(lineGroups)) await setDoc(doc(ref, 'groups', key), { lines, totalAmountCents: lines.reduce<number>((sum, line) => sum + line.amountCents, 0), createdBy: uid, createdAt: serverTimestamp() })
@@ -22,7 +60,7 @@ async function createNumberedRetailSale(db: RulesFirestore, id: string, business
     const existing = await tx.get(ref), counter = await tx.get(counterRef)
     if (existing.exists()) return existing.data()
     const sequence = (counter.data()?.lastSequence ?? 0) + 1
-    const after = { businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, totalAmountCents: clean.totalAmountCents, lineGroups, remark: '', invoiceNumber: retailInvoiceNumber(businessDate, sequence), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: id, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    const after = { ...vessel, businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, totalAmountCents: clean.totalAmountCents, lineGroups, remark: '', invoiceNumber: retailInvoiceNumber(businessDate, sequence), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: id, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
     tx.set(ref, after)
     tx.set(counterRef, { dateSortKey: clean.dateSortKey, lastSequence: sequence, lastSaleId: id, updatedBy: uid, updatedAt: serverTimestamp() })
     tx.set(doc(ref, 'actions', id), { type: 'create', saleId: id, clientOperationId: id, revision: 1, beforeSnapshot: null, afterSnapshot: after, performedBy: uid, performedAt: serverTimestamp() })
@@ -49,7 +87,46 @@ async function updateNumberedRetailSale(db: RulesFirestore, id: string, operatio
 }
 
 describe('Firestore Rules: Retail 30-day numbered protocol', () => {
+  it.each([
+    {}, { vesselId: 'missing', vesselCodeSnapshot: '833' }, { vesselId: 'retail-833', vesselCodeSnapshot: 'FORGED' },
+  ])('rejects a new invoice with absent, missing or forged vessel fields %j', async vesselFields => {
+    const db = environment.authenticatedContext('u1').firestore()
+    await retailVesselFixture(doc(db, 'retailSales', 'fixture'))
+    await assertFails(createNumberedRetailSale(db, `bad-vessel-${Object.keys(vesselFields).length}-${vesselFields.vesselId ?? 'blank'}`, '03/10/2026', 'u1', vesselFields))
+  })
+  it('retains inactive vessel and legacy no-vessel snapshots on unrelated audited edits, but rejects selecting inactive vessels', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    await createNumberedRetailSale(db, 'inactive-vessel')
+    await environment.withSecurityRulesDisabled(async context => updateDoc(doc(context.firestore(), 'vessels', 'retail-833'), { active: false }))
+    await assertSucceeds(updateNumberedRetailSale(db, 'inactive-vessel', 'retained', { patch: { vendorName: '新小贩' } }))
+    await assertFails(createNumberedRetailSale(db, 'new-inactive'))
+    const before = (await getDoc(doc(db, 'retailSales', 'inactive-vessel'))).data()!
+    const legacy = { ...before }; delete legacy.vesselId; delete legacy.vesselCodeSnapshot
+    await environment.withSecurityRulesDisabled(async context => setDoc(doc(context.firestore(), 'retailSales', 'inactive-vessel'), legacy))
+    await assertSucceeds(updateNumberedRetailSale(db, 'inactive-vessel', 'legacy-retained', { patch: { vendorName: '旧单修正' } }))
+    await assertFails(updateNumberedRetailSale(db, 'inactive-vessel', 'inactive-new-choice', { patch: { vesselId: 'retail-833', vesselCodeSnapshot: '833' } }))
+  })
+  it('denies an audited vessel change at the exact 30-day boundary', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    await createNumberedRetailSale(db, 'expired-vessel')
+    await environment.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), 'retailSales', 'expired-vessel'), { createdAt: Timestamp.fromMillis(Date.now() - 30 * 86400000) })
+      await setDoc(doc(context.firestore(), 'vessels', 'v978'), { active: true, vesselCode: '978' })
+    })
+    await assertFails(updateNumberedRetailSale(db, 'expired-vessel', 'expired-vessel-edit', { patch: { vesselId: 'v978', vesselCodeSnapshot: '978' } }))
+  })
   beforeEach(async () => { await environment.clearFirestore() })
+  it('allows an audited vessel change only to an active Master snapshot', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), id = 'retail-vessel'
+    await createNumberedRetailSale(db, id)
+    await environment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), 'vessels', 'v978'), { active: true, vesselCode: '978' })
+    })
+    await assertSucceeds(updateNumberedRetailSale(db, id, 'change-vessel', { patch: { vesselId: 'v978', vesselCodeSnapshot: '978' } }))
+    const saved = (await getDoc(doc(db, 'retailSales', id))).data()!
+    expect(saved).toMatchObject({ vesselId: 'v978', vesselCodeSnapshot: '978', revision: 2 })
+    expect((await getDoc(doc(db, 'retailSales', id, 'actions', 'change-vessel'))).data()?.afterSnapshot).toEqual(saved)
+  })
   it('commits a numbered sale, its daily counter and immutable audit atomically', async () => {
     const db = environment.authenticatedContext('u1').firestore()
     await assertSucceeds(createNumberedRetailSale(db, 'p10-first'))
@@ -435,12 +512,13 @@ describe('Firestore Rules: retail cash sales', () => {
     return { ...prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', lines }), createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
   }
   async function writeSale(ref: DocumentReference, input: Omit<ReturnType<typeof sale>, 'createdAt'> & { createdAt: unknown }) {
+    const vessel = await retailVesselFixture(ref)
     const { lines, ...header } = input
     const lineGroups = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
     for (const [key, items] of Object.entries(lineGroups)) await setDoc(doc(ref, 'groups', key), { lines: items, totalAmountCents: items.reduce<number>((sum, item) => sum + item.amountCents, 0), createdBy: 'u1', createdAt: serverTimestamp() })
     const counterRef = doc(ref.firestore, 'retailInvoiceCounters', String(header.dateSortKey))
     const sequence = ((await getDoc(counterRef)).data()?.lastSequence ?? 0) + 1
-    const after = { ...header, lineGroups, remark: '', invoiceNumber: header.businessDate.replaceAll('/', '') + String(sequence).padStart(3, '0'), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: ref.id }
+    const after = { ...vessel, ...header, lineGroups, remark: '', invoiceNumber: header.businessDate.replaceAll('/', '') + String(sequence).padStart(3, '0'), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: ref.id }
     const batch = writeBatch(ref.firestore)
     batch.set(ref, after)
     batch.set(counterRef, { dateSortKey: header.dateSortKey, lastSequence: sequence, lastSaleId: ref.id, updatedBy: 'u1', updatedAt: serverTimestamp() })
@@ -534,8 +612,9 @@ describe('Firestore Rules: retail cash sales', () => {
       lineGroups: { first: [legacyLine], second: [], third: [], fourth: [] } }
     async function finalize(uid: string, lines: Record<string, RetailLineInput[]> = header.lineGroups) {
       const client = environment.authenticatedContext(uid).firestore(), batch = writeBatch(client)
+      const vessel = await retailVesselFixture(doc(client, 'retailSales', ref.id), uid)
       const counter = doc(client, 'retailInvoiceCounters', '20260906'), sequence = ((await getDoc(counter)).data()?.lastSequence ?? 0) + 1
-      const after = { ...header, createdBy: uid, updatedBy: uid, lineGroups: lines, remark: '', invoiceNumber: retailInvoiceNumber(header.businessDate, sequence), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: ref.id }
+      const after = { ...header, ...vessel, createdBy: uid, updatedBy: uid, lineGroups: lines, remark: '', invoiceNumber: retailInvoiceNumber(header.businessDate, sequence), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: ref.id }
       batch.set(doc(client, 'retailSales', ref.id), after)
       batch.set(counter, { dateSortKey: 20260906, lastSequence: sequence, lastSaleId: ref.id, updatedBy: uid, updatedAt: serverTimestamp() })
       batch.set(doc(client, 'retailSales', ref.id, 'actions', ref.id), { type: 'create', saleId: ref.id, clientOperationId: ref.id, revision: 1, beforeSnapshot: null, afterSnapshot: after, performedBy: uid, performedAt: serverTimestamp() })

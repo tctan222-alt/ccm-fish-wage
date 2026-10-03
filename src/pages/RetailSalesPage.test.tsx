@@ -7,6 +7,7 @@ import { legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { retailToday } from '../lib/retailSales'
 import type { RetailHistoryRange } from '../lib/retailHistory'
 
+vi.mock('../services/purchaseMasterData', () => ({ loadActiveVessels: async () => [{ id: 'v833', vesselCode: '833', active: true }, { id: 'v978', vesselCode: '978', active: true }] }))
 const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn() }))
 vi.mock('../lib/retailInvoicePdf', () => ({ createRetailInvoicePdf: vi.fn(async () => new File(['%PDF-1.4'], 'receipt.pdf', { type: 'application/pdf' })) }))
 vi.mock('../services/retailSales', () => ({ watchRetailFish: services.watch, saveRetailSale: services.save, saveRetailFish: services.saveFish, quickAddRetailFish: services.quickAdd, initializeRetailFish: services.initialize, loadRetailSales: services.history, loadRetailSale: services.detail, newRetailSaleId: services.id, loadPendingRetailSale: services.restore, rememberPendingRetailSale: services.remember, clearPendingRetailSale: services.clear,
@@ -24,6 +25,10 @@ const fish: RetailFish[] = [
 ]
 function mount(page = <RetailSalesPage />) { return render(<MemoryRouter>{page}</MemoryRouter>) }
 function fill(label: string, value: string) { fireEvent.change(screen.getByLabelText(label), { target: { value } }) }
+async function chooseVessel() {
+  await screen.findByRole('option', { name: '833' })
+  if (!screen.getByLabelText('船号 Vessel').hasAttribute('disabled')) fill('船号 Vessel', 'v833')
+}
 function add(name = '甘丰', kg = '2', price?: string) {
   fill('鱼名 Fish', name)
   fireEvent.click(screen.getByRole('option', { name: new RegExp(name) }))
@@ -43,13 +48,23 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('mobile retail checkout', () => {
+  it('remembers the most recently chosen vessel for the next vendor while allowing another vessel', async () => {
+    mount(); fill('小贩 Vendor', '阿明'); add(); await chooseVessel(); fill('船号 Vessel', 'v978')
+    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.save.mock.calls[0][1]).toMatchObject({ vesselId: 'v978', vesselCodeSnapshot: '978' })
+    expect(screen.getByText('船号 Vessel：978')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '下一位小贩 Next Vendor' }))
+    expect(screen.getByLabelText('船号 Vessel')).toHaveValue('v978')
+    fill('船号 Vessel', 'v833'); expect(screen.getByLabelText('船号 Vessel')).toHaveValue('v833')
+  })
   it('selects an alias as the official snapshot without writing a sale price override back to master', async () => {
     services.watch.mockImplementation(next => { next([{ ...fish[0], aliases: ['旧称'] }]); return vi.fn() })
     mount(); fill('小贩 Vendor', '阿明'); fill('鱼名 Fish', '旧称')
-    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    fireEvent.keyDown(screen.getByRole('combobox', { name: '鱼名 Fish' }), { key: 'Enter' })
     fill('重量 Weight (kg)', '2'); fill('单价 Unit Price (RM/kg)', '7')
     fireEvent.click(screen.getByRole('button', { name: '加入明细 Add Item' }))
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     await screen.findByText('现金结算已保存。 Cash sale saved.')
     expect(services.save.mock.calls[0][1].lines[0]).toMatchObject({ fishId: 'a', chineseName: '甘丰', malayName: 'kembung', unitPriceCents: 700 })
     expect(services.saveFish).not.toHaveBeenCalled()
@@ -60,7 +75,7 @@ describe('mobile retail checkout', () => {
     mount(); fill('鱼名 Fish', '旧停用')
     expect(screen.getByRole('link', { name: '鱼种管理 Master Data' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /新增 Add/ })).not.toBeInTheDocument()
-    fill('鱼名 Fish', '共同'); fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    fill('鱼名 Fish', '共同'); fireEvent.keyDown(screen.getByRole('combobox', { name: '鱼名 Fish' }), { key: 'Enter' })
     expect(screen.getByRole('alert')).toHaveTextContent('多个鱼种')
     expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('')
   })
@@ -116,7 +131,7 @@ describe('mobile retail checkout', () => {
     fill('鱼名 Fish', 'merah')
     expect(screen.getByRole('option', { name: '红鱼 merah RM12.00/kg' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '清除当前品名 Clear Fish' }))
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     const receipt = await screen.findByRole('region', { name: '门市现金结算单' })
     expect(within(receipt).getByText('红鱼')).toBeInTheDocument()
     expect(within(receipt).getByText('merah')).toBeInTheDocument()
@@ -152,7 +167,7 @@ describe('mobile retail checkout', () => {
   it('preserves failed quick-add values and existing lines, and clears or cancels without creating a sale', async () => {
     services.quickAdd.mockRejectedValueOnce(new Error('网络中断，请重试'))
     mount(); fill('小贩 Vendor', '阿明'); add(); fill('鱼名 Fish', '红鱼')
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     expect(screen.getByRole('alert')).toHaveTextContent('请先加入或清除')
     fireEvent.click(screen.getByRole('button', { name: '新增 Add「红鱼」' }))
     fill('马来文名（可空） Malay Name (Optional)', 'merah'); fill('建议单价（可空） Suggested Price (RM/kg, Optional)', '12')
@@ -182,7 +197,7 @@ describe('mobile retail checkout', () => {
     expect(screen.getByText('12.5 kg × RM6.00/kg')).toBeInTheDocument()
     expect(screen.getByText('7.3 kg × RM8.00/kg')).toBeInTheDocument()
     expect(screen.getByText('RM133.40')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     const receipt = await screen.findByRole('region', { name: '门市现金结算单' })
     expect(within(receipt).getByRole('cell', { name: '12.5' })).toBeInTheDocument()
     expect(within(receipt).getByRole('cell', { name: '7.3' })).toBeInTheDocument()
@@ -211,7 +226,7 @@ describe('mobile retail checkout', () => {
     expect(screen.getByLabelText('日期 Date')).toHaveValue('2026-09-05')
     add('马丰', '2')
     expect(screen.getByText('RM34.45')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     fireEvent.click(screen.getByRole('button', { name: '正在保存… Saving…' }))
     expect(await screen.findByText('现金结算已保存。 Cash sale saved.')).toBeInTheDocument()
     expect(services.save).toHaveBeenCalledOnce()
@@ -235,12 +250,12 @@ describe('mobile retail checkout', () => {
     const original = JSON.stringify(fish)
     mount(); fill('小贩 Vendor', '阿明')
     fireEvent.click(screen.getByRole('option', { name: /甘丰/ }))
-    expect(screen.getByRole('combobox')).toHaveValue('甘丰')
+    expect(screen.getByRole('combobox', { name: '鱼名 Fish' })).toHaveValue('甘丰')
     expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('6.00')
     expect(screen.getByText(/甘丰 · kembung · 建议 Suggested/)).toBeInTheDocument()
     fill('重量 Weight (kg)', '2'); fill('单价 Unit Price (RM/kg)', '5.25')
     fireEvent.click(screen.getByRole('button', { name: '加入明细 Add Item' }))
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     await screen.findByText('现金结算已保存。 Cash sale saved.')
     expect(services.save.mock.calls[0][1].lines[0]).toMatchObject({ chineseName: '甘丰', malayName: 'kembung', unitPriceCents: 525, amountCents: 1050 })
     expect(services.saveFish).not.toHaveBeenCalled()
@@ -261,7 +276,7 @@ describe('mobile retail checkout', () => {
     fill('建议单价（可空） Suggested Price (RM/kg, Optional)', '12.05')
     fireEvent.click(screen.getByRole('button', { name: '保存并使用新鱼 Save and Use Fish' }))
     await waitFor(() => expect(screen.getByLabelText('单价 Unit Price (RM/kg)')).toHaveValue('12.05'))
-    expect(screen.getByRole('combobox')).toHaveValue('红鱼')
+    expect(screen.getByRole('combobox', { name: '鱼名 Fish' })).toHaveValue('红鱼')
     expect(screen.getByLabelText('小贩 Vendor')).toHaveValue('阿明')
     expect(services.save).not.toHaveBeenCalled()
   })
@@ -278,7 +293,7 @@ describe('mobile retail checkout', () => {
   it('retries an uncertain save using the same ID and frozen snapshot', async () => {
     services.save.mockRejectedValueOnce(new Error('连接中断'))
     mount(); fill('小贩 Vendor', '阿明'); add()
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('连接中断')
     expect(screen.getByLabelText('小贩 Vendor')).toBeDisabled()
     fireEvent.click(screen.getByRole('button', { name: '重试结算 Retry Checkout' }))
@@ -289,7 +304,7 @@ describe('mobile retail checkout', () => {
   it('does not silently omit the current unadded line', async () => {
     mount(); fill('小贩 Vendor', '阿明'); add()
     fill('鱼名 Fish', '马'); fireEvent.click(screen.getByRole('option', { name: /马丰/ })); fill('重量 Weight (kg)', '3')
-    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await chooseVessel(); fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('请先加入或清除')
     expect(services.save).not.toHaveBeenCalled()
   })
@@ -319,7 +334,7 @@ describe('retail settings and history', () => {
   it('initializes seed data only on explicit setup action', async () => {
     services.watch.mockImplementation(next => { next([]); return vi.fn() })
     mount(<RetailFishPage />); expect(services.initialize).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '建立初始三种鱼 Create Three Starter Fish' }))
+    fireEvent.click(screen.getByRole('button', { name: '建立 31 种鱼 Create 31 Approved Fish' }))
     await waitFor(() => expect(services.initialize).toHaveBeenCalledOnce())
   })
   it('loads date history, filters by vendor, opens stored snapshots and reprints', async () => {

@@ -87,6 +87,7 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
     font(25, true); text('门市现金结算单', MARGIN, y); y += 42
     paragraph(`日期 Date：${displayDate}`)
     paragraph(`小贩 Vendor：${sale.vendorName}`)
+    paragraph(`船号 Vessel：${sale.vesselCodeSnapshot || '—'}`)
     if (sale.createdAt) paragraph(`结算时间 Checkout Time：${formatRetailAuditTimestamp(sale.createdAt)}`, 14, 22)
     paragraph(`单号 Invoice No.：${invoiceNumber}`, 13, 20)
     y += 12

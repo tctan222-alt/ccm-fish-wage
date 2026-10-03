@@ -56,6 +56,11 @@ service cloud.firestore {
     function retailGroupPath(saleId, groupId) {
       return /databases/$(database)/documents/retailSales/$(saleId)/groups/$(groupId);
     }
+    function retailVesselActive(data) {
+      let vessel = beforeData(/databases/$(database)/documents/vessels/$(data.vesselId));
+      return data.vesselId.matches('^[^/]{1,80}$') && vessel.active == true
+        && data.vesselCodeSnapshot == vessel.vesselCode;
+    }
     function validRetailSale(data, saleId) {
       let prefix = data.groupSetId == 'initial' ? '' : data.groupSetId + '_';
       let date = data.businessDate;
@@ -65,7 +70,8 @@ service cloud.firestore {
       let second = beforeData(retailGroupPath(saleId, prefix + 'second'));
       let third = beforeData(retailGroupPath(saleId, prefix + 'third'));
       let fourth = beforeData(retailGroupPath(saleId, prefix + 'fourth'));
-      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'invoiceNumber', 'invoiceSequence', 'revision', 'remark', 'groupSetId', 'lastActionId'])
+      return data.keys().hasOnly(['businessDate', 'dateSortKey', 'vendorName', 'lineGroups', 'totalAmountCents', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt', 'invoiceNumber', 'invoiceSequence', 'revision', 'remark', 'groupSetId', 'lastActionId', 'vesselId', 'vesselCodeSnapshot'])
+        && (request.method == 'update' && !data.diff(existingData()).affectedKeys().hasAny(['vesselId', 'vesselCodeSnapshot']) || retailVesselActive(data))
         && date is string && validBusinessDate(date)
         && validWageDateKey(date[6:10] + '-' + date[3:5] + '-' + date[0:2])
         && data.dateSortKey is int && data.dateSortKey == int(date[6:10] + date[3:5] + date[0:2])
@@ -104,7 +110,7 @@ service cloud.firestore {
     function retailUpdated(data) {
       let old = existingData();
       return retailEditOpen(old)
-          && data.diff(old).affectedKeys().hasOnly(['vendorName', 'lineGroups', 'totalAmountCents', 'remark', 'updatedBy', 'updatedAt', 'revision', 'groupSetId', 'lastActionId'])
+          && data.diff(old).affectedKeys().hasOnly(['vendorName', 'lineGroups', 'totalAmountCents', 'remark', 'updatedBy', 'updatedAt', 'revision', 'groupSetId', 'lastActionId', 'vesselId', 'vesselCodeSnapshot'])
           && data.revision == old.get('revision', 1) + 1
           && data.groupSetId == data.lastActionId && data.groupSetId != 'initial';
     }
