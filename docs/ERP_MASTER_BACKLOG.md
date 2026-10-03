@@ -20,9 +20,9 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | 2 | 未完成称重实时价格与金额 | 已合并 [PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)，`e85484d6281e4c1ca101e557bcba0381ed51ea68`；已 Hosting-only 发布并核对线上文件哈希 |
 | 3 | 未完成称重 entry 修改与即时重算 | 已合并 [PR #45](https://github.com/tctan222-alt/ccm-fish-wage/pull/45)，`75bb0e0` 已 Hosting-only 发布，线上文件哈希已核对 |
 | 4 | Fish Head Settlement 待结单首页 | 已合并 [PR #46](https://github.com/tctan222-alt/ccm-fish-wage/pull/46)，`1cc1278` 已 Hosting-only 发布，线上文件哈希已核对 |
-| 5 | Settlement sourceSessionId identity | 已合并 [PR #47](https://github.com/tctan222-alt/ccm-fish-wage/pull/47)，`1be7ce6`；#37 P1 已 resolved，尚未部署 |
-| 6 | Settlement stable revision read | 本轮已实现；focused PR / CI / merge 以 GitHub 为准，不自动部署；解决 #37 P2 finding |
-| 7 | Settlement 筛选与历史查询 | 待开始 |
+| 5 | Settlement sourceSessionId identity | 已合并 [PR #47](https://github.com/tctan222-alt/ccm-fish-wage/pull/47)；#37 P1 已 resolved，已随 `3880b1c` coordinated release |
+| 6 | Settlement stable revision read | 已合并 [PR #48](https://github.com/tctan222-alt/ccm-fish-wage/pull/48)，`3880b1c`；#37 P2 已 resolved，Rules → Hosting coordinated release 已完成 |
+| 7 | Settlement 筛选与历史查询 | 本轮实现；PR / CI / merge 以 GitHub 为准，P7 不自动部署；见 [实现及验证](P7_SETTLEMENT_FILTERS.md) |
 | 8 | 切鱼头工钱 Daily Details + Print | 待开始 |
 | 9 | Retail Master Data 与 Owner seed dataset | 待开始；完整 dataset 必须先找回 |
 | 10 | 更新 Retail invoice 编辑 / 编号 / 日期 | 待开始；[#36](https://github.com/tctan222-alt/ccm-fish-wage/pull/36) 保持 Draft，暂不合并 |
@@ -137,6 +137,14 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 船：全部 / 指定 vessel。
 - 支持查看整个月所有单、custom range 所有单、一只船的所有单；手机优先。
 - 基于现有 dateSortKey 等合理限定查询，不一次加载巨大无边界数据。
+
+2026-10-03 Owner 本轮允许小规模阶段保留现有 loader，保证旧待结单不因日期默认值或 legacy dateSortKey 缺失而隐藏。本轮仍一次读取现有 sessions，再按真实业务日期、状态和 vesselId 组合筛选；没有新增索引／Rules，切换筛选不额外读 Firestore。规模限制及之后 server-side query 的前提见 [P7 文档](P7_SETTLEMENT_FILTERS.md)。默认是待结单 + 全部日期；P7 merge 后停止，不自动部署或开始 P8。
+
+### P5 / P6 coordinated production release checkpoint
+
+Owner 明确授权后，从 clean、synced、CI-green `3880b1c99b5fecfb8c34a98049968507848af9bc` 执行 CLI 15.29.0 Rules → Hosting。发布前复核 662 app tests、38 Rules tests、production build 和 Rules compile / size（252,010 bytes ≤ 253,952）。Rules release PATCH HTTP 200，指针更新到 `c6ff31c6-300a-4d31-8d0e-389fa316daec`；随后 Hosting release 成功。
+
+生产 `/`、`/fish-head-settlement`、`/fish-head-purchase` 均 HTTP 200；HTML、`index-BQYBvgwQ.js`、`index-D5RMLzAT.css`、`PurchaseSettlementPage-CmmpqVfg.js`、`weighing-CNhV3bze.js` 的 SHA-256 与该 main 构建逐文件一致。HTML hash `4f5362554e613830e602aed117704c5b3d63d5b97da9ad7f4dc8c3ab0ff36ae5`。未发布 Functions / 其他服务，未写生产业务测试记录，未迁移历史。此前 P5/P6 章节的“等待授权／未部署”是实施时检查点，已由本次发布记录更新。
 
 ## Priority 8：切鱼头工钱 Daily Details + Print
 
