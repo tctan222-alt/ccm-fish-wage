@@ -18,8 +18,8 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 | 0 | 当前 main、PR、生产发布状态核对 | 已完成；详情见下 |
 | 1 | Fish Head Purchase 立即输入 kg | 已合并 [PR #43](https://github.com/tctan222-alt/ccm-fish-wage/pull/43)，已随 `e85484d` Hosting-only 发布，见下方发布检查点 |
 | 2 | 未完成称重实时价格与金额 | 已合并 [PR #44](https://github.com/tctan222-alt/ccm-fish-wage/pull/44)，`e85484d6281e4c1ca101e557bcba0381ed51ea68`；已 Hosting-only 发布并核对线上文件哈希 |
-| 3 | 未完成称重 entry 修改与即时重算 | 已实现；focused PR / 完整验证进行中，尚未部署 |
-| 4 | Fish Head Settlement 待结单首页 | 待开始 |
+| 3 | 未完成称重 entry 修改与即时重算 | 已合并 [PR #45](https://github.com/tctan222-alt/ccm-fish-wage/pull/45)，`75bb0e0` 已 Hosting-only 发布，线上文件哈希已核对 |
+| 4 | Fish Head Settlement 待结单首页 | 已实现并完成本地验证；focused PR / CI / merge 状态见 GitHub，未部署 |
 | 5 | Settlement sourceSessionId identity | 待开始；解决 #37 P1 finding |
 | 6 | Settlement stable revision read | 待开始；解决 #37 P2 finding |
 | 7 | Settlement 筛选与历史查询 | 待开始 |
@@ -76,16 +76,24 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 - 修改后立即重算总篮数、总 kg、每鱼篮数 / kg / default price / RM，以及 grand total RM。
 - 不改变 7-day rule、settlement、pricing source 或 offline queue semantics。
 
-本轮补齐：历史行显示编辑入口，既有 EntryDialog 显示篮号、当前鱼名/kg、记录时间、revision/sync；删除使用现场用语及带鱼名/kg 的确认，底层仍调用 soft void 并保留审计。本机保存失败保留输入，离线成功明确提示待同步；修改沿用正式估值并不写 purchase price snapshot，旧值保留于审计 before payload。复用 #42 单队列，修复同时间 revision 字符串排序以及旧服务器回执覆盖新本机修改的问题：按数值修订排序，同一 IndexedDB transaction 内保留后续 pending 状态与本机总数、应用回执和移除已确认操作。不修改 Firestore schema、Rules 或 7 天复核流程；Priority 4–10 尚未开始。
+本轮补齐：历史行显示编辑入口，既有 EntryDialog 显示篮号、当前鱼名/kg、记录时间、revision/sync；删除使用现场用语及带鱼名/kg 的确认，底层仍调用 soft void 并保留审计。本机保存失败保留输入，离线成功明确提示待同步；修改沿用正式估值并不写 purchase price snapshot，旧值保留于审计 before payload。复用 #42 单队列，修复同时间 revision 字符串排序以及旧服务器回执覆盖新本机修改的问题：按数值修订排序，同一 IndexedDB transaction 内保留后续 pending 状态与本机总数、应用回执和移除已确认操作。不修改 Firestore schema、Rules 或 7 天复核流程。
 
 本地验收：真实浏览器 IndexedDB 的 create → update → void、迟到回包和重叠 flush 验证通过，最终 pending 0、本机与模拟服务器总数一致。320 / 375 / 390 / 430px 弹窗与长鱼名滚动已视觉检查，实点改 kg / 鱼种即时更新金额；内置浏览器自动化在原生删除确认框处阻塞，删除确认 / 取消 / soft void 已由页面回归测试覆盖，未宣称完成真实 iPhone 验收。
 
+**Priority 3 发布检查点（2026-10-03）：**从 clean、synced main `75bb0e051311669dd09d45dc7ba8ed364113d530` 重新构建；main CI [run 37086583539](https://github.com/tctan222-alt/ccm-fish-wage/actions/runs/37086583539) 全绿。使用 `firebase-tools@15.29.0` Hosting-only 发布成功。生产 `/fish-head-purchase`、HTML、入口 JS/CSS、称重页面、现场入口和结单计算 chunk 均 HTTP 200，SHA-256 与本地构建完全一致（HTML `e6b5cb0a2946b2ddf8cc216e4801e7b37f3fc056ef7ad79d47311e2476f0a562`）。未发布 Rules / Functions，未写生产假记录；Owner 之后进行真实 iPhone 业务验收。
+
 ## Priority 4：Fish Head Settlement 待结单首页
 
-- `/fish-head-settlement` 默认显示 Fish Head weighing session 列表，默认 view 为“待结单”，按业务日期倒序。用户无需先选 vessel/date 才能发现刚完成的单。
+- `/fish-head-settlement` 默认显示 Fish Head weighing session 列表，包含称重中 / 待结单 / 已结单，待结单明显标记，默认隐藏已作废；按业务日期倒序，同日按 updatedAt / createdAt 倒序。用户无需先选 vessel/date 才能发现刚完成的单。此显示范围遵循 Owner 最新 P4 任务；高级 filters 留待 Priority 7。
 - 每行至少显示日期、星期、vessel、external slip no、sessionCode、status、basket count、kg。
-- 状态与操作：`weighing`＝称重中 / “继续称重”；`completed` 且未 processed＝待结单 / “查看结单”；`processed`＝已结单 / 已处理 / “查看历史”。`voided` 默认隐藏。
+- 状态与操作：`weighing`＝称重中 / “继续称重”；`completed`＝待结单 / “查看结单”；`processed`＝已结单 / “查看结单”（现有只读历史详情）。`voided` 默认隐藏。
 - 正常路径：打开鱼头结单 → 看见最新待结单 → 点击查看结单。
+
+本轮 gap analysis：原 base route 与 detail 共用表单，默认今天 + 第一艘 active vessel，再由 `loadPurchaseSettlementSource()` 的 `find()` 取第一张，无法直接发现其他日期/船号及同船同日多张单。只替换鱼头 base route 为独立列表，复用 `loadWeighingSessions()`，strict `productType === fish_head`；React key 和导航均使用 session.id，不 collapse。`weighing` 进入 `/weighing/{id}` 继续既有现场单；`completed` / `processed` 进入现有 `/fish-head-settlement/{id}`，详情价格、草稿、只读 / 7 天规则及完成后的 direct link 均保持原实现。列表每次 mount 重新查询，提供刷新/错误重试和取消过期响应，loading / empty / error 分开；未添加 artificial delay。
+
+本地手机验收：320 / 375 / 390 / 430px 浏览器检查，页面及 card 的 scrollWidth 等于 clientWidth，长手写单号正常换行；同船同日第二张单实点进入正确 session-b。固定本地数据及外部连接限制用于 UI 验证，未写生产数据。P5 的旧 date + vessel draft identity 碰撞和 P6 stable revision 问题仍留待下一轮；Priority 4 合并后停止，不部署，不开始 Priority 5–10。
+
+本地完整质量检查：587 / 587 application tests passed，typecheck、lint、build 和 `git diff --check` 通过；lint 保留既有 AuthProvider Fast Refresh warning，build 保留既有 bundle-size warning。Rules 未改；focused PR 继续由既有 CI quality / firestore-rules jobs 验证。
 
 ## Priority 5：Settlement source identity 使用 sourceSessionId
 
