@@ -75,6 +75,9 @@ describe('Firestore Rules: Retail 30-day numbered protocol', () => {
     const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'editable')
     await createNumberedRetailSale(db, ref.id)
     const before = (await getDoc(ref)).data()!
+    // Editing on day 20, then editing again, must retain the original deadline.
+    before.createdAt = Timestamp.fromMillis(Date.now() - 20 * 86400000)
+    await environment.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'retailSales', ref.id), before))
     await assertSucceeds(updateNumberedRetailSale(db, ref.id, 'edit-one'))
     const after = (await getDoc(ref)).data()!
     expect(after).toMatchObject({ vendorName: '新小贩', remark: '已核对', revision: 2, invoiceNumber: before.invoiceNumber, invoiceSequence: 1, totalAmountCents: 8813 })
@@ -147,26 +150,38 @@ describe('Firestore Rules: Retail 30-day numbered protocol', () => {
     expect(result.invoiceNumber).toBeUndefined()
     expect((await getDoc(doc(db, 'retailInvoiceCounters', '20261003'))).exists()).toBe(false)
   })
-  it.each([0, 86400, 29 * 86400, 2591999, 2592000, 2592001])('compiles the unchanged expiry expression at a deterministic clock: age %s seconds', async age => {
-    // Freeze ONLY the clock in retailEditOpen; all writes/audit/counter rules still
-    // use the emulator's real request.time. This tests exact boundaries without
-    // a one-second network timing dependency. The unmodified SAVE-time rule is
-    // exercised above, including the expiry race.
-    const source = await readFile('firestore.rules', 'utf8')
-    const start = source.indexOf('function retailEditOpen('), end = source.indexOf('function retailNumber(', start)
-    const clock = `timestamp.value(${Date.parse('2026-10-31T02:00:00Z')})`
-    const rules = source.slice(0, start) + source.slice(start, end).replaceAll('now()', clock) + source.slice(end)
-    const fixed = await initializeTestEnvironment({ projectId: `demo-p10-boundary-${age}`, firestore: { rules } })
-    try {
+  describe('deterministic edit-window boundaries', () => {
+    let fixed: RulesTestEnvironment
+    const boundaryClock = Date.parse('2026-10-31T02:00:00Z')
+
+    beforeAll(async () => {
+      // Compile once during setup, rather than recompiling the entire ruleset
+      // inside every 5-second assertion. Awaiting initialization also awaits
+      // the Emulator's rules upload/compilation response.
+      // Freeze ONLY the clock in retailEditOpen; writes/audit/counter rules
+      // still use real request.time. The unmodified SAVE-time rule and expiry
+      // race are exercised above.
+      const source = await readFile('firestore.rules', 'utf8')
+      const start = source.indexOf('function retailEditOpen('), end = source.indexOf('function retailNumber(', start)
+      expect(start).toBeGreaterThanOrEqual(0)
+      expect(end).toBeGreaterThan(start)
+      const clock = `timestamp.value(${boundaryClock})`
+      const rules = source.slice(0, start) + source.slice(start, end).replaceAll('now()', clock) + source.slice(end)
+      fixed = await initializeTestEnvironment({ projectId: 'demo-p10-boundary', firestore: { rules } })
+    })
+    beforeEach(async () => { await fixed.clearFirestore() })
+    afterAll(async () => { if (fixed) await fixed.cleanup() })
+
+    it.each([0, 86400, 29 * 86400, 2591999, 2592000, 2592001])('compiles the unchanged expiry expression at a deterministic clock: age %s seconds', async age => {
       const db = fixed.authenticatedContext('u1').firestore(), id = 'boundary'
       await createNumberedRetailSale(db, id)
       const before = (await getDoc(doc(db, 'retailSales', id))).data()!
-      before.createdAt = Timestamp.fromMillis(Date.parse('2026-10-31T02:00:00Z') - age * 1000)
+      before.createdAt = Timestamp.fromMillis(boundaryClock - age * 1000)
       await fixed.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), 'retailSales', id), before))
       const saving = updateNumberedRetailSale(db, id, 'boundary-edit', { before })
       if (age < 2592000) await assertSucceeds(saving)
       else await assertFails(saving)
-    } finally { await fixed.cleanup() }
+    })
   })
 })
 const vessel = { vesselCode: '978', displayName: '978', defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order: 0, notes: '', createdBy: 'u1', createdAt: serverTimestamp(), updatedBy: 'u1', updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }
