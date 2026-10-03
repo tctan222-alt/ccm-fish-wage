@@ -4,6 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RetailEditPage, RetailHistoryPage, RetailSalesPage } from './RetailSalesPage'
 import { prepareRetailSale, type RetailFish, type RetailSale } from '../lib/retailSales'
+import { BackButton } from '../components/BackButton'
+import { DirtyStateProvider } from '../components/DirtyStateProvider'
 
 const service = vi.hoisted(() => ({ watch: vi.fn(), load: vi.fn(), update: vi.fn(), id: vi.fn(), quickAdd: vi.fn(), saveFish: vi.fn(), history: vi.fn(), save: vi.fn() }))
 vi.mock('../services/retailSales', () => ({ watchRetailFish: service.watch, loadRetailSale: service.load, updateRetailSale: service.update, newRetailSaleId: service.id,
@@ -31,6 +33,15 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Retail 30-day editing', () => {
+  it('protects a genuine edit and clears the guard only after the update succeeds',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false)
+    render(<MemoryRouter initialEntries={['/retail-sales/history/original-sale/edit']}><DirtyStateProvider><BackButton/><Routes><Route path="/retail-sales/history/:saleId/edit" element={<RetailEditPage/>}/></Routes></DirtyStateProvider></MemoryRouter>)
+    await screen.findByLabelText('小贩 Vendor');fill('小贩 Vendor','修改小贩')
+    fireEvent.click(screen.getByRole('button',{name:'返回 Back'}));expect(confirm).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button',{name:'保存修改 Save Changes'}));await screen.findByText('修改已保存。 Changes saved.')
+    const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(false)
+    expect(service.update).toHaveBeenCalledOnce();expect(service.save).not.toHaveBeenCalled();confirm.mockRestore()
+  })
   it('allows a vessel change within 30 days using the same invoice update and original revision', async () => {
     service.load.mockResolvedValue({ ...original, vesselId: 'v833', vesselCodeSnapshot: '833' })
     await editReady(); await screen.findByRole('option', { name: '978' }); fill('船号 Vessel', 'v978')

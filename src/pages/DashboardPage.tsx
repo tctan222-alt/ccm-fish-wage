@@ -7,7 +7,13 @@ interface Props { vesselLoader?: () => Promise<Vessel[]> }
 
 export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
   const [vessels, setVessels] = useState<Vessel[]>([])
-  useEffect(() => { void vesselLoader().then(setVessels).catch(() => {}) }, [vesselLoader])
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading'), [attempt, setAttempt] = useState(0)
+  useEffect(() => {
+    let current = true
+    setStatus('loading')
+    void vesselLoader().then(items => { if (current) { setVessels(items); setStatus('ready') } }).catch(() => { if (current) setStatus('error') })
+    return () => { current = false }
+  }, [vesselLoader, attempt])
   return <main className="department-dashboard">
     <header><p className="eyebrow">CCM Fishery</p><h1>CCM 首页</h1><p>请选择部门继续。</p></header>
     <section className="department-card">
@@ -20,7 +26,9 @@ export function DashboardPage({ vesselLoader = loadActiveVessels }: Props) {
     </section>
     <section className="department-card">
       <h2>冰工部门</h2>
-      <nav aria-label="冰工船只" className="vessel-button-grid">{vessels.map(vessel => <Link key={vessel.id} to={`/ice-department/${vessel.id}`}>{vessel.vesselCode}</Link>)}</nav>
+      {status === 'loading' && <p role="status">正在载入船号… Loading vessels…</p>}
+      {status === 'error' && <><p className="error" role="alert">无法载入船号，请检查网络后重试。 Unable to load vessels. Check your connection and retry.</p><button type="button" onClick={() => setAttempt(value => value + 1)}>重试 Retry</button></>}
+      {status === 'ready' && (vessels.length ? <nav aria-label="冰工船只" className="vessel-button-grid">{vessels.map(vessel => <Link key={vessel.id} to={`/ice-department/${vessel.id}`}>{vessel.vesselCode}</Link>)}</nav> : <p>没有启用中的船号。 No active vessels.</p>)}
       <Link className="page-link" to="/ice-department">查看冰工部门</Link>
     </section>
     <section className="department-card"><h2>门市销售</h2><Link className="page-link" to="/retail-sales">快速现金结算</Link></section>

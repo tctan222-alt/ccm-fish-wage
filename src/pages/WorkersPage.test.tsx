@@ -2,10 +2,20 @@ import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { WorkersPage } from './WorkersPage'
+import { BackButton } from '../components/BackButton'
+import { DirtyStateProvider } from '../components/DirtyStateProvider'
 
 afterEach(()=>cleanup())
 
 describe('worker master data page',()=>{
+  it('protects Master Data edits while leaving the worker filter unguarded',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false)
+    render(<MemoryRouter initialEntries={['/workers']}><DirtyStateProvider><BackButton/><WorkersPage loader={async()=>[{id:'w1',name:'Ali',active:true,order:1}]}/></DirtyStateProvider></MemoryRouter>)
+    await screen.findByText('Ali');fireEvent.change(screen.getByLabelText('Worker filter'),{target:{value:'all'}})
+    const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(false)
+    fireEvent.click(screen.getByRole('button',{name:'Edit'}));fireEvent.change(screen.getByLabelText('Worker name'),{target:{value:'Changed'}})
+    fireEvent.click(screen.getByRole('button',{name:'返回'}));expect(confirm).toHaveBeenCalledOnce();confirm.mockRestore()
+  })
   it('shows legacy workers and enhanced fields without requiring migration',async()=>{
     render(<MemoryRouter><WorkersPage loader={async()=>[
       {id:'legacy-id',name:'Ali',active:true,order:1},

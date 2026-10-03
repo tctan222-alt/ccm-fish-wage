@@ -74,14 +74,25 @@ function setup(loader=vi.fn(async()=>data),requestTimeoutMs?:number){
   return loader
 }
 
+it('places the month overview, worker and daily summaries before reconciliation and closing administration',async()=>{
+  setup(); await screen.findByText('个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.')
+  const overview=screen.getByLabelText('整月总览 Monthly totals'),worker=screen.getByRole('heading',{name:'个人月总结 Monthly Summary by Worker'})
+  const daily=screen.getByLabelText('每日全体工钱 Daily Wages'),reconciliation=screen.getByText('个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.')
+  const closing=document.querySelector('.month-closing')!
+  expect(screen.getByRole('heading',{name:'切鱼头月结 Monthly Summary'})).toBeInTheDocument()
+  expect(screen.getByLabelText('工资月份 Wage month')).toBeInTheDocument()
+  expect(overview).toHaveTextContent('工人数 Workers');expect(overview).toHaveTextContent('总重量 Total kg');expect(overview).toHaveTextContent('总工钱 Total wage')
+  for(const [first,next] of [[overview,worker],[worker,daily],[daily,reconciliation],[reconciliation,closing]]) expect(first.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
 it('shows worker work days and daily all-worker totals with exact month cross-check and no payment or remark controls', async () => {
   setup(); await screen.findByText('个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.')
   expect(screen.getByRole('heading', { name: '个人月总结 Monthly Summary by Worker' })).toBeInTheDocument()
   const daily = screen.getByLabelText('每日全体工钱 Daily Wages')
   expect(within(daily).getByRole('link', { name: /1 Jul/ })).toHaveAttribute('href', '/today?date=2026-07-01')
   expect(daily).toHaveTextContent('RM8.88'); expect(daily).toHaveTextContent('RM25.05')
-  expect(screen.getByLabelText('Monthly totals')).toHaveTextContent('RM33.93')
-  expect(screen.getAllByText('工作天数 Work days')).toHaveLength(2)
+  expect(screen.getByLabelText('整月总览 Monthly totals')).toHaveTextContent('RM33.93')
+  expect(screen.getAllByText('工作天数 Work days')).toHaveLength(3)
   expect(screen.queryByText(/^Paid|Not Paid|Unpaid|Outstanding$/i)).not.toBeInTheDocument()
   expect(screen.queryByRole('textbox', { name: /remark|备注/i })).not.toBeInTheDocument()
 })
@@ -115,11 +126,11 @@ describe('monthly summary',()=>{
   it('summarizes active wages by month, worker, and day',async()=>{
     setup()
 
-    expect(await screen.findByRole('heading',{name:'Monthly Summary'})).toBeInTheDocument()
-    fireEvent.change(screen.getByLabelText('Wage month'),{target:{value:'2026-07'}})
+    expect(await screen.findByRole('heading',{name:'切鱼头月结 Monthly Summary'})).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('工资月份 Wage month'),{target:{value:'2026-07'}})
     expect(await screen.findByText('July 2026')).toBeInTheDocument()
 
-    const grandTotal=screen.getByRole('region',{name:'Monthly totals'})
+    const grandTotal=screen.getByRole('region',{name:'整月总览 Monthly totals'})
     expect(grandTotal).toHaveTextContent('Workers2')
     expect(grandTotal).toHaveTextContent('Work days2')
     expect(grandTotal).toHaveTextContent('Baskets3')
@@ -136,9 +147,9 @@ describe('monthly summary',()=>{
     expect(ahMeiCard).toHaveTextContent('RM0.18RM0.00')
     expect(ahMeiCard).toHaveTextContent('Custom rateRM0.00')
 
-    fireEvent.click(within(ahMeiCard).getByText('View daily totals and basket details'))
+    fireEvent.click(within(ahMeiCard).getByText('查看每日汇总及篮重明细 View daily totals and basket details'))
     expect(ahMeiCard).toHaveTextContent('Wed, 1 Jul')
-    expect(ahMeiCard).toHaveTextContent('1 basket')
+    expect(ahMeiCard).toHaveTextContent('1 篮 Baskets')
     expect(ahMeiCard).toHaveTextContent('74kg')
     fireEvent.click(within(ahMeiCard).getByText(/Wed, 1 Jul/))
     expect(ahMeiCard).toHaveTextContent('74kg x RM0.12')
@@ -152,7 +163,7 @@ describe('monthly summary',()=>{
     const loader=setup()
 
     await waitFor(()=>expect(loader).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}$/)))
-    fireEvent.change(screen.getByLabelText('Wage month'),{target:{value:'2026-06'}})
+    fireEvent.change(screen.getByLabelText('工资月份 Wage month'),{target:{value:'2026-06'}})
 
     await waitFor(()=>expect(loader).toHaveBeenLastCalledWith('2026-06'))
   })
@@ -160,7 +171,7 @@ describe('monthly summary',()=>{
   it('shows monthly void audit records',async()=>{
     setup()
 
-    fireEvent.click(await screen.findByText('Voided records this month (1)'))
+    fireEvent.click(await screen.findByText('本月作废记录 Voided records this month (1)'))
 
     expect(screen.getByText('Wrong kg')).toBeInTheDocument()
     expect(screen.getByText(/2026-07-03/)).toHaveTextContent('60kg x RM0.12')
@@ -174,17 +185,17 @@ describe('monthly summary',()=>{
 
     setup(loader)
 
-    expect(await screen.findByRole('button',{name:'Refresh month'})).toBeEnabled()
-    const button=screen.getByRole('button',{name:'Refresh month'})
+    expect(await screen.findByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled()
+    const button=screen.getByRole('button',{name:'刷新月份 Refresh month'})
 
     fireEvent.click(button)
     fireEvent.click(button)
 
     expect(loader).toHaveBeenCalledTimes(2)
-    expect(screen.getByRole('button',{name:'Loading...'})).toBeDisabled()
+    expect(screen.getByRole('button',{name:'正在载入… Loading...'})).toBeDisabled()
 
     refresh.resolve(data)
-    await waitFor(()=>expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled())
+    await waitFor(()=>expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled())
   })
 
   it('releases loading after a successful refresh',async()=>{
@@ -195,13 +206,13 @@ describe('monthly summary',()=>{
 
     setup(loader)
 
-    fireEvent.click(await screen.findByRole('button',{name:'Refresh month'}))
-    expect(screen.getByRole('button',{name:'Loading...'})).toBeDisabled()
+    fireEvent.click(await screen.findByRole('button',{name:'刷新月份 Refresh month'}))
+    expect(screen.getByRole('button',{name:'正在载入… Loading...'})).toBeDisabled()
 
     refresh.resolve(dataWithWorker('Fresh Worker'))
 
-    await waitFor(()=>expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled())
-    expect(screen.queryByText('Loading monthly records...')).not.toBeInTheDocument()
+    await waitFor(()=>expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled())
+    expect(screen.queryByText('正在载入月记录… Loading monthly records...')).not.toBeInTheDocument()
     expect(screen.getByRole('heading',{name:'Fresh Worker'})).toBeInTheDocument()
   })
 
@@ -212,10 +223,10 @@ describe('monthly summary',()=>{
 
     setup(loader)
 
-    fireEvent.click(await screen.findByRole('button',{name:'Refresh month'}))
+    fireEvent.click(await screen.findByRole('button',{name:'刷新月份 Refresh month'}))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Monthly records could not be loaded')
-    expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled()
+    expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled()
   })
 
   it('releases loading after a refresh timeout',async()=>{
@@ -226,17 +237,17 @@ describe('monthly summary',()=>{
 
     setup(loader,100)
 
-    const button=await screen.findByRole('button',{name:'Refresh month'})
+    const button=await screen.findByRole('button',{name:'刷新月份 Refresh month'})
     vi.useFakeTimers()
     fireEvent.click(button)
-    expect(screen.getByRole('button',{name:'Loading...'})).toBeDisabled()
+    expect(screen.getByRole('button',{name:'正在载入… Loading...'})).toBeDisabled()
 
     await act(async()=>{
       vi.advanceTimersByTime(101)
     })
 
     expect(screen.getByRole('alert')).toHaveTextContent('Monthly records timed out')
-    expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled()
+    expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled()
   })
 
   it('can retry after timeout and ignores the stale timed-out response',async()=>{
@@ -249,16 +260,16 @@ describe('monthly summary',()=>{
 
     setup(loader,100)
 
-    const button=await screen.findByRole('button',{name:'Refresh month'})
+    const button=await screen.findByRole('button',{name:'刷新月份 Refresh month'})
     vi.useFakeTimers()
     fireEvent.click(button)
     await act(async()=>{
       vi.advanceTimersByTime(101)
     })
 
-    expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled()
+    expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled()
 
-    fireEvent.click(screen.getByRole('button',{name:'Refresh month'}))
+    fireEvent.click(screen.getByRole('button',{name:'刷新月份 Refresh month'}))
     expect(loader).toHaveBeenCalledTimes(3)
 
     await act(async()=>{
@@ -271,6 +282,6 @@ describe('monthly summary',()=>{
     })
 
     expect(screen.queryByRole('heading',{name:'Stale Worker'})).not.toBeInTheDocument()
-    expect(screen.getByRole('button',{name:'Refresh month'})).toBeEnabled()
+    expect(screen.getByRole('button',{name:'刷新月份 Refresh month'})).toBeEnabled()
   })
 })

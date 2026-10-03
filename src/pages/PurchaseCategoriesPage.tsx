@@ -1,4 +1,5 @@
 import { useEffect,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import {
   duplicateVesselCode,type PurchaseCategory,type PurchaseCategoryInput,
@@ -42,6 +43,7 @@ export function PurchaseCategoriesPage({loader=loadPurchaseCategories,initialize
 function CategoryDialog({item,existing,save,saved,close}:{item:PurchaseCategory|null;existing:PurchaseCategory[];save:(value:PurchaseCategoryInput)=>Promise<PurchaseCategory>;saved:(item:PurchaseCategory)=>void;close:()=>void}){
   const [value,setValue]=useState<PurchaseCategoryInput>(item?{categoryCode:item.categoryCode,displayName:item.displayName,order:item.order,notes:item.notes}:{categoryCode:'',displayName:'',order:existing.length,notes:''})
   const [error,setError]=useState('');const [busy,setBusy]=useState(false)
+  useUnsavedForm(value)
   async function submit(event:FormEvent){event.preventDefault()
     if(!item&&duplicateVesselCode(value.categoryCode,existing.map(row=>({id:row.id,vesselCode:row.categoryCode,displayName:'',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,notes:''})))){setError('This category code already exists.');return}
     setBusy(true);try{saved(await save(value))}catch(problem){setError(problem instanceof Error?problem.message:'Category was not saved.')}finally{setBusy(false)}}

@@ -1,4 +1,5 @@
 import { useEffect,useMemo,useRef,useState } from 'react'
+import { useUnsavedChanges } from '../components/dirtyState'
 import { Link,useParams } from 'react-router-dom'
 import { businessDateFromLegacy,legacyIsoDateFromBusinessDate,malaysiaBusinessDate,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import { buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,reconcileSettlementLines,updateSettlementLinePrice,totalSettlementAmountCents,type PurchaseSettlementDraft,type PurchaseSettlementLine,asSettlementSourceEntry } from '../lib/purchaseSettlement'
@@ -51,9 +52,11 @@ export function PurchaseSettlementPage({
   const [loadedKey,setLoadedKey]=useState(''),[draftRevision,setDraftRevision]=useState(0)
   const [draftId,setDraftId]=useState<string|undefined>()
   const saveLock=useRef(false)
+  const [savedFields,setSavedFields]=useState('')
   const requestedVesselId=sessionId?'':vesselId,requestedDate=sessionId?'':businessDate
   const contextKey=sessionId?`${productType}:${sessionId}`:`${productType}:${vesselId}:${businessDate}`
   const ready=!loading&&loadedKey===contextKey
+  useUnsavedChanges(ready && JSON.stringify({receiptNo,priceInputs}) !== savedFields)
   const editable=ready&&Boolean(sourceSession&&canModifyWeighing(sourceSession,now()))
 
   useEffect(()=>{let cancelled=false;void vesselLoader().then(items=>{if(cancelled)return;setVessels(items);if(!sessionId)setVesselId(current=>current||items.find(item=>item.active)?.id||'')}).catch(()=>{if(!cancelled)setError('无法载入船号资料，仍可查看指定的历史结单。')});return()=>{cancelled=true}},[vesselLoader,sessionId])
@@ -77,7 +80,9 @@ export function PurchaseSettlementPage({
       const nextLines=source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
       setSourceSession(source?.session??null);setEntries(sourceEntries);setReceiptNo(draft?.receiptNo??source?.session.externalSlipNo??'');setDraftRevision(draft?.revision??0)
       setDraftId(draft?.draftId)
-      setLines(nextLines);setPriceInputs(Object.fromEntries(nextLines.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])))
+      const nextPrices=Object.fromEntries(nextLines.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)]))
+      setLines(nextLines);setPriceInputs(nextPrices)
+      setSavedFields(JSON.stringify({receiptNo:draft?.receiptNo??source?.session.externalSlipNo??'',priceInputs:nextPrices}))
       if(sessionId){setVesselId(sourceVesselId);setBusinessDate(date)}
       setLoadedKey(contextKey)
     })().catch(problem=>{if(!cancelled){setLoadFailed(true);setError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{if(!cancelled)setLoading(false)})
@@ -103,6 +108,7 @@ export function PurchaseSettlementPage({
         vesselId:sourceSession.vesselId,vesselCodeSnapshot:sourceSession.vesselCodeSnapshot,receiptNo:receiptNo.trim(),lines:validatedLines,sourceEntryIds:entries.filter(item=>!item.voided&&item.productType===productType).map(item=>item.id),revision:draftRevision}),
         ...(draftId?{draftId}:{}),sourceSessionId:sourceSession.id,sourceSessionRevision:sourceSession.revision})
       setDraftRevision(saved.revision);setDraftId(saved.draftId)
+      setSavedFields(JSON.stringify({receiptNo,priceInputs}))
       setMessage(`结单草稿已保存（第 ${saved.revision} 版）。`)
     }catch(problem){setError(problem instanceof Error?problem.message:'无法保存结单草稿。')}finally{setBusy(false);saveLock.current=false}
   }

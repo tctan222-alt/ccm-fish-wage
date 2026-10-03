@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
+import { useUnsavedChanges } from './dirtyState'
 import { retailMoney, retailPriceCents, type RetailFish } from '../lib/retailSales'
 import { quickAddRetailFish } from '../services/retailSales'
 import { assertRetailFishUnique, exactRetailFishIdentity, exactRetailSearchMatches, searchRetailFish } from '../lib/retailFish'
@@ -20,6 +21,7 @@ export function RetailFishPicker({ fish, query, inputRef, selectedFishId, onQuer
   const [newName, setNewName] = useState<string | null>(null), [malay, setMalay] = useState(''), [price, setPrice] = useState('')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   const [otherEntry, setOtherEntry] = useState(false)
+  useUnsavedChanges(newName !== null && !!(newName || malay || price))
   const saving = useRef(false), composing = useRef(false), malayInput = useRef<HTMLInputElement>(null), nameInput = useRef<HTMLInputElement>(null)
   const cleanQuery = query.trim(), keyword = cleanQuery.toLocaleLowerCase()
   const matches = searchRetailFish(fish ?? [], cleanQuery)

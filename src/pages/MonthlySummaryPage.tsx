@@ -65,7 +65,7 @@ function formatShortDate(dateKey:string){
 }
 
 function rateLabel(rateCents:number|null){
-  return rateCents===null?'Custom rate':`RM${money(rateCents)}`
+  return rateCents===null?'自订单价 Custom rate':`RM${money(rateCents)}`
 }
 
 export function MonthlySummaryPage({
@@ -128,7 +128,7 @@ export function MonthlySummaryPage({
       if(!mountedRef.current)return
       setEntries([])
       setVoids([])
-      setError('Monthly records timed out. Check your connection and try again.')
+      setError('月记录载入超时，请检查连接后重试。 Monthly records timed out. Check your connection and try again.')
       setLoading(false)
     },requestTimeoutMs)
 
@@ -144,7 +144,7 @@ export function MonthlySummaryPage({
         setEntries([])
         setVoids([])
         setClosingData({month:null,statements:[],payments:[]})
-        setError('Monthly records could not be loaded. Check your connection and try again.')
+        setError('无法载入月记录，请检查连接后重试。 Monthly records could not be loaded. Check your connection and try again.')
       })
       .finally(()=>{
         finishRequest(requestId)
@@ -229,14 +229,14 @@ export function MonthlySummaryPage({
   return <main className="monthly-wage-page">
     <header>
       <p className="eyebrow">CCM Fishery</p>
-      <h1>Monthly Summary</h1>
-      <Link className="page-link" to="/fish-head-wages">Back to wage entry</Link>
-      <Link className="page-link" to="/master-data">Master Data</Link>
+      <h1>切鱼头月结 Monthly Summary</h1>
+      <Link className="page-link" to="/fish-head-wages">返回工钱录入 Back to wage entry</Link>
+      <Link className="page-link" to="/master-data">主资料 Master Data</Link>
     </header>
 
     <section className="date-filter">
       <label>
-        Wage month
+        工资月份 Wage month
         <input
           type="month"
           value={monthKey}
@@ -248,13 +248,81 @@ export function MonthlySummaryPage({
         />
       </label>
       <button type="button" onClick={()=>loadMonth(monthKey)} disabled={loading}>
-        {loading?'Loading...':'Refresh month'}
+        {loading?'正在载入… Loading...':'刷新月份 Refresh month'}
       </button>
     </section>
 
     <p className="summary-date">{formatMonth(monthKey)}</p>
 
     {error&&<p className="error" role="alert">{error}</p>}
+
+
+    <section className="monthly-grand-total" aria-label="整月总览 Monthly totals">
+      <div><span>工人数 Workers</span><strong>{totals.workers}</strong></div>
+      <div><span>工作天数 Work days</span><strong>{totals.days}</strong></div>
+      <div><span>总篮数 Baskets</span><strong>{totals.baskets}</strong></div>
+      <div><span>总重量 Total kg</span><strong>{totals.weight}kg</strong></div>
+      <div><span>总工钱 Total wage</span><strong>RM{money(totals.wageCents)}</strong></div>
+      <div><span>作废记录 Voided</span><strong>{totals.voids}</strong></div>
+    </section>
+    <h2>个人月总结 Monthly Summary by Worker</h2>
+
+    {loading?<p className="notice">正在载入月记录… Loading monthly records...</p>:
+      entries.length===0?<p className="notice">本月没有有效工钱记录。 No active wage records for this month.</p>:
+      <div className="monthly-worker-list">
+        {workerGroups.map(group=><section className="monthly-worker-card" key={group.workerId||group.workerName}>
+          <div className="daily-worker-heading">
+            <div>
+              <p className="eyebrow">工人 Worker</p>
+              <h2>{group.workerName}</h2>
+            </div>
+            <strong>RM{money(group.totalWageCents)}</strong>
+          </div>
+
+          <div className="monthly-worker-total">
+            <div><span>工作天数 Work days</span><strong>{group.days.size}</strong></div>
+            <div><span>总篮数 Baskets</span><strong>{group.entries.length}</strong></div>
+            <div><span>总重量 Total kg</span><strong>{group.totalWeight}kg</strong></div>
+            <div><span>总工钱 Total wage</span><strong>RM{money(group.totalWageCents)}</strong></div>
+          </div>
+
+          <div className="rate-breakdown">
+            {[...FIXED_RATE_CENTS,null].map(rate=><div key={rateLabel(rate)}>
+              <span>{rateLabel(rate)}</span>
+              <strong>RM{money(rateTotal(group,rate))}</strong>
+            </div>)}
+          </div>
+
+          <details className="monthly-days">
+            <summary>查看每日汇总及篮重明细 View daily totals and basket details</summary>
+            {workerDayGroups(group).map(day=><details key={day.dateKey}>
+              <summary>
+                <span>{formatShortDate(day.dateKey)}</span>
+                <strong>{day.entries.length} 篮 Baskets · {day.totalWeight}kg · RM{money(day.totalWageCents)}</strong>
+              </summary>
+              <ol className="saved-entry-list">
+                {day.entries.map((entry,index)=><li key={entry.id}>
+                  <span className="entry-number">{index+1}</span>
+                  <div className="saved-entry-details">
+                    <strong>{entry.weightKg}kg x RM{entry.rateRm}</strong>
+                    <small>{entry.dateKey}</small>
+                  </div>
+                  <strong className="saved-entry-wage">RM{entry.wageRm}</strong>
+                </li>)}
+              </ol>
+              <Link className="open-day-link" to={`/today?date=${day.dateKey}`}>查看当日 Open day</Link>
+            </details>)}
+          </details>
+        </section>)}
+      </div>
+    }
+    {!loading&&!error&&<section aria-label="每日全体工钱 Daily Wages" className="monthly-daily-summary"><h2>每日全体工钱 Daily Wages</h2>
+      {aggregation.days.length===0?<p className="notice">本月没有有效工钱记录。 No active wages this month.</p>:<ul>{aggregation.days.map(day=><li key={day.dateKey}><Link to={`/today?date=${day.dateKey}`}>
+        <strong>{formatShortDate(day.dateKey)}</strong><span>{day.workers} 人 Workers · {day.baskets} 篮 Baskets · {day.weightKg} kg</span><strong>RM{money(day.wageCents)}</strong>
+      </Link></li>)}</ul>}
+    </section>}
+
+    {!loading&&!error&&<p role={totalsMatch?'status':'alert'} className={totalsMatch?'notice':'error'}>{totalsMatch?'个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.':'月结汇总不一致，请核对记录及已结月快照。 Totals differ; check wage records and closing snapshots.'}</p>}
 
     {!loading&&<MonthlyClosingPanel
       monthKey={monthKey}
@@ -267,76 +335,10 @@ export function MonthlySummaryPage({
       onReopen={async(target,reason)=>{await reopenHandler(target,reason);loadMonth(target)}}
     />}
 
-    <section className="monthly-grand-total" aria-label="Monthly totals">
-      <div><span>Workers</span><strong>{totals.workers}</strong></div>
-      <div><span>Work days</span><strong>{totals.days}</strong></div>
-      <div><span>Baskets</span><strong>{totals.baskets}</strong></div>
-      <div><span>Total kg</span><strong>{totals.weight}kg</strong></div>
-      <div><span>Total wage</span><strong>RM{money(totals.wageCents)}</strong></div>
-      <div><span>Voided</span><strong>{totals.voids}</strong></div>
-    </section>
-    {!loading&&!error&&<p role={totalsMatch?'status':'alert'} className={totalsMatch?'notice':'error'}>{totalsMatch?'个人、每日与整月工钱已核对一致。 Worker, daily and month totals match.':'月结汇总不一致，请核对记录及已结月快照。 Totals differ; check wage records and closing snapshots.'}</p>}
-    <h2>个人月总结 Monthly Summary by Worker</h2>
-
-    {loading?<p className="notice">Loading monthly records...</p>:
-      entries.length===0?<p className="notice">No active wage records for this month.</p>:
-      <div className="monthly-worker-list">
-        {workerGroups.map(group=><section className="monthly-worker-card" key={group.workerId||group.workerName}>
-          <div className="daily-worker-heading">
-            <div>
-              <p className="eyebrow">Worker</p>
-              <h2>{group.workerName}</h2>
-            </div>
-            <strong>RM{money(group.totalWageCents)}</strong>
-          </div>
-
-          <div className="monthly-worker-total">
-            <div><span>工作天数 Work days</span><strong>{group.days.size}</strong></div>
-            <div><span>Baskets</span><strong>{group.entries.length}</strong></div>
-            <div><span>Total kg</span><strong>{group.totalWeight}kg</strong></div>
-            <div><span>Total wage</span><strong>RM{money(group.totalWageCents)}</strong></div>
-          </div>
-
-          <div className="rate-breakdown">
-            {[...FIXED_RATE_CENTS,null].map(rate=><div key={rateLabel(rate)}>
-              <span>{rateLabel(rate)}</span>
-              <strong>RM{money(rateTotal(group,rate))}</strong>
-            </div>)}
-          </div>
-
-          <details className="monthly-days">
-            <summary>View daily totals and basket details</summary>
-            {workerDayGroups(group).map(day=><details key={day.dateKey}>
-              <summary>
-                <span>{formatShortDate(day.dateKey)}</span>
-                <strong>{day.entries.length} basket{day.entries.length===1?'':'s'} · {day.totalWeight}kg · RM{money(day.totalWageCents)}</strong>
-              </summary>
-              <ol className="saved-entry-list">
-                {day.entries.map((entry,index)=><li key={entry.id}>
-                  <span className="entry-number">{index+1}</span>
-                  <div className="saved-entry-details">
-                    <strong>{entry.weightKg}kg x RM{entry.rateRm}</strong>
-                    <small>{entry.dateKey}</small>
-                  </div>
-                  <strong className="saved-entry-wage">RM{entry.wageRm}</strong>
-                </li>)}
-              </ol>
-              <Link className="open-day-link" to={`/today?date=${day.dateKey}`}>Open day</Link>
-            </details>)}
-          </details>
-        </section>)}
-      </div>
-    }
-    {!loading&&!error&&<section aria-label="每日全体工钱 Daily Wages" className="monthly-daily-summary"><h2>每日全体工钱 Daily Wages</h2>
-      {aggregation.days.length===0?<p className="notice">本月没有有效工钱记录。 No active wages this month.</p>:<ul>{aggregation.days.map(day=><li key={day.dateKey}><Link to={`/today?date=${day.dateKey}`}>
-        <strong>{formatShortDate(day.dateKey)}</strong><span>{day.workers} 人 Workers · {day.baskets} 篮 Baskets · {day.weightKg} kg</span><strong>RM{money(day.wageCents)}</strong>
-      </Link></li>)}</ul>}
-    </section>}
-
     <section className="void-history">
       <details>
-        <summary>Voided records this month ({voids.length})</summary>
-        {voids.length===0?<p className="notice">No voided records for this month.</p>:
+        <summary>本月作废记录 Voided records this month ({voids.length})</summary>
+        {voids.length===0?<p className="notice">本月没有作废记录。 No voided records for this month.</p>:
           <ol className="void-history-list">
             {voids.map((item,index)=><li key={item.id}>
               <div className="void-history-heading">
@@ -345,7 +347,7 @@ export function MonthlySummaryPage({
                 <strong>RM{item.wageRm}</strong>
               </div>
               <p>{item.dateKey}: {item.weightKg}kg x RM{item.rateRm}</p>
-              <p><strong>Reason:</strong> {item.voidReason}</p>
+              <p><strong>原因 Reason:</strong> {item.voidReason}</p>
             </li>)}
           </ol>
         }
