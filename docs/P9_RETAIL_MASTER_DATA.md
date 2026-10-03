@@ -26,7 +26,9 @@ selection and prevent duplicate quick-add through their official name/aliases.
 Ambiguous exact identities do not silently select a first result on Enter.
 
 Master save checks official/alias collisions against the currently read master
-collection (including inactive identities); Malay names are not globally unique.
+collection (including inactive identities), including official/alias versus
+another fish's Malay name. Malay names are not globally unique: two different
+fish may share a Malay translation, with explicit selection when search is ambiguous.
 This is application validation, not a globally atomic identity reservation for
 simultaneous edits on different devices. Each individual write retains the
 existing audited Firestore transaction. No new reservation collection was added.

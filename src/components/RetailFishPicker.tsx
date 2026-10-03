@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { retailMoney, retailPriceCents, type RetailFish } from '../lib/retailSales'
 import { quickAddRetailFish } from '../services/retailSales'
-import { assertRetailFishUnique, exactRetailFishIdentity, searchRetailFish } from '../lib/retailFish'
+import { assertRetailFishUnique, exactRetailFishIdentity, exactRetailSearchMatches, searchRetailFish } from '../lib/retailFish'
 import { Link } from 'react-router-dom'
 
 interface Props {
@@ -25,11 +25,11 @@ export function RetailFishPicker({ fish, query, inputRef, selectedFishId, onQuer
   const matches = searchRetailFish(fish ?? [], cleanQuery)
   const exact = cleanQuery ? exactRetailFishIdentity(fish ?? [], cleanQuery) : []
   const inactive = exact.find(item => !item.active)
-  const ambiguous = !!keyword && matches.filter(item => [item.chineseName, item.malayName, ...(item.aliases ?? [])]
-    .some(name => name.trim().toLocaleLowerCase() === keyword)).length > 1
+  const exactMatches = exactRetailSearchMatches(matches, cleanQuery)
+  const ambiguous = exactMatches.length > 1
   const suggestions = keyword ? matches.slice(0, 8) : matches
   const activeIndex = Math.min(highlighted, suggestions.length - 1)
-  const canCreate = fish !== null && !!cleanQuery && !exact.length && !matches.some(item => item.malayName.toLocaleLowerCase() === keyword) && cleanQuery !== '黑昌'
+  const canCreate = fish !== null && !!cleanQuery && !exact.length && !exactMatches.length && cleanQuery !== '黑昌'
   const showSuggestions = expanded && newName === null && suggestions.length > 0
   const creating = newName !== null
   useEffect(() => {

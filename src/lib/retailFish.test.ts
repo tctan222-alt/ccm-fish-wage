@@ -38,6 +38,12 @@ describe('Retail Master compatibility and identity', () => {
     expect(() => assertRetailFishUnique('one', fish, [fish])).not.toThrow()
     expect(() => assertRetailFishUnique(null, { ...fish, chineseName: '另鱼' }, [fish])).not.toThrow()
   })
+  it('blocks official/alias versus Malay cross-field collisions while permitting shared Malay names', () => {
+    expect(() => assertRetailFishUnique(null, { ...fish, chineseName: '新鱼', aliases: ['Kerisi'] }, [fish])).toThrow(/重复/)
+    expect(() => assertRetailFishUnique(null, { ...fish, chineseName: 'Kerisi', malayName: '' }, [fish])).toThrow(/重复/)
+    expect(() => assertRetailFishUnique(null, { ...fish, chineseName: '新鱼', malayName: '金线' }, [fish])).toThrow(/重复/)
+    expect(() => assertRetailFishUnique(null, { ...fish, chineseName: '新鱼', malayName: 'Kerisi' }, [fish])).not.toThrow()
+  })
   it('matches Chinese, Malay and aliases in ranked order with stable order ties', () => {
     const items = [{ ...fish, id: 'alias', chineseName: '另一鱼', malayName: '', aliases: ['金线'] }, fish, { ...fish, id: 'prefix', chineseName: '金线仔' }]
     expect(searchRetailFish(items, '金线').map(item => item.id)).toEqual(['one', 'alias', 'prefix'])

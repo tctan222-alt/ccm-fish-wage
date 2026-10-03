@@ -35,6 +35,13 @@ const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明
 beforeEach(() => { state.records.clear(); state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; sessionStorage.clear() })
 
 describe('retail quick-add fish', () => {
+  it('rejects saved aliases and Other Chinese names colliding with Malay, but allows two Malay translations to match', async () => {
+    state.records.set('retailFish/existing', { chineseName: '金线', malayName: 'Kerisi', suggestedPriceCents: 205, active: true })
+    await expect(saveRetailFish(null, { chineseName: '新鱼', malayName: '', suggestedPriceCents: null, active: true, aliases: ['Kerisi'] })).rejects.toThrow(/重复/)
+    await expect(quickAddRetailFish({ chineseName: 'Kerisi', malayName: '', suggestedPriceCents: null, active: true })).rejects.toThrow(/重复/)
+    expect(state.writes).not.toHaveBeenCalled()
+    await expect(saveRetailFish(null, { chineseName: '另一鱼', malayName: 'Kerisi', suggestedPriceCents: null, active: true })).resolves.toMatchObject({ chineseName: '另一鱼' })
+  })
   it('allows optional details, assigns successive order, blocks inactive alias duplicates and preserves audit on edit', async () => {
     const first = await quickAddRetailFish({ chineseName: '第一鱼', malayName: '', suggestedPriceCents: null, active: true })
     const second = await quickAddRetailFish({ chineseName: '第二鱼', malayName: '', suggestedPriceCents: null, active: true })
