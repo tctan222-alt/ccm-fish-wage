@@ -31,8 +31,8 @@ async function chooseWorkerAndEnter74Kg(){
 describe('fish head worker session flow',()=>{
   it('keeps the wage page limited to wage entry and wage summaries',async()=>{
     setup()
-    expect(await screen.findByRole('link',{name:'工钱录入'})).toBeInTheDocument()
-    expect(screen.getByRole('link',{name:'工钱 Summary'})).toBeInTheDocument()
+    expect(await screen.findByRole('link',{name:'每日明细'})).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'月度汇总'})).toHaveAttribute('href','/monthly')
     expect(screen.getByRole('link',{name:'← 返回'})).toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/Vessel Trips/i})).not.toBeInTheDocument()
     expect(screen.queryByRole('link',{name:/现场称重/i})).not.toBeInTheDocument()
@@ -84,7 +84,7 @@ describe('fish head worker session flow',()=>{
 
     fireEvent.change(date,{target:{value:'2026-07-31'}})
     expect(screen.getByText('31/07/2026')).toBeInTheDocument()
-    expect(screen.getByRole('link',{name:'工钱录入'})).toHaveAttribute('href','/today?date=2026-07-31')
+    expect(screen.getByRole('link',{name:'每日明细'})).toHaveAttribute('href','/daily?date=2026-07-31')
     await chooseWorkerAndEnter74Kg()
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     fireEvent.click(screen.getByRole('button',{name:'确认并保存工人合计'}))

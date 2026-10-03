@@ -727,3 +727,67 @@ html,body,#root,main{
 .priced-input-bar{grid-template-columns:minmax(0,1fr) minmax(92px,.85fr) 108px}
 @media(max-width:500px){.department-links{grid-template-columns:1fr}.vessel-button-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.weighing-setup .vessel-button-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.back-button{top:auto;bottom:8px}.weighing-page{padding-bottom:60px}.priced-input-bar{grid-template-columns:repeat(2,minmax(0,1fr))}.priced-input-bar .weighing-confirm{grid-column:1 / -1}.priced-input-bar label{grid-template-columns:1fr}.priced-input-bar label span{font-size:.75rem}}
 @media print{.back-button{display:none!important}}
+
+/* Daily wage report print */
+main.daily-details-page{padding-top:64px;padding-bottom:calc(72px + env(safe-area-inset-bottom))}
+.daily-details-page header{padding-right:0}
+.daily-details-page h1{font-size:1.65rem;overflow-wrap:anywhere}
+.daily-details-page .daily-navigation{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.daily-details-page .daily-navigation .page-link{min-height:44px;margin:6px 0 0;padding:7px;font-size:.9rem;text-align:center}
+.daily-details-page .daily-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.daily-details-page .daily-controls label{grid-column:1/-1;display:grid;gap:5px;min-width:0}
+.daily-details-page .daily-controls input{width:100%;min-width:0;min-height:48px;font-size:16px}
+.daily-details-page .daily-controls button{min-height:44px;padding:8px;font-size:1rem}
+.daily-details-page .daily-worker-heading{flex-wrap:wrap;gap:6px}
+.daily-details-page .daily-worker-heading h2{overflow-wrap:anywhere}
+.daily-details-page .daily-worker-total{grid-template-columns:repeat(3,minmax(0,1fr))}
+.daily-details-page .daily-worker-total div,.daily-details-page .daily-grand-total div{min-width:0;padding:9px 4px;overflow-wrap:anywhere}
+.daily-details-page .daily-worker-total strong{font-size:1rem}
+.daily-details-page .daily-report-print{display:none}
+.daily-details-page .daily-basket-table{width:100%;border-collapse:collapse;table-layout:fixed}
+.daily-details-page .daily-basket-table th,.daily-details-page .daily-basket-table td{padding:6px 3px;text-align:right;overflow-wrap:anywhere}
+.daily-details-page .daily-report-screen .daily-basket-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.daily-details-page .daily-report-screen .daily-basket-table tbody{display:grid;gap:9px}
+.daily-details-page .daily-report-screen .daily-basket-table tr{display:grid;grid-template-columns:28px repeat(2,minmax(0,1fr));gap:5px 8px;padding:8px;border:1px solid #d9e2ec;border-radius:10px}
+.daily-details-page .daily-report-screen .daily-basket-table td{min-width:0;padding:0;text-align:left}
+.daily-details-page .daily-report-screen .daily-basket-table td[data-label]::before{content:attr(data-label);display:block;margin-bottom:2px;color:#486581;font-size:.75rem}
+.daily-details-page .daily-report-screen .daily-basket-table td:first-child{grid-row:1/3;font-weight:800;text-align:center}
+.daily-details-page .daily-report-screen .daily-basket-table td:first-child::before{display:none}
+.daily-details-page .daily-report-screen .daily-basket-table td:nth-child(4){grid-column:2}
+.daily-details-page .daily-report-screen .daily-basket-table td:last-child{grid-column:2/4}
+.daily-details-page .daily-report-screen .void-entry-button{width:100%;margin-top:3px;min-height:44px}
+.daily-details-page .daily-void-history{overflow-wrap:anywhere}
+
+@page daily-wage-report{size:A4;margin:12mm}
+@media print{
+  html:has(.daily-details-page){background:#fff}
+  main.daily-details-page{page:daily-wage-report;max-width:none;width:100%;margin:0;padding:0;color:#000;font-size:10pt}
+  .daily-details-page .daily-report-screen,
+  .daily-details-page .daily-controls,
+  .daily-details-page .daily-navigation,
+  .daily-details-page .daily-feedback,
+  .daily-details-page .daily-void-history,
+  .daily-details-page .daily-void-modal{display:none!important}
+  .daily-details-page .daily-report-print{display:block}
+  .daily-details-page header{margin:0 0 6mm;padding:0;break-after:avoid;page-break-after:avoid}
+  .daily-details-page header h1{font-size:18pt}
+  .daily-details-page header .eyebrow{font-size:13pt;color:#000}
+  .daily-details-page .daily-english-title{display:none}
+  .daily-details-page .summary-date{margin:0 0 5mm;color:#000;text-align:left}
+  .daily-details-page section{margin:0 0 5mm;padding:0;border:0;border-radius:0;box-shadow:none;background:#fff}
+  .daily-details-page .daily-print-worker{break-inside:auto;page-break-inside:auto}
+  .daily-details-page .daily-print-worker>h2{font-size:12pt;margin:0 0 2mm;break-after:avoid;page-break-after:avoid}
+  .daily-details-page .daily-worker-heading{margin-bottom:2mm;break-inside:avoid;break-after:avoid;page-break-inside:avoid;page-break-after:avoid}
+  .daily-details-page .daily-worker-heading h2{font-size:12pt}
+  .daily-details-page .daily-worker-heading>strong{font-size:11pt;color:#000}
+  .daily-details-page .daily-basket-table{font-size:9pt}
+  .daily-details-page .daily-basket-table thead{display:table-header-group}
+  .daily-details-page .daily-basket-table tr{break-inside:avoid;page-break-inside:avoid}
+  .daily-details-page .daily-basket-table th,.daily-details-page .daily-basket-table td{padding:2mm;border-bottom:1px solid #bbb}
+  .daily-details-page .daily-basket-table th:first-child,.daily-details-page .daily-basket-table td:first-child{width:10%;text-align:left}
+  .daily-details-page .daily-worker-total,.daily-details-page .daily-grand-total{margin:3mm 0 0;break-inside:avoid;page-break-inside:avoid}
+  .daily-details-page .daily-grand-total{grid-template-columns:repeat(4,minmax(0,1fr));border-top:2px solid #000;padding-top:3mm}
+  .daily-details-page .daily-worker-total div,.daily-details-page .daily-grand-total div{padding:2mm;background:#fff;border:1px solid #bbb;border-radius:0}
+  .daily-details-page .daily-worker-total strong,.daily-details-page .daily-grand-total strong{font-size:11pt}
+  .daily-details-page .daily-worker-total span,.daily-details-page .daily-grand-total span{color:#000}
+}

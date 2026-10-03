@@ -193,8 +193,8 @@ export function FishHeadWagePage({
     </header>
 
     <nav className="summary-nav" aria-label="工钱汇总">
-      <Link className="summary-link" to={`/today?date=${encodeURIComponent(legacyIsoDateFromBusinessDate(businessDate))}`} aria-label="工钱录入">工钱录入</Link>
-      <Link className="summary-link monthly" to="/monthly" aria-label="工钱 Summary">工钱 Summary</Link>
+      <Link className="summary-link" to={`/daily?date=${encodeURIComponent(legacyIsoDateFromBusinessDate(businessDate))}`} aria-label="每日明细">每日明细</Link>
+      <Link className="summary-link monthly" to="/monthly" aria-label="月度汇总">月度汇总</Link>
     </nav>
 
     <section className="date-filter">

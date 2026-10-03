@@ -148,12 +148,16 @@ Owner 明确授权后，从 clean、synced、CI-green `3880b1c99b5fecfb8c34a9804
 
 ## Priority 8：切鱼头工钱 Daily Details + Print
 
+**Priority 7 production checkpoint（2026-10-03）：**Owner 明确授权后，从 clean、synced、main CI-green `5343a18ad6120e328a21611618f3869c1b399533` 重新 production build，通过后执行 CLI 15.29.0 Hosting-only release。生产 `/`、`/fish-head-settlement`、`index-Bx-_-YRG.js`、`index-CzZ_fjtI.css`、`FishHeadSettlementListPage-BriH9c5t.js` 均 HTTP 200 且 SHA-256 与本地构建逐文件一致；HTML hash `8aebb5a552466b890f0fb1b4a7cbcec8cc2fd9bf5b38a366fb9703015566310b`。未部署 Rules / Functions / 其他 service，未写 production business records。
+
 - 复用 `TodaySummaryPage` / `loadDailyWageData` 和既有 wage database，正式命名“切鱼头工钱每日明细”。`FishHeadWagePage` 增加“当天明细 / Daily Details”入口。
 - 支持选日期，显示当天所有 active / non-voided wage entries。
 - 每工人显示姓名、篮数、总 kg、wage subtotal；逐篮显示 sequence、weight kg、rate RM/kg、wage RM，例如 `1. 74kg × RM0.12 = RM8.88`。
 - Grand Total 包含工人数、总篮数、总 kg、total wage。Void records 不计入 active total，原 audit 保留。
 - “打印 Print”输出标题“切鱼头工钱每日明细”、日期、所有工人、所有 individual basket entries、每工人 subtotal 和 Grand Total。网页 `<details>` 即使折叠，打印也必须包含全部明细。
 - 打印隐藏 navigation、date controls、refresh、Void buttons、action buttons、sign out。
+
+P8 复用现有每日 loader、worker grouping、stored wage cents totals 和 void audit，没有新增 wage database、summary document 或工资公式。正式入口为 `/daily?date=YYYY-MM-DD`；`/today` 继续可用。页面与打印共用篮表、小计及总计 renderer，print-only 完整视图不使用折叠容器，屏幕所有 `<details>` 折叠时仍打印全部明细。实现及验证范围见 [P8 每日明细 / 打印文档](P8_DAILY_WAGE_PRINT.md)。P8 merge 后停止，不自动部署，不开始 Priority 9–10。
 
 ## Priority 9：Retail Master Data 与 Seed Dataset
 
