@@ -46,6 +46,7 @@ export interface SettlementCursor {
 export interface SettlementPage {items:SettlementSummary[];cursor:SettlementCursor|null}
 export type SettlementPageLoader=(search:SettlementSearch,cursor?:SettlementCursor|null,signal?:AbortSignal)=>Promise<SettlementPage>
 const PAGE_SIZE=25
+const CANONICAL_QUERY_BUDGET=6
 const SESSION_FIELDS=['sessionCode','productType','weighingDate','vesselId','vesselCodeSnapshot','status','revision',
   'fishHeadBasketCount','fishHeadWeightGrams','fishMealBucketBasketCount','fishMealBagBasketCount','fishMealTotalWeightGrams',
   'processedReceiptId','processedReceiptCode','externalSlipNo']
@@ -82,7 +83,9 @@ function sessionQuery(search:SettlementSearch,after:ProjectedDocument|null,month
   if(month){
     from=from.slice(0,7)===month?from:`${month}-01`
     to=to.slice(0,7)===month?to:new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).toISOString().slice(0,10)
-    filters.push(condition('monthKey','IN',{arrayValue:{values:[`${month.slice(5)}/${month.slice(0,4)}`,month].map(stringValue)}}))
+    // Stored date/month pairs are enforced by validWeighingSession in Rules.
+    // Equality keeps canonical and ISO streams disjoint even for full-month bounds.
+    filters.push(condition('monthKey','EQUAL',stringValue(`${month.slice(5)}/${month.slice(0,4)}`)))
     from=businessDateFromLegacy(from);to=businessDateFromLegacy(to)
   }
   filters.push(condition('weighingDate','GREATER_THAN_OR_EQUAL',stringValue(from)),condition('weighingDate','LESS_THAN_OR_EQUAL',stringValue(to)))
@@ -136,25 +139,32 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
       state.iso.buffer=docs;state.iso.done=docs.length<PAGE_SIZE
       state.iso.after=docs.at(-1)??state.iso.after
     }
+    let canonicalQueries=0
     async function fillCanonical(newestIsoMonth?:string){
       while(!state.canonical.buffer.length&&!state.canonical.done){
         if(state.monthIndex>=months.length){state.canonical.done=true;break}
         // Older canonical months cannot outrank the next ISO row. Defer these
         // empty-month probes until needed instead of scanning a large range before page one.
         if(newestIsoMonth&&months[state.monthIndex]<newestIsoMonth)break
+        if(canonicalQueries>=CANONICAL_QUERY_BUDGET)return false
+        canonicalQueries++
         const docs=await run(sessionQuery(search,state.canonical.after,months[state.monthIndex]),signal)
         state.canonical.buffer=docs
         state.canonical.after=docs.at(-1)??state.canonical.after
         if(docs.length<PAGE_SIZE){state.monthIndex++;state.canonical.after=null}
         if(state.monthIndex>=months.length)state.canonical.done=true
       }
+      return true
     }
     const documents:ProjectedDocument[]=[]
     while(documents.length<PAGE_SIZE){
       signal?.throwIfAborted()
       await fillIso()
       const newestIso=state.iso.buffer[0]
-      await fillCanonical(newestIso?legacyIsoDateFromBusinessDate(businessDateFromLegacy(text(newestIso,'weighingDate'))).slice(0,7):undefined)
+      const canonicalReady=await fillCanonical(newestIso?legacyIsoDateFromBusinessDate(businessDateFromLegacy(text(newestIso,'weighingDate'))).slice(0,7):undefined)
+      // Return a resumable partial page instead of hiding results behind hundreds
+      // of empty-month requests. Never emit ISO rows ahead of unchecked newer months.
+      if(!canonicalReady)break
       const iso=state.iso.buffer[0],canonical=state.canonical.buffer[0]
       if(!iso&&!canonical)break
       const order=(doc:ProjectedDocument)=>legacyIsoDateFromBusinessDate(businessDateFromLegacy(text(doc,'weighingDate')))

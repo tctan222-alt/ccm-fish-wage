@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeRetailLine, type RetailSaleInput } from '../lib/retailSales'
 import seed from '../data/retailFishSeed.json'
 
-const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), failPath: '', uid: 'u1', nextId: 0, beforeCommit: null as ((paths: string[]) => void) | null }))
+const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), serverReads: vi.fn(), serverError: false, failPath: '', uid: 'u1', nextId: 0, beforeCommit: null as ((paths: string[]) => void) | null }))
 vi.mock('../firebase', () => ({ db: {}, auth: { get currentUser() { return { uid: state.uid } } } }))
 vi.mock('firebase/firestore', () => {
   const snapshot = (path: string) => ({ id: path.split('/').at(-1), exists: () => state.records.has(path), data: () => state.records.get(path) })
@@ -13,6 +13,7 @@ vi.mock('firebase/firestore', () => {
       return { path, id: path.split('/').at(-1) }
     },
     getDoc: async (ref: { path: string }) => snapshot(ref.path),
+    getDocFromServer: async (ref: { path: string }) => { state.serverReads(ref.path); if (state.serverError) throw new Error('server unavailable'); return snapshot(ref.path) },
     getDocs: async (ref?: { path: string }) => ({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref?.path ?? 'retailSales'}/`) && path.split('/').length === 2).map(snapshot) }),
     onSnapshot: (ref: { path: string }, next: (data: unknown) => void) => {
       next({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref.path}/`) && path.split('/').length === 2).map(snapshot) })
@@ -43,9 +44,9 @@ vi.mock('firebase/firestore', () => {
     },
   }
 })
-import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish } from './retailSales'
+import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, reconcilePendingRetailSale } from './retailSales'
 const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', vesselId: 'v833', vesselCodeSnapshot: '833', lines: [makeRetailLine(seed[0], '2', '6.15')] }
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.serverReads.mockClear(); state.serverError = false; state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
 
 it('stores independent same-day vessel snapshots and audits a vessel change without changing invoice identity', async () => {
   state.records.set('vessels/v978', { active: true, vesselCode: '978' })
@@ -148,20 +149,51 @@ describe('retail persistence', () => {
   })
   it('safely completes and retries a legacy pending checkout with existing immutable groups', async () => {
     const legacy = { fishId: 'old-fish', chineseName: '历史名称', malayName: 'old', weightKg: 2, unitPriceCents: 615, amountCents: 1230 }
-    const legacyInput = { ...input, lines: Array.from({ length: 6 }, () => ({ ...legacy })) }
+    const legacyInput = { businessDate: input.businessDate, vendorName: input.vendorName, lines: Array.from({ length: 6 }, () => ({ ...legacy })) }
     const firstGroup = { lines: legacyInput.lines.slice(0, 5), totalAmountCents: 6150, createdBy: 'u1' }
     state.records.set('retailSales/old/groups/first', firstGroup)
     sessionStorage.setItem('ccm:retail-pending:u1', JSON.stringify({ id: 'old', input: legacyInput }))
     const pending = loadPendingRetailSale()!
-    const sale = await saveRetailSale(pending.id, pending.input)
+    expect(await reconcilePendingRetailSale(pending)).toBeNull()
+    const correction = { vesselId: 'v833', vesselCodeSnapshot: '833' }
+    rememberPendingRetailSale({ ...pending, vesselCorrection: correction })
+    expect(loadPendingRetailSale()).toMatchObject({ id: 'old', vesselCorrection: correction })
+    const sale = await saveRetailSale(pending.id, pending.input, correction)
     expect(sale.lines).toHaveLength(6)
     expect(sale.lines[5]).toMatchObject({ weightDeciKg: 20, amountCents: 1230 })
     expect(state.records.get('retailSales/old/groups/first')).toBe(firstGroup)
     expect(state.records.get('retailSales/old/groups/second')).toMatchObject({ lines: [{ weightDeciKg: 20 }] })
     const header = state.records.get('retailSales/old')!
     expect(header).toMatchObject({ lineGroups: { first: firstGroup.lines, second: [{ weightDeciKg: 20 }] } })
-    await expect(saveRetailSale(pending.id, pending.input)).resolves.toMatchObject({ totalAmountCents: 7380 })
+    await expect(saveRetailSale(pending.id, pending.input, correction)).resolves.toMatchObject({ totalAmountCents: 7380 })
     expect(state.writes).toHaveBeenCalledTimes(6)
+  })
+  it('uses a server-only check and never treats an offline cache miss as an uncommitted invoice',async()=>{
+    state.serverError=true
+    await expect(reconcilePendingRetailSale({id:'offline',input})).rejects.toThrow('server unavailable')
+    expect(state.serverReads).toHaveBeenCalledWith('retailSales/offline');expect(state.writes).not.toHaveBeenCalled()
+  })
+  it('reconciles an already committed checkout without changing its vessel or allocating another number', async () => {
+    const first = await saveRetailSale('committed', input)
+    const pending = { id: first.id, input, vesselCorrection: { vesselId: 'v978', vesselCodeSnapshot: '978' } }
+    expect(await reconcilePendingRetailSale(pending)).toMatchObject({ id: first.id, vesselId: 'v833' })
+    const writes = state.writes.mock.calls.length
+    expect(await saveRetailSale(first.id, input, pending.vesselCorrection)).toMatchObject({ invoiceNumber: first.invoiceNumber, vesselId: 'v833' })
+    expect(state.writes).toHaveBeenCalledTimes(writes)
+  })
+  it('recovers a changed vessel under the same ID and safely reconciles a competing original commit', async () => {
+    state.records.set('vessels/v833', { active: false, vesselCode: '833' })
+    state.records.set('vessels/v978', { active: true, vesselCode: '978' })
+    await expect(saveRetailSale('changed', input)).rejects.toThrow('重新选择')
+    expect(await reconcilePendingRetailSale({ id: 'changed', input })).toBeNull()
+    const result = await saveRetailSale('changed', input, { vesselId: 'v978', vesselCodeSnapshot: '978' })
+    expect(result).toMatchObject({ id: 'changed', vesselId: 'v978', revision: 1 })
+    expect([...state.records.keys()].filter(path => /^retailSales\/[^/]+$/.test(path))).toEqual(['retailSales/changed'])
+    state.records.set('vessels/v833', { active: true, vesselCode: '833' })
+    expect(await reconcilePendingRetailSale({ id: 'race', input })).toBeNull()
+    const original = await saveRetailSale('race', input)
+    const recovered = await saveRetailSale('race', input, { vesselId: 'v978', vesselCodeSnapshot: '978' })
+    expect(recovered).toMatchObject({ invoiceNumber: original.invoiceNumber, vesselId: 'v833' })
   })
   it('rejects reusing an ID with different business data', async () => {
     await saveRetailSale('sale', input)

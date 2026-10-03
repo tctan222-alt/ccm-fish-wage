@@ -16,7 +16,7 @@ describe('Firestore Emulator: projected settlement queries', () => {
     await environment.withSecurityRulesDisabled(async context => {
       const db = context.firestore()
       await Promise.all(Array.from({ length: 27 }, (_, index) => setDoc(doc(db, 'weighingSessions', `${prefix}-${String(index).padStart(2, '0')}`), {
-        sessionCode: `${prefix}-${index}`, productType, weighingDate: index % 2 ? '2026-10-03' : '03/10/2026', monthKey: index % 2 ? '2026-10' : '10/2026',
+        sessionCode: `${prefix}-${index}`, productType, weighingDate: index % 2 ? '2026-10-02' : '03/10/2026', monthKey: index % 2 ? '2026-10' : '10/2026',
         vesselId: 'rest-inactive', vesselCodeSnapshot: '历史船', status: 'completed', revision: 1,
         fishHeadBasketCount: 1, fishHeadWeightGrams: 80500, fishMealBucketBasketCount: 1, fishMealBagBasketCount: 0, fishMealTotalWeightGrams: 80500,
         notes: 'must not download this field',
@@ -32,10 +32,12 @@ describe('Firestore Emulator: projected settlement queries', () => {
       expect(rows.every(row => !row.document?.fields.notes)).toBe(true)
       return rows.flatMap(row => row.document ? [row.document] : [])
     })
-    const criteria = { productType, from: '2026-10-03', to: '2026-10-03', vesselId: 'rest-inactive', status: 'completed' as const }
+    const criteria = { productType, from: '2026-10-01', to: '2026-10-31', vesselId: 'rest-inactive', status: 'completed' as const }
     const first = await load(criteria), second = await load(criteria, first.cursor)
     expect(first.items).toHaveLength(25); expect(second.items).toHaveLength(2)
     expect(new Set([...first.items, ...second.items].map(item => item.id)).size).toBe(27)
+    expect([...first.items, ...second.items].slice(0,14).every(item => item.weighingDate === '03/10/2026')).toBe(true)
+    expect([...first.items, ...second.items].slice(14).every(item => item.weighingDate === '2026-10-02')).toBe(true)
     expect(second.cursor).toBeNull()
   })
 })

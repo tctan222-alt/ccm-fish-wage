@@ -165,6 +165,28 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     expect(loader.mock.calls[0][0]).toMatchObject({from:'2026-09-01',to:'2026-09-30',vesselId:'old',status:'processed'})
     expect(screen.getByLabelText('船号 Vessel')).toHaveValue('old')
   })
+  it('distinguishes a resumable empty partial page from a confirmed empty range',async()=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:true},canonical:{buffer:[],after:null,done:false},monthIndex:6} satisfies SettlementCursor
+    renderSearch(async()=>({items:[],cursor}))
+    expect(await screen.findByText('当前已查询部分暂无记录，请载入更多继续查询较早月份。')).toBeInTheDocument()
+    expect(screen.queryByText(/这个日期范围没有/)).not.toBeInTheDocument();expect(screen.getByRole('button',{name:/载入更多/})).toBeEnabled()
+  })
+  it.each(['resolve','reject'])('unlocks a timed-out next page even when it ignores abort and later %s',async outcome=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0} satisfies SettlementCursor
+    const stalled=deferred<{items:SettlementSummary[];cursor:null}>()
+    const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockImplementationOnce(()=>stalled.promise).mockResolvedValueOnce({items:[item({id:'recovered',sessionCode:'RECOVERED'})],cursor:null})
+    renderSearch(loader);await ready();vi.useFakeTimers()
+    try{
+      fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+      await act(async()=>{await vi.advanceTimersByTimeAsync(20000)})
+      expect(screen.getByRole('alert')).toHaveTextContent('下一页载入超时');expect(screen.getByRole('button',{name:/载入更多/})).toBeEnabled()
+      fireEvent.click(screen.getByRole('button',{name:/载入更多/}));await act(async()=>{})
+      expect(screen.getByRole('article',{name:'现场单 RECOVERED'})).toBeInTheDocument()
+      await act(async()=>{if(outcome==='resolve')stalled.resolve({items:[item({id:'late',sessionCode:'LATE'})],cursor:null});else stalled.reject(new Error('late error'))})
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.queryByRole('article',{name:'现场单 LATE'})).not.toBeInTheDocument()
+    }finally{vi.useRealTimers()}
+  })
   it('loads another cursor page, deduplicates IDs and preserves results on a retryable page error',async()=>{
     const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0} satisfies SettlementCursor
     const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({items:[item(),item({id:'second',sessionCode:'SECOND'})],cursor:null})

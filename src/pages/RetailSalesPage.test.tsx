@@ -8,9 +8,9 @@ import { retailToday } from '../lib/retailSales'
 import type { RetailHistoryRange } from '../lib/retailHistory'
 
 vi.mock('../services/purchaseMasterData', () => ({ loadActiveVessels: async () => [{ id: 'v833', vesselCode: '833', active: true }, { id: 'v978', vesselCode: '978', active: true }] }))
-const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn() }))
+const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn(), reconcile: vi.fn() }))
 vi.mock('../lib/retailInvoicePdf', () => ({ createRetailInvoicePdf: vi.fn(async () => new File(['%PDF-1.4'], 'receipt.pdf', { type: 'application/pdf' })) }))
-vi.mock('../services/retailSales', () => ({ watchRetailFish: services.watch, saveRetailSale: services.save, saveRetailFish: services.saveFish, quickAddRetailFish: services.quickAdd, initializeRetailFish: services.initialize, loadRetailSales: services.history, loadRetailSale: services.detail, newRetailSaleId: services.id, loadPendingRetailSale: services.restore, rememberPendingRetailSale: services.remember, clearPendingRetailSale: services.clear,
+vi.mock('../services/retailSales', () => ({ watchRetailFish: services.watch, saveRetailSale: services.save, saveRetailFish: services.saveFish, quickAddRetailFish: services.quickAdd, initializeRetailFish: services.initialize, loadRetailSales: services.history, loadRetailSale: services.detail, newRetailSaleId: services.id, loadPendingRetailSale: services.restore, rememberPendingRetailSale: services.remember, clearPendingRetailSale: services.clear, reconcilePendingRetailSale: services.reconcile,
   watchRetailSales: (range: RetailHistoryRange, next: (snapshot: { sales: RetailSale[]; fromCache: boolean }) => void, error: (problem: unknown) => void) => {
     let current = true
     void services.history(range).then((sales: RetailSale[]) => { if (current) next({ sales, fromCache: false }) }).catch(error)
@@ -44,6 +44,7 @@ beforeEach(() => {
   services.saveFish.mockResolvedValue(undefined)
   services.quickAdd.mockImplementation(async input => ({ id: 'new-fish', ...input }))
   services.restore.mockReturnValue(null)
+  services.reconcile.mockResolvedValue(null)
 })
 afterEach(cleanup)
 
@@ -317,6 +318,33 @@ describe('mobile retail checkout', () => {
     await screen.findByText('现金结算已保存。 Cash sale saved.')
     expect(services.save).toHaveBeenCalledWith(pending.id, pending.input)
     expect(services.id).not.toHaveBeenCalled(); expect(services.clear).toHaveBeenCalledOnce()
+  })
+})
+
+describe('pending checkout reconciliation', () => {
+  const input=prepareRetailSale({businessDate:'05/09/2026',vendorName:'阿明',lines:[{fishId:'a',chineseName:'甘丰',malayName:'',weightKg:2,unitPriceCents:600,amountCents:1200}]})
+  it('keeps the form locked when server reconciliation is offline',async()=>{
+    services.restore.mockReturnValue({id:'old',input});services.reconcile.mockRejectedValue(new Error('无法连接服务器'))
+    mount();fireEvent.click(screen.getByRole('button',{name:'核对并重选船号 Verify and Reselect Vessel'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法连接服务器')
+    expect(screen.getByLabelText('船号 Vessel')).toBeDisabled();expect(services.save).not.toHaveBeenCalled()
+  })
+  it('shows an already committed invoice rather than permitting vessel correction',async()=>{
+    services.restore.mockReturnValue({id:'old',input});services.reconcile.mockResolvedValue({id:'old',...input,invoiceNumber:'05092026001'})
+    mount();fireEvent.click(screen.getByRole('button',{name:'核对并重选船号 Verify and Reselect Vessel'}))
+    await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.save).not.toHaveBeenCalled();expect(services.clear).toHaveBeenCalledOnce();expect(services.id).not.toHaveBeenCalled()
+  })
+  it('permits only vessel repair and persists the original snapshot and ID for retry',async()=>{
+    const pending={id:'stale-vessel',input:{...input,vesselId:'v833',vesselCodeSnapshot:'outdated'}}
+    services.restore.mockReturnValue(pending);services.save.mockRejectedValueOnce(new Error('连接中断'))
+    mount();fireEvent.click(screen.getByRole('button',{name:'核对并重选船号 Verify and Reselect Vessel'}))
+    await waitFor(()=>expect(screen.getByLabelText('船号 Vessel')).not.toBeDisabled());await chooseVessel();fill('船号 Vessel','v978')
+    expect(screen.getByLabelText('小贩 Vendor')).toBeDisabled();expect(screen.getByLabelText('日期 Date')).toBeDisabled()
+    fireEvent.click(screen.getByRole('button',{name:'重试结算 Retry Checkout'}));await screen.findByRole('alert')
+    expect(services.remember).toHaveBeenCalledWith({...pending,vesselCorrection:{vesselId:'v978',vesselCodeSnapshot:'978'}})
+    fireEvent.click(screen.getByRole('button',{name:'重试结算 Retry Checkout'}));await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.save.mock.calls[1]).toEqual(services.save.mock.calls[0]);expect(services.id).not.toHaveBeenCalled()
   })
 })
 

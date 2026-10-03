@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
+import { collection, doc, getDoc, getDocFromServer, getDocs, onSnapshot, query, runTransaction, serverTimestamp, where, type Transaction } from 'firebase/firestore'
 import { auth, db } from '../firebase'
 import seed from '../data/retailFishSeed.json'
 import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
@@ -58,17 +58,23 @@ export async function quickAddRetailFish(input: RetailFishInput): Promise<Retail
 
 export const newRetailSaleId = () => doc(collection(db, 'retailSales')).id
 
-export interface PendingRetailSale { id: string; input: RetailSaleInput }
+export type RetailVesselCorrection = { vesselId: string; vesselCodeSnapshot: string }
+export interface PendingRetailSale { id: string; input: RetailSaleInput; vesselCorrection?: RetailVesselCorrection }
+function correctedCheckoutInput(input: RetailSaleInput, correction?: RetailVesselCorrection) {
+  return prepareRetailSale(correction ? { ...input, vesselId: correction.vesselId, vesselCodeSnapshot: correction.vesselCodeSnapshot } : input)
+}
 const pendingKey = () => `ccm:retail-pending:${userId()}`
-export function loadPendingRetailSale(): { id: string; input: Omit<RetailSale, 'id' | 'createdAt'> } | null {
+export function loadPendingRetailSale(): PendingRetailSale | null {
   const value = sessionStorage.getItem(pendingKey())
   if (!value) return null
   const pending = JSON.parse(value) as PendingRetailSale
   if (!/^[a-zA-Z0-9_-]{1,100}$/.test(pending.id)) throw new Error('待确认结算编号无效，请从销售历史核对。 Invalid pending invoice ID. Check Sales History.')
-  return { id: pending.id, input: prepareRetailSale(pending.input) }
+  const corrected = correctedCheckoutInput(pending.input, pending.vesselCorrection)
+  return { id: pending.id, input: prepareRetailSale(pending.input), ...(pending.vesselCorrection ? { vesselCorrection: { vesselId: corrected.vesselId!, vesselCodeSnapshot: corrected.vesselCodeSnapshot! } } : {}) }
 }
 export function rememberPendingRetailSale(pending: PendingRetailSale) {
-  sessionStorage.setItem(pendingKey(), JSON.stringify({ id: pending.id, input: prepareRetailSale(pending.input) }))
+  const corrected = correctedCheckoutInput(pending.input, pending.vesselCorrection)
+  sessionStorage.setItem(pendingKey(), JSON.stringify({ id: pending.id, input: prepareRetailSale(pending.input), ...(pending.vesselCorrection ? { vesselCorrection: { vesselId: corrected.vesselId!, vesselCodeSnapshot: corrected.vesselCodeSnapshot! } } : {}) }))
 }
 export function clearPendingRetailSale() { sessionStorage.removeItem(pendingKey()) }
 
@@ -113,6 +119,27 @@ function assertReplay(data: Record<string, unknown>, id: string, uid: string, cl
   }
 }
 
+function assertCheckoutReplay(id: string, data: Record<string, unknown>, action: Record<string, unknown> | undefined, uid: string, original: RetailSaleInput, corrected: RetailSaleInput) {
+  const matches = (input: RetailSaleInput) => {
+    if (action) assertReplay(action, id, uid, input, 'create', 1)
+    else if (data.createdBy !== uid || !sameInput(id, data, input)) throw retailError('retail/conflict', '结算编号已使用，请从历史核对。 This invoice ID is already in use. Check Sales History.')
+  }
+  try { matches(corrected) } catch { matches(original) }
+}
+
+// Never unlock an uncertain checkout based on a cached absence. Keep the original
+// ID/input so a competing original commit can still be reconciled, not overwritten.
+export async function reconcilePendingRetailSale(pending: PendingRetailSale): Promise<RetailSale | null> {
+  const uid = userId(), original = prepareRetailSale(pending.input)
+  assertOperationId(pending.id)
+  const ref = doc(db, 'retailSales', pending.id)
+  const existing = await getDocFromServer(ref)
+  if (!existing.exists()) return null
+  const action = await getDocFromServer(doc(ref, 'actions', pending.id))
+  assertCheckoutReplay(pending.id, existing.data(), action.exists() ? action.data() : undefined, uid, original, correctedCheckoutInput(original, pending.vesselCorrection))
+  return saleFromDocument(pending.id, existing.data())
+}
+
 async function prepareGroups(id: string, input: RetailSaleInput, uid: string, groupSetId = 'initial') {
   const { lines } = prepareRetailSale(input), ref = doc(db, 'retailSales', id)
   const lineGroups: Record<'first' | 'second' | 'third' | 'fourth', RetailLineInput[]> = { first: lines.slice(0, 5), second: lines.slice(5, 10), third: lines.slice(10, 15), fourth: lines.slice(15) }
@@ -140,8 +167,8 @@ async function prepareGroups(id: string, input: RetailSaleInput, uid: string, gr
   return lineGroups
 }
 
-export async function saveRetailSale(id: string, input: RetailSaleInput): Promise<RetailSale> {
-  const uid = userId(), clean = prepareRetailSale(input), ref = doc(db, 'retailSales', id)
+export async function saveRetailSale(id: string, input: RetailSaleInput, vesselCorrection?: RetailVesselCorrection): Promise<RetailSale> {
+  const uid = userId(), original = prepareRetailSale(input), clean = correctedCheckoutInput(original, vesselCorrection), ref = doc(db, 'retailSales', id)
   assertOperationId(id)
   const actionRef = doc(ref, 'actions', id)
   try {
@@ -152,8 +179,7 @@ export async function saveRetailSale(id: string, input: RetailSaleInput): Promis
         const data = existing.data()
         // A lost response must not consume a second number, even if another device
         // has already edited the invoice since the original checkout committed.
-        if (action.exists()) assertReplay(action.data(), id, uid, clean, 'create', 1)
-        else if (data.createdBy !== uid || !sameInput(id, data, clean)) throw new Error('结算编号已使用，请从历史核对。 This invoice ID is already in use. Check Sales History.')
+        assertCheckoutReplay(id, data, action.exists() ? action.data() : undefined, uid, original, clean)
         return
       }
       const counterRef = doc(db, 'retailInvoiceCounters', String(clean.dateSortKey))

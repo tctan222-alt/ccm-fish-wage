@@ -68,14 +68,17 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
     if(!applied.query||!cursor||moreLock.current)return
     moreLock.current=true;setMoreLoading(true);setMoreError('')
     const current=generation.current,controller=new AbortController()
-    const deadline=window.setTimeout(()=>controller.abort(),20_000)
+    let settled=false
+    const deadline=window.setTimeout(()=>{
+      if(!settled&&generation.current===current){controller.abort();moreLock.current=false;setMoreLoading(false);setMoreError('下一页载入超时，请重试。')}
+    },20_000)
     try{
       const page=await pageLoader({...applied.query,productType},cursor,controller.signal)
       if(generation.current===current&&!controller.signal.aborted){
         setItems(previous=>[...previous,...page.items.filter(item=>!previous.some(old=>old.id===item.id))]);setCursor(page.cursor)
       }
-    }catch(problem){if(generation.current===current)setMoreError(controller.signal.aborted?'下一页载入超时，请重试。':problem instanceof Error?problem.message:'无法载入下一页，请重试。')}
-    finally{window.clearTimeout(deadline);if(generation.current===current){moreLock.current=false;setMoreLoading(false)}}
+    }catch(problem){if(generation.current===current&&!controller.signal.aborted)setMoreError(problem instanceof Error?problem.message:'无法载入下一页，请重试。')}
+    finally{settled=true;window.clearTimeout(deadline);if(generation.current===current&&!controller.signal.aborted){moreLock.current=false;setMoreLoading(false)}}
   }
   const vesselChoices=useMemo(()=>{
     const choices=vessels.map(vessel=>({id:vessel.id,label:vessel.vesselCode+(vessel.active?'':'（历史船 Historical）')}))
@@ -111,7 +114,7 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
     </div>
     {range.error?<p className="error" role="alert">{range.error}</p>:!showResults?<p className="notice" role="status">筛选已更改，请按查询 Search。</p>:loading?<p className="notice" role="status">正在载入{productName}结单摘要…</p>:error?<div><p className="error" role="alert">{error}</p><button type="button" onClick={()=>setReload(value=>value+1)}>重试</button></div>:<>
       <p role="status">已载入 {items.length} 张 · {applied.query?.vesselId?'指定船':'全部船 All Vessels'}</p>
-      {items.length===0&&<p className="notice">这个日期范围没有{productName}结单。</p>}
+      {items.length===0&&<p className="notice">{cursor?'当前已查询部分暂无记录，请载入更多继续查询较早月份。':'这个日期范围没有'+productName+'结单。'}</p>}
       <div className="settlement-session-list">{items.map(item=><article key={item.id} className="settlement-session-card" aria-label={`现场单 ${item.sessionCode}`}>
         <div className="settlement-session-heading"><strong>{fishHeadSettlementDate(item.weighingDate)}</strong><span>{FISH_HEAD_SETTLEMENT_STATUS_NAMES[item.status]}</span></div>
         <h3>船号 Vessel {item.vesselCodeSnapshot}</h3><p>{productName} · {item.sessionCode}</p>

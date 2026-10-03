@@ -37,7 +37,7 @@ describe('projected server settlement search',()=>{
     }
   })
   it('merges legacy ISO and canonical dates descending across month boundaries without dateSortKey',async()=>{
-    const run=queryFixture([session('iso','2026-10-02'),session('oct','03/10/2026'),session('sep','30/09/2026',{monthKey:'09/2026'}),session('old-shape','29/09/2026',{monthKey:'2026-09'}),session('start','20/09/2026',{monthKey:'09/2026'})])
+    const run=queryFixture([session('iso','2026-10-02'),session('oct','03/10/2026'),session('sep','30/09/2026',{monthKey:'09/2026'}),session('old-shape','2026-09-29',{monthKey:'2026-09'}),session('start','20/09/2026',{monthKey:'09/2026'})])
     const page=await createSettlementPageLoader(run)(search)
     expect(page.items.map(item=>item.id)).toEqual(['oct','iso','sep','old-shape','start'])
     expect(page.cursor).toBeNull()
@@ -55,6 +55,27 @@ describe('projected server settlement search',()=>{
     const page=await createSettlementPageLoader(run)({...search,from:'2000-01-01'})
     expect(page.items).toHaveLength(25)
     expect(run.mock.calls.filter(([query])=>query.from[0].collectionId==='weighingSessions')).toHaveLength(2)
+  })
+  it.each(['fish_head','fish_meal'] as const)('keeps full-month %s mixed formats disjoint, ordered and complete across pages',async productType=>{
+    const docs=Array.from({length:61},(_,index)=>session(String(index).padStart(3,'0'),index%2?'2026-10-02':'03/10/2026',{productType}))
+    const load=createSettlementPageLoader(queryFixture(docs)),query={...search,productType,from:'2026-10-01',to:'2026-10-31'}
+    const items=[];let cursor=null
+    do{const page=await load(query,cursor);items.push(...page.items);cursor=page.cursor}while(cursor)
+    expect(items).toHaveLength(61);expect(new Set(items.map(item=>item.id)).size).toBe(61)
+    expect(items.slice(0,31).every(item=>item.weighingDate==='03/10/2026')).toBe(true)
+    expect(items.slice(31).every(item=>item.weighingDate==='2026-10-02')).toBe(true)
+  })
+  it.each([0,24])('bounds sparse large-range work with %i ISO results and a resumable cursor',async count=>{
+    const run=queryFixture(Array.from({length:count},(_,index)=>session('recent-'+index,'2026-10-03')))
+    const page=await createSettlementPageLoader(run)({...search,from:'2000-01-01'})
+    expect(page.items).toHaveLength(count);expect(page.cursor).not.toBeNull()
+    expect(run.mock.calls.filter(([query])=>query.from[0].collectionId==='weighingSessions').length).toBeLessThanOrEqual(7)
+  })
+  it('does not emit an older ISO row before unchecked newer canonical months',async()=>{
+    const run=queryFixture([session('older','2025-01-10',{monthKey:'2025-01'}),session('newer','05/03/2026',{monthKey:'03/2026'})])
+    const load=createSettlementPageLoader(run),query={...search,from:'2025-01-01'}
+    const first=await load(query);expect(first.items).toEqual([]);expect(first.cursor).not.toBeNull()
+    const second=await load(query,first.cursor);expect(second.items[0].id).toBe('newer')
   })
   it('uses only revision-matching bound draft monetary headers; stale and unbound amounts remain unknown',async()=>{
     const docs=[session('current'),session('stale'),session('legacy'),document('draft-current',{sourceSessionId:'current',sourceSessionRevision:3,productType:'fish_head',totalAmountCents:16502,receiptNo:'R-1',voided:false}),document('draft-stale',{sourceSessionId:'stale',sourceSessionRevision:2,productType:'fish_head',totalAmountCents:1,voided:false}),document('legacy-draft',{vesselId:'v833',totalAmountCents:99})]

@@ -5,7 +5,7 @@ import { formatRetailDate } from '../lib/retailDate'
 import { RETAIL_EDIT_WINDOW_MS, retailEditStatus } from '../lib/retailInvoice'
 import { retailHistoryRange, shiftRetailWeek, type RetailHistoryRange } from '../lib/retailHistory'
 import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, retailMoney, retailPriceCents, retailToday, retailWeightKg, type RetailFish, type RetailLine, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
-import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, watchRetailSales, type RetailHistorySnapshot } from '../services/retailSales'
+import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, newRetailSaleId, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish, watchRetailSales, reconcilePendingRetailSale, type PendingRetailSale, type RetailHistorySnapshot } from '../services/retailSales'
 import { RetailFishPicker } from '../components/RetailFishPicker'
 import { RetailReceipt, RetailReceiptActions } from '../components/RetailReceipt'
 import { RetailVesselPicker, useRetailVessels } from '../components/RetailVesselPicker'
@@ -70,7 +70,7 @@ export function RetailSalesPage() {
   const [pickerVersion, setPickerVersion] = useState(0)
   const [weight, setWeight] = useState(''), [price, setPrice] = useState(''), [lines, setLines] = useState<RetailLine[]>([])
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [sale, setSale] = useState<RetailSale | null>(null)
-  const [pending, setPending] = useState<{ id: string; input: RetailSaleInput } | null>(null)
+  const [pending, setPending] = useState<PendingRetailSale | null>(null), [canRepairVessel, setCanRepairVessel] = useState(false)
   const saving = useRef(false), weightInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [recoveryError, setRecoveryError] = useState('')
   const availableFish = fish === null ? null : [...fish, ...createdFish.filter(created => !fish.some(item => item.id === created.id))]
@@ -78,7 +78,7 @@ export function RetailSalesPage() {
   useEffect(() => {
     try {
       const restored = loadPendingRetailSale()
-      if (restored) { setPending(restored); setDate(restored.input.businessDate); setVendor(restored.input.vendorName); setLines(restored.input.lines); setRemark(restored.input.remark ?? ''); setVesselId(restored.input.vesselId ?? '') }
+      if (restored) { setPending(restored); setDate(restored.input.businessDate); setVendor(restored.input.vendorName); setLines(prepareRetailSale(restored.input).lines); setRemark(restored.input.remark ?? ''); setVesselId(restored.vesselCorrection?.vesselId ?? restored.input.vesselId ?? '') }
     } catch { setRecoveryError('无法读取待确认结算，请从销售历史核对；暂不允许新结算。 Unable to restore the pending sale. Check Sales History before starting another checkout.') }
   }, [])
   const total = lines.reduce((sum, line) => sum + line.amountCents, 0)
@@ -109,23 +109,42 @@ export function RetailSalesPage() {
         if (!vessel) throw new Error('请先选择船号。 Please select a vessel.')
         const input = prepareRetailSale({ businessDate, vendorName, remark, lines, vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode })
         attempt = { id: newRetailSaleId(), input }; rememberPendingRetailSale(attempt); setPending(attempt)
+      } else if (canRepairVessel) {
+        const vessel = vesselOptions.vessels?.find(item => item.id === vesselId)
+        if (!vessel) throw new Error('请选择有效船号再重试。 Select an active vessel before retrying.')
+        attempt = { ...attempt, vesselCorrection: { vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode } }
+        rememberPendingRetailSale(attempt); setPending(attempt)
       }
       saving.current = true; setBusy(true)
-      const result = await saveRetailSale(attempt.id, attempt.input)
+      const result = attempt.vesselCorrection ? await saveRetailSale(attempt.id, attempt.input, attempt.vesselCorrection) : await saveRetailSale(attempt.id, attempt.input)
       clearPendingRetailSale(); setSale(result); setPending(null); saved()
     } catch (problem) { setError(message(problem)) } finally { saving.current = false; setBusy(false) }
   }
+  async function repairVessel() {
+    if (!pending || saving.current) return
+    saving.current = true; setBusy(true); setError(''); setCanRepairVessel(false)
+    try {
+      const result = await reconcilePendingRetailSale(pending)
+      if (result) { clearPendingRetailSale(); setSale(result); setPending(null); saved() }
+      else { setCanRepairVessel(true); vesselOptions.retry() }
+    } catch (problem) { setError(message(problem)) }
+    finally { saving.current = false; setBusy(false) }
+  }
   function nextVendor() {
-    setSale(null); setLines([]); setVendor(''); setRemark(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); saved()
+    setSale(null); setLines([]); setVendor(''); setRemark(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成 Checkout Complete" /><p className="success retail-no-print" role="status">现金结算已保存。 Cash sale saved.</p>
     <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩 Next Vendor</button></div></main>
   return <main className="retail-page retail-compact retail-entry"><RetailHeader title="门市销售 Retail Sales" />
     {(error || loadError || recoveryError) && <p className="error" role="alert">{error || loadError || recoveryError}</p>}
     {pending && <p className="notice">正在确认结算结果。失败时请点「重试结算」，系统会核对同一单号，避免重复保存。 Confirming checkout. If it fails, choose Retry Checkout; the same invoice ID prevents duplicate saves. 操作参考 Operation Reference：{pending.id}</p>}
+    {pending && <button type="button" disabled={busy || quickBusy} onClick={() => void repairVessel()}>核对并重选船号 Verify and Reselect Vessel</button>}
+    {canRepairVessel && <p className="notice">服务器确认此单尚未保存，可重选船号后重试；原单号及明细保留。 The server confirmed this invoice is not saved. Reselect a vessel and retry; the original ID and items are retained.</p>}
+    <fieldset disabled={busy || quickBusy || (!!pending && !canRepairVessel)} className="retail-fields">
+      <RetailVesselPicker {...vesselOptions} value={vesselId} onChange={setVesselId} historical={pending?.input} />
+    </fieldset>
     <fieldset disabled={busy || quickBusy || !!pending} className="retail-fields">
       <section className="retail-context"><DateField value={businessDate} onChange={setDate} /><label>小贩 Vendor<input value={vendorName} maxLength={100} onChange={event => setVendor(event.target.value)} placeholder="直接输入小贩名 Enter vendor name" /></label></section>
-      <RetailVesselPicker {...vesselOptions} value={vesselId} onChange={setVesselId} historical={pending?.input} />
       <section><RetailFishPicker key={pickerVersion} fish={availableFish} query={search} inputRef={searchInput} selectedFishId={selected?.id}
         onQueryChange={value => { setSearch(value); setSelected(null); setPrice(''); setWeight(''); setError('') }}
         onSelect={select} onCreated={item => setCreatedFish(current => [...current, item])} onBusyChange={setQuickBusy} />
