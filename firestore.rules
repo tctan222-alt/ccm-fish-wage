@@ -9,12 +9,20 @@ service cloud.firestore {
     function existingData() { return resource.data; }
 
 
+    function validRetailAlias(aliases, index) {
+      return aliases.size() <= index || aliases[index].matches('^.{1,100}$') && aliases[index] != '黑昌';
+    }
     function validRetailFish(data) {
-      return data.keys().hasOnly(['chineseName', 'malayName', 'suggestedPriceCents', 'active', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
+      let aliases = data.get('aliases', []);
+      let order = data.get('sortOrder', 0);
+      return data.keys().hasOnly(['chineseName', 'malayName', 'suggestedPriceCents', 'active', 'aliases', 'sortOrder', 'createdBy', 'updatedBy', 'createdAt', 'updatedAt'])
         && data.chineseName is string && data.chineseName.size() > 0 && data.chineseName.size() <= 100
         && data.malayName is string && data.malayName.size() <= 100
         && (data.suggestedPriceCents == null || (data.suggestedPriceCents is int && data.suggestedPriceCents > 0 && data.suggestedPriceCents <= 1000000))
-        && data.active is bool && data.createdBy is string && data.createdAt is timestamp
+        && aliases is list && aliases.size() <= 5 && aliases.toSet().size() == aliases.size() && !aliases.hasAny([data.chineseName])
+        && validRetailAlias(aliases, 0) && validRetailAlias(aliases, 1) && validRetailAlias(aliases, 2) && validRetailAlias(aliases, 3) && validRetailAlias(aliases, 4)
+        && order is int && order >= 0 && order <= 1000000
+        && data.active is bool && (data.chineseName != '黑昌' || !data.active) && data.createdBy is string && data.createdAt is timestamp
         && data.updatedBy == request.auth.uid && data.updatedAt == request.time;
     }
 
@@ -68,6 +76,7 @@ service cloud.firestore {
     match /retailFish/{fishId} {
       allow read: if signedIn();
       allow create: if signedIn() && validRetailFish(incomingData())
+        && incomingData().chineseName != '黑昌'
         && incomingData().createdBy == request.auth.uid && incomingData().createdAt == request.time;
       allow update: if signedIn() && validRetailFish(incomingData())
         && incomingData().createdBy == existingData().createdBy && incomingData().createdAt == existingData().createdAt;

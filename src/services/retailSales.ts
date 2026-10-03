@@ -4,6 +4,7 @@ import seed from '../data/retailFishSeed.json'
 import { normalizeRetailFish, normalizeRetailLine, prepareRetailSale, type RetailFish, type RetailFishInput, type RetailLineInput, type RetailSale, type RetailSaleInput } from '../lib/retailSales'
 import { sortKeyFromBusinessDate } from '../lib/businessDate'
 import { retailHistoryRange, type RetailHistoryRange } from '../lib/retailHistory'
+import { assertRetailFishUnique, nextRetailFishOrder, sortRetailFish } from '../lib/retailFish'
 
 function userId() {
   if (!auth.currentUser) throw new Error('请先登录。 Please sign in.')
@@ -11,26 +12,35 @@ function userId() {
 }
 
 export function watchRetailFish(next: (items: RetailFish[]) => void, error: (error: Error) => void) {
-  return onSnapshot(collection(db, 'retailFish'), snapshot => next(snapshot.docs.map(item => ({ ...item.data(), id: item.id }) as RetailFish)
-    .sort((a, b) => a.chineseName.localeCompare(b.chineseName, 'zh-Hans-CN'))), error)
+  return onSnapshot(collection(db, 'retailFish'), snapshot => next(sortRetailFish(snapshot.docs.map(item => ({ ...item.data(), aliases: item.data().aliases ?? [], sortOrder: item.data().sortOrder ?? 0, id: item.id }) as RetailFish))), error)
 }
 
 export async function initializeRetailFish() {
   const uid = userId()
+  const existing = await getDocs(collection(db, 'retailFish'))
+  const items = existing.docs.map(item => ({ ...item.data(), id: item.id }) as RetailFish)
   // Stable IDs and transaction reads make retries safe without overwriting later edits.
   await runTransaction(db, async transaction => {
     const refs = seed.map(item => doc(db, 'retailFish', item.id))
     const snapshots = await Promise.all(refs.map(ref => transaction.get(ref)))
     seed.forEach((input, index) => {
-      if (!snapshots[index].exists()) transaction.set(refs[index], {
-        ...normalizeRetailFish(input), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
-      })
+      if (!snapshots[index].exists() && !items.some(item => item.chineseName.trim() === input.chineseName)) {
+        assertRetailFishUnique(input.id, input, items)
+        transaction.set(refs[index], {
+          ...normalizeRetailFish({ ...input, sortOrder: nextRetailFishOrder(items) + index }), createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+        })
+      }
     })
   })
 }
 
 export async function saveRetailFish(id: string | null, input: RetailFishInput): Promise<RetailFish> {
-  const uid = userId(), clean = normalizeRetailFish(input)
+  const uid = userId()
+  const existing = await getDocs(collection(db, 'retailFish'))
+  const items = existing.docs.map(item => ({ ...item.data(), id: item.id }) as RetailFish)
+  const clean = normalizeRetailFish({ ...input, sortOrder: input.sortOrder ?? (id ? items.find(item => item.id === id)?.sortOrder ?? 0 : nextRetailFishOrder(items)) })
+  if (!id && clean.chineseName === '黑昌') throw new Error('不可新增黑昌。 Cannot create 黑昌.')
+  assertRetailFishUnique(id, clean, items)
   const ref = id ? doc(db, 'retailFish', id) : doc(collection(db, 'retailFish'))
   await runTransaction(db, async transaction => {
     const snapshot = await transaction.get(ref)
@@ -42,10 +52,7 @@ export async function saveRetailFish(id: string | null, input: RetailFishInput):
 }
 
 export async function quickAddRetailFish(input: RetailFishInput): Promise<RetailFish> {
-  const clean = normalizeRetailFish(input)
-  if (!clean.malayName) throw new Error('请输入马来文鱼名。 Please enter the Malay fish name.')
-  if (clean.suggestedPriceCents === null) throw new Error('请输入建议 RM/kg。 Please enter the suggested price (RM/kg).')
-  return saveRetailFish(null, clean)
+  return saveRetailFish(null, { ...input, aliases: [], active: true, sortOrder: undefined })
 }
 
 export const newRetailSaleId = () => doc(collection(db, 'retailSales')).id

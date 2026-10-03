@@ -275,6 +275,28 @@ describe('Firestore Rules: retail cash sales', () => {
     await assertFails(updateDoc(fishRef, { suggestedPriceCents: -1, updatedAt: serverTimestamp() }))
     await assertFails(updateDoc(fishRef, { suggestedPriceCents: 6.15, updatedAt: serverTimestamp() }))
   })
+  it('reads legacy masters and validates aliases/order on audited upgrades without permitting deletes', async () => {
+    const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailFish', 'master-p9')
+    await assertSucceeds(setDoc(ref, { chineseName: '金线', malayName: '', suggestedPriceCents: null, active: true, createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))
+    await assertSucceeds(getDoc(ref))
+    await assertSucceeds(updateDoc(ref, { aliases: ['金仙'], sortOrder: 8, updatedBy: 'u1', updatedAt: serverTimestamp() }))
+    await assertSucceeds(updateDoc(ref, { active: false, updatedAt: serverTimestamp() }))
+    await assertSucceeds(updateDoc(ref, { active: true, updatedAt: serverTimestamp() }))
+    for (const aliases of [null, 'alias', [1], [''], ['x'.repeat(101)], ['金线'], ['黑昌'], ['a', 'a'], ['a', 'b', 'c', 'd', 'e', 'f']]) {
+      await assertFails(updateDoc(ref, { aliases, updatedAt: serverTimestamp() }))
+    }
+    for (const sortOrder of [null, '1', -1, 0.5, 1000001]) await assertFails(updateDoc(ref, { sortOrder, updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(ref, { createdAt: serverTimestamp(), updatedAt: serverTimestamp() }))
+    await assertFails(updateDoc(ref, { updatedBy: 'other', updatedAt: serverTimestamp() }))
+    await assertFails(deleteDoc(ref))
+  })
+  it('creates a complete P9 master but rejects forbidden official names and malformed final alias slot', async () => {
+    const db = environment.authenticatedContext('u1').firestore()
+    const fish = { chineseName: '乌昌', malayName: '', suggestedPriceCents: null, aliases: ['a', 'b', 'c', 'd', 'e'], sortOrder: 0, active: true, createdBy: 'u1', updatedBy: 'u1', createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
+    await assertSucceeds(setDoc(doc(db, 'retailFish', 'p9-create'), fish))
+    await assertFails(setDoc(doc(db, 'retailFish', 'p9-black'), { ...fish, chineseName: '黑昌' }))
+    await assertFails(setDoc(doc(db, 'retailFish', 'p9-last-alias'), { ...fish, aliases: ['a', 'b', 'c', 'd', 1] }))
+  })
   it('rejects anonymous reads/writes and all mutations of saved sales', async () => {
     const db = environment.authenticatedContext('u1').firestore(), ref = doc(db, 'retailSales', 'retail-immutable')
     await assertSucceeds(writeSale(ref, sale()))

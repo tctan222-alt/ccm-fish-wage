@@ -8,6 +8,8 @@ export interface RetailFishInput {
   malayName: string
   suggestedPriceCents: number | null
   active: boolean
+  aliases?: string[]
+  sortOrder?: number
 }
 export interface RetailFish extends RetailFishInput { id: string }
 export interface RetailLine {
@@ -51,9 +53,19 @@ export function normalizeRetailFish(input: RetailFishInput): RetailFishInput {
   if (!chineseName || chineseName.length > 100) throw new Error('请输入中文鱼名（最多 100 字）。 Enter a Chinese fish name (up to 100 characters).')
   if (malayName.length > 100) throw new Error('马来文名称最多 100 字。 Malay name must be no longer than 100 characters.')
   if (typeof input.active !== 'boolean') throw new Error('鱼种状态无效。 Invalid fish status.')
+  if (chineseName === '黑昌' && input.active) throw new Error('黑昌不是有效正式鱼名。 黑昌 is not an approved official fish name.')
+  if (input.aliases !== undefined && !Array.isArray(input.aliases)) throw new Error('别名格式无效。 Invalid aliases.')
+  const candidates = (input.aliases ?? []).map(alias => {
+    if (typeof alias !== 'string') throw new Error('别名必须是文字。 Aliases must be text.')
+    return alias.trim()
+  }).filter(Boolean)
+  const aliases = candidates.filter((alias, index) => candidates.findIndex(other => other.toLocaleLowerCase() === alias.toLocaleLowerCase()) === index)
+  if (aliases.length > 5 || aliases.some(alias => alias.length > 100 || alias.toLocaleLowerCase() === chineseName.toLocaleLowerCase() || alias === '黑昌')) throw new Error('最多 5 个别名，每个最多 100 字，不能使用正式名或黑昌。 Up to 5 aliases of 100 characters; exclude the official name and 黑昌.')
+  const sortOrder = input.sortOrder === undefined ? 0 : input.sortOrder
+  if (!Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 1_000_000) throw new Error('排序须为 0–1000000 的整数。 Order must be an integer between 0 and 1000000.')
   if (input.suggestedPriceCents !== null && (!Number.isSafeInteger(input.suggestedPriceCents)
     || input.suggestedPriceCents < 1 || input.suggestedPriceCents > MAX_RETAIL_PRICE_CENTS)) throw new Error('建议售价无效。 Invalid suggested price.')
-  return { chineseName, malayName, suggestedPriceCents: input.suggestedPriceCents, active: input.active }
+  return { chineseName, malayName, suggestedPriceCents: input.suggestedPriceCents, active: input.active, aliases, sortOrder }
 }
 
 export function makeRetailLine(fish: RetailFish, weight: string, price: string): RetailLine {

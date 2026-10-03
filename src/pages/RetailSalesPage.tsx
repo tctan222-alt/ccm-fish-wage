@@ -115,12 +115,12 @@ export function RetailFishPage() {
     setBusy(true); setError('')
     try { await initializeRetailFish(); saved() } catch (problem) { setError(message(problem)) } finally { setBusy(false) }
   }
-  return <main className="retail-page"><RetailHeader title="门市鱼名与建议价 Retail Fish and Suggested Prices" />
+  return <main className="retail-page retail-master"><RetailHeader title="门市鱼种管理 Retail Master Data" />
     <p>建议价只供新交易带出，现场可改价；历史结算的名称和价格保持不变。 Suggested prices apply to new sales and can be overridden; historical names and prices stay unchanged.</p>
     {(error || loadError) && <p className="error" role="alert">{error || loadError}</p>}
     <button className="primary-action" disabled={fish === null || busy} onClick={() => setEditing(null)}>新增鱼种 Add Fish</button>
     {fish === null ? <p role="status">正在载入鱼种… Loading fish…</p> : fish.length === 0 ? <section><p>首次使用 First Use：建立 Create 甘丰 / kembung / RM6、马丰 / mabong / RM8、上过 / kerabu / RM33。</p><button disabled={busy} onClick={() => void initialize()}>建立初始三种鱼 Create Three Starter Fish</button></section> : null}
-    <div className="master-card-list">{fish?.map(item => <article className="master-card" key={item.id}><h2>{item.chineseName}</h2><p>{item.malayName}</p><p>{item.suggestedPriceCents === null ? '未设建议价（现场输入） No Suggested Price (Enter at Sale)' : `${retailMoney(item.suggestedPriceCents)}/kg`} · {item.active ? '启用 Active' : '停用 Inactive'}</p><button onClick={() => setEditing(item)}>修改 Edit {item.chineseName}</button></article>)}</div>
+    <div className="master-card-list">{fish?.map(item => <article className="master-card" key={item.id}><h2>{item.chineseName}</h2><p>{item.malayName || '—'}</p><p>{item.suggestedPriceCents === null ? '—' : `${retailMoney(item.suggestedPriceCents)}/kg`} · {item.active ? '启用 Active' : '停用 Inactive'}</p><p>别名 Aliases：{item.aliases?.join(' / ') || '—'}</p><p>排序 Order：{item.sortOrder ?? 0}</p><button onClick={() => setEditing(item)}>修改 Edit {item.chineseName}</button></article>)}</div>
     {editing !== undefined && <RetailFishForm item={editing} close={() => setEditing(undefined)} />}
   </main>
 }
@@ -128,10 +128,11 @@ export function RetailFishPage() {
 function RetailFishForm({ item, close }: { item: RetailFish | null; close: () => void }) {
   const [chineseName, setChinese] = useState(item?.chineseName ?? ''), [malayName, setMalay] = useState(item?.malayName ?? '')
   const [price, setPrice] = useState(item?.suggestedPriceCents == null ? '' : (item.suggestedPriceCents / 100).toFixed(2)), [active, setActive] = useState(item?.active ?? true)
+  const [aliases, setAliases] = useState(item?.aliases?.join('\n') ?? ''), [sortOrder, setSortOrder] = useState(item ? String(item.sortOrder ?? 0) : '')
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function submit(event: FormEvent) {
     event.preventDefault(); if (busy) return; setBusy(true); setError('')
-    try { await saveRetailFish(item?.id ?? null, { chineseName, malayName, suggestedPriceCents: price.trim() ? retailPriceCents(price) : null, active }); saved(); close() }
+    try { await saveRetailFish(item?.id ?? null, { chineseName, malayName, suggestedPriceCents: price.trim() ? retailPriceCents(price) : null, active, aliases: aliases.split('\n').map(value => value.trim()).filter(Boolean), ...(sortOrder.trim() ? { sortOrder: Number(sortOrder) } : {}) }); saved(); close() }
     catch (problem) { setError(message(problem)); setBusy(false) }
   }
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true" aria-label={item ? '修改鱼种 Edit Fish' : '新增鱼种 Add Fish'}><h2>{item ? '修改鱼种 Edit Fish' : '新增鱼种 Add Fish'}</h2>
@@ -139,6 +140,8 @@ function RetailFishForm({ item, close }: { item: RetailFish | null; close: () =>
       <label>中文鱼名 Chinese Fish Name<input required maxLength={100} value={chineseName} onChange={event => setChinese(event.target.value)} /></label>
       <label>马来文名（可空） Malay Name (Optional)<input maxLength={100} value={malayName} onChange={event => setMalay(event.target.value)} /></label>
       <label>建议单价（可空） Suggested Price (RM/kg, Optional)<input inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} /></label>
+      <label>别名（每行一个，最多 5 个） Aliases (One per Line, up to 5)<textarea rows={3} maxLength={510} value={aliases} onChange={event => setAliases(event.target.value)} /></label>
+      <label>排序 Order<input type="number" min={0} max={1000000} step={1} placeholder="自动排在末尾 Auto Append" value={sortOrder} onChange={event => setSortOrder(event.target.value)} /></label>
       <label className="check-label"><input type="checkbox" checked={active} onChange={event => setActive(event.target.checked)} />启用 Active</label>
       {error && <p className="error" role="alert">{error}</p>}<button className="primary-action">{busy ? '正在保存… Saving…' : '保存鱼种 Save Fish'}</button><button type="button" onClick={close}>取消 Cancel</button>
     </fieldset></form></section></div>

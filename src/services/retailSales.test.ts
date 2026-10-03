@@ -13,7 +13,7 @@ vi.mock('firebase/firestore', () => {
       return { path, id: path.split('/').at(-1) }
     },
     getDoc: async (ref: { path: string }) => snapshot(ref.path),
-    getDocs: async () => ({ docs: [...state.records.keys()].filter(path => /^retailSales\/[^/]+$/.test(path)).map(snapshot) }),
+    getDocs: async (ref?: { path: string }) => ({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref?.path ?? 'retailSales'}/`) && path.split('/').length === 2).map(snapshot) }),
     onSnapshot: (ref: { path: string }, next: (data: unknown) => void) => {
       next({ docs: [...state.records.keys()].filter(path => path.startsWith(`${ref.path}/`) && path.split('/').length === 2).map(snapshot) })
       return vi.fn()
@@ -35,10 +35,34 @@ const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明
 beforeEach(() => { state.records.clear(); state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; sessionStorage.clear() })
 
 describe('retail quick-add fish', () => {
+  it('rejects saved aliases and Other Chinese names colliding with Malay, but allows two Malay translations to match', async () => {
+    state.records.set('retailFish/existing', { chineseName: '金线', malayName: 'Kerisi', suggestedPriceCents: 205, active: true })
+    await expect(saveRetailFish(null, { chineseName: '新鱼', malayName: '', suggestedPriceCents: null, active: true, aliases: ['Kerisi'] })).rejects.toThrow(/重复/)
+    await expect(quickAddRetailFish({ chineseName: 'Kerisi', malayName: '', suggestedPriceCents: null, active: true })).rejects.toThrow(/重复/)
+    expect(state.writes).not.toHaveBeenCalled()
+    await expect(saveRetailFish(null, { chineseName: '另一鱼', malayName: 'Kerisi', suggestedPriceCents: null, active: true })).resolves.toMatchObject({ chineseName: '另一鱼' })
+  })
+  it('allows optional details, assigns successive order, blocks inactive alias duplicates and preserves audit on edit', async () => {
+    const first = await quickAddRetailFish({ chineseName: '第一鱼', malayName: '', suggestedPriceCents: null, active: true })
+    const second = await quickAddRetailFish({ chineseName: '第二鱼', malayName: '', suggestedPriceCents: null, active: true })
+    expect([first.sortOrder, second.sortOrder]).toEqual([1, 2])
+    const before = state.records.get(`retailFish/${first.id}`)!
+    await saveRetailFish(first.id, { ...first, aliases: ['旧称'], active: false })
+    expect(state.records.get(`retailFish/${first.id}`)).toMatchObject({ createdBy: before.createdBy, createdAt: before.createdAt, aliases: ['旧称'], active: false })
+    await expect(quickAddRetailFish({ ...second, chineseName: '旧称' })).rejects.toThrow(/停用/)
+    expect(state.records.size).toBe(2)
+  })
+  it('preserves an existing starter with a nonstarter ID without duplicating or overwriting it', async () => {
+    state.records.set('retailFish/original', { ...seed[0], suggestedPriceCents: 999 })
+    await initializeRetailFish()
+    expect(state.records.has(`retailFish/${seed[0].id}`)).toBe(false)
+    expect(state.records.get('retailFish/original')?.suggestedPriceCents).toBe(999)
+    expect(state.records.size).toBe(3)
+  })
   const fishInput = { chineseName: ' 新鱼 ', malayName: ' ikan baru ', suggestedPriceCents: 650, active: true }
   it('persists a reusable master item and preserves sale snapshots after later master changes', async () => {
     const created = await quickAddRetailFish(fishInput)
-    expect(created).toEqual({ id: 'auto-1', chineseName: '新鱼', malayName: 'ikan baru', suggestedPriceCents: 650, active: true })
+    expect(created).toEqual({ id: 'auto-1', chineseName: '新鱼', malayName: 'ikan baru', suggestedPriceCents: 650, active: true, aliases: [], sortOrder: 1 })
     expect(state.records.get(`retailFish/${created.id}`)).toMatchObject({ chineseName: '新鱼', malayName: 'ikan baru', suggestedPriceCents: 650, active: true, createdBy: 'u1', updatedBy: 'u1' })
     const next = vi.fn()
     watchRetailFish(next, vi.fn())
@@ -48,7 +72,7 @@ describe('retail quick-add fish', () => {
     expect((await loadRetailSale('quick-sale')).lines[0]).toMatchObject({ fishId: created.id, chineseName: '新鱼', malayName: 'ikan baru', weightDeciKg: 125, unitPriceCents: 650, amountCents: 8125 })
   })
   it.each([
-    { chineseName: ' ' }, { malayName: ' ' }, { suggestedPriceCents: null },
+    { chineseName: ' ' },
     { suggestedPriceCents: 0 }, { suggestedPriceCents: -1 }, { suggestedPriceCents: 6.5 },
   ])('rejects incomplete or invalid quick-add data before any write: %j', async invalid => {
     await expect(quickAddRetailFish({ ...fishInput, ...invalid })).rejects.toThrow()

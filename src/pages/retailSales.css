@@ -96,6 +96,18 @@
 @media screen and (min-width:430px){
   .retail-compact .retail-fish-suggestions{grid-template-columns:repeat(4,minmax(0,1fr))}
 }
+@media screen{
+  .retail-master .master-card-list{gap:8px}
+  .retail-master .master-card{padding:12px;min-width:0;overflow-wrap:anywhere}
+  .retail-master .master-card p{margin:4px 0}
+  .retail-master .form-dialog{max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow-y:auto}
+  .retail-master .retail-fields{min-width:0}
+  .retail-master textarea{box-sizing:border-box;width:100%;font:inherit;padding:8px}
+  .retail-master button{min-height:44px}
+}
+@media screen and (max-width:390px){
+  .retail-master .master-form fieldset{grid-template-columns:minmax(0,1fr)}
+}
 @media print{
   .retail-no-print,.retail-page>.retail-no-print{display:none!important}
   body:has(.retail-receipt){background:white}
