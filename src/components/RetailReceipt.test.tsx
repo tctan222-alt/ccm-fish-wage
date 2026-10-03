@@ -34,7 +34,7 @@ describe('Retail invoice output', () => {
     fireEvent.click(screen.getByRole('button', { name: 'PDF / 分享 PDF / Share' }))
     // No awaiting generation, timeout or popup before this assertion.
     expect(canShare).toHaveBeenCalledWith({ files: [file] })
-    expect(share).toHaveBeenCalledWith({ files: [file], title: '门市现金结算单 · 阿明' })
+    expect(share).toHaveBeenCalledWith({ files: [file], title: '门市现金结算单 · receipt-1 · 07092026 星期一 Mon · 阿明' })
     expect(screen.getByRole('status')).toHaveTextContent('正在分享 PDF')
     expect(screen.getByRole('button', { name: 'PDF / 分享 PDF / Share' })).toBeDisabled()
     expect(createUrl).not.toHaveBeenCalled()
@@ -107,7 +107,7 @@ describe('Retail invoice output', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'PDF / 分享 PDF / Share' })).toBeEnabled())
     await act(async () => old(file))
     fireEvent.click(screen.getByRole('button', { name: 'PDF / 分享 PDF / Share' }))
-    expect(share).toHaveBeenCalledWith({ files: [nextFile], title: '门市现金结算单 · 阿华' })
+    expect(share).toHaveBeenCalledWith({ files: [nextFile], title: '门市现金结算单 · next · 07092026 星期一 Mon · 阿华' })
     await act(async () => {})
   })
   it('reports a blocked PDF popup, and retains an opened URL across receipt navigation', async () => {
@@ -135,7 +135,7 @@ describe('Retail invoice output', () => {
     await ready(); render(<RetailReceipt sale={sale} />)
     expect(screen.getByRole('heading', { name: '门市现金结算单' })).toBeInTheDocument()
     expect(screen.queryByText(/CCM Fishery/)).not.toBeInTheDocument()
-    expect(screen.getByText('日期 Date：07/09/2026')).toBeInTheDocument()
+    expect(screen.getByText('日期 Date：07092026 星期一 Mon')).toBeInTheDocument()
     expect(screen.getByText('小贩 Vendor：阿明')).toBeInTheDocument()
     expect(screen.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['鱼名 Fish', '重量 Weight (kg)', '单价 Unit Price (RM/kg)', '金额 Amount (RM)'])
     expect(screen.getByRole('cell', { name: '历史鱼名 old name' })).toBeInTheDocument()

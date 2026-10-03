@@ -1,0 +1,35 @@
+# P10 Retail invoice editing, numbering and dates
+
+The owner superseded the former PR #36 72-hour policy: invoices are editable for **30 consecutive days (2,592,000 seconds)** from their original first `createdAt`. PR #36 remains Draft and unmerged. Its transaction/group/audit approach was manually adapted to P9 main `f0d6d35`; no whole commit was cherry-picked.
+
+## Authoritative editing and history
+
+Firestore Rules allow a save only when `createdAt <= request.time < createdAt + duration.value(2592000, 's')`. The exact deadline is locked. Browser time controls UI hints only; it cannot authorize a save. The page refreshes the hint at expiry and after returning from the background. Long timers are clamped and rearmed because 30 days exceeds the browser timer integer limit.
+
+Editable fields: vendor, fish selection, Chinese/Malay snapshots, weight, unit price and optional remark (up to 500 characters). Existing integer `weightDeciKg`, integer cents and half-up calculations are reused. Invoice document identity, business date, `dateSortKey`, invoice number/sequence, `createdAt` and `createdBy` stay unchanged. Subsequent revisions cannot extend the original deadline.
+
+Edits update the existing `retailSales/{saleId}` with `revision + 1`; a stale revision fails with “此结算单已在其他装置修改，请重新载入。” A new immutable `actions/{operationId}` stores exact `beforeSnapshot`, `afterSnapshot`, `performedBy` and server `performedAt`. Rules require both parent and action in the same atomic commit, disallow audit update/delete, and disallow invoice hard deletion. History continues using the P9 live subscription, so updates appear without navigation to force loading.
+
+## Daily numbering and retry
+
+`retailInvoiceCounters/{YYYYMMDD}` stores `dateSortKey`, `lastSequence`, `lastSaleId`, `updatedBy` and server `updatedAt`. The final creation transaction reads the existing invoice/action and counter before writing the counter, invoice and creation audit together. Each counter advances by exactly one only with its matching new invoice. Numbers use the **selected business date**, with a minimum three-digit suffix: `03102026001`, `03102026999`, `031020261000`. The next business date starts at 001. Concurrent clients retry the transaction and receive different sequences; no count query is used.
+
+The existing pending checkout ID/session-storage mechanism is retained. Retry uses the same ID and original input, and retrieves a committed invoice without allocating again. Immutable creation/update action snapshots identify a previously committed operation even after later edits or expiry. Mismatching reused operation IDs fail. An uncertain edit freezes its original input and operation ID for retry; reload explicitly discards unsaved input.
+
+Immutable four-group preparation (maximum five lines each) is retained to respect Rules expression limits. Edit groups have operation-prefixed IDs. Prepared groups are not invoices and never appear in Sales History. If the final transaction fails, no sale/revision/counter/audit is partially committed; prepared groups may remain for retry. They are never rewritten or hard deleted by this feature.
+
+## P9 and legacy compatibility
+
+The existing P9 fish picker is reused for Chinese/Malay/alias search, optional Malay/price, order, active status and Other quick-add. Selecting a different fish copies its official Chinese/Malay names and current suggested price; aliases are search terms only. Merely opening Edit or reselecting the same fish preserves saved names and price. Manual invoice overrides never update Master Data. Each row retains its original line index locally; replacement/addition clears that identity. Every genuinely added/replaced selection is re-read within the final update transaction and must still be active, including IDs already present elsewhere in the invoice or replacement away and back. Original indices must match the prior fish and cannot be duplicated. Untouched historical rows can survive removal/reordering and retain their snapshots/prices even if their Master entry is now inactive or missing. Master changes after the transaction read cause retry and active revalidation. This selection boundary is application-enforced, consistent with P9; the requested expiry, financial, identity, revision, counter and audit safeguards remain server-enforced by Rules.
+
+Legacy invoices without a formal number display their original document ID. They are never automatically numbered. Missing revision is interpreted as revision 1 only when performing an eligible explicit edit. Historical integer-kg snapshots normalize in memory without writes; untouched prepared integer groups can complete an existing pre-upgrade pending checkout. Trusted existing Firestore timestamps remain the basis for the same 30-day rule. Missing/invalid/future timestamps disable editing; malformed audit display uses “无法确认 Unknown”. No bulk renumbering, timestamp rewriting, revision backfill or migration occurs.
+
+## Presentation and release boundary
+
+`formatRetailDate` renders a civil business date as `03102026 星期六 Sat`, independent of the device timezone. Audit clock formatting retains Asia/Kuala_Lumpur minute precision. Entry/date-range native inputs keep their ISO values with a formatted visual overlay. History, receipt/print, PDF/share and Edit use the same formatter. Number and remark are rendered without replacing the existing `window.print()`, precomputed PDF `File`, direct-click Web Share or fallback paths.
+
+Rules now include Retail counter, update-window/revision and immutable-action guards. Shared lazy `uid`, `now`, `beforeData` and `afterData` helpers reduce repeated expressions. Expanding these helpers in every non-Retail rule yields **exactly the reviewed P9 expressions**; authentication, financial validation and other modules' permissions are unchanged. Compiled estimate: **252,647 bytes**, under the unchanged **253,952-byte** CI budget.
+
+Validation includes UI, model, service transaction and real Firestore Emulator tests. Exact second boundaries use a deterministic clock substitution **only inside the test copy of `retailEditOpen`**, with the unchanged comparison expression; other guards still use real emulator request time. Separate unmodified-Rules tests reject SAVE-time expiry and missing timestamps. Actual authenticated emulator clients exercise concurrent allocation and captured-revision edits. Browser checks at 320/375/390/430px cover entry/history/receipt/edit with 20 lines, long names/vendors and high prices; no horizontal overflow. A real Chinese four-page PDF including a 500-character remark was rendered and inspected.
+
+P9 Rules and Hosting were released from `f0d6d35`, with all 54 assets hash-verified. P10 must stop after reviewed, CI-green merge and main synchronization. **No P10 deployment is authorized in this task.** A later owner-approved coordinated release must deploy Rules first, then Hosting. No Functions, Blaze, production test records or production Retail Master writes occur. The literal owner dataset is still required before any separately authorized dataset reconciliation.
