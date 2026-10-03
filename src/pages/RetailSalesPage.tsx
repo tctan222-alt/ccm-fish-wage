@@ -115,7 +115,9 @@ export function RetailSalesPage() {
         attempt = { ...attempt, vesselCorrection: { vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode } }
         rememberPendingRetailSale(attempt); setPending(attempt)
       }
-      saving.current = true; setBusy(true)
+      // Freeze this attempted correction too: a lost response may hide a commit.
+      // Another vessel change requires a fresh server reconciliation first.
+      setCanRepairVessel(false); saving.current = true; setBusy(true)
       const result = attempt.vesselCorrection ? await saveRetailSale(attempt.id, attempt.input, attempt.vesselCorrection) : await saveRetailSale(attempt.id, attempt.input)
       clearPendingRetailSale(); setSale(result); setPending(null); saved()
     } catch (problem) { setError(message(problem)) } finally { saving.current = false; setBusy(false) }

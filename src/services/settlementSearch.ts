@@ -42,11 +42,13 @@ export interface SettlementCursor {
   iso:Stream
   canonical:Stream
   monthIndex:number
+  isoCenturyIndex:number
 }
 export interface SettlementPage {items:SettlementSummary[];cursor:SettlementCursor|null}
 export type SettlementPageLoader=(search:SettlementSearch,cursor?:SettlementCursor|null,signal?:AbortSignal)=>Promise<SettlementPage>
 const PAGE_SIZE=25
 const CANONICAL_QUERY_BUDGET=6
+const ISO_QUERY_BUDGET=2
 const SESSION_FIELDS=['sessionCode','productType','weighingDate','vesselId','vesselCodeSnapshot','status','revision',
   'fishHeadBasketCount','fishHeadWeightGrams','fishMealBucketBasketCount','fishMealBagBasketCount','fishMealTotalWeightGrams',
   'processedReceiptId','processedReceiptCode','externalSlipNo']
@@ -74,12 +76,25 @@ function monthsInRange(search:SettlementSearch){
   return months
 }
 
-function sessionQuery(search:SettlementSearch,after:ProjectedDocument|null,month?:string):StructuredQuery {
+function centuriesInRange(search:SettlementSearch){
+  const centuries:number[]=[]
+  for(let year=Math.floor(Number(search.to.slice(0,4))/100)*100;year>=Math.floor(Number(search.from.slice(0,4))/100)*100;year-=100)centuries.push(year)
+  return centuries
+}
+
+function sessionQuery(search:SettlementSearch,after:ProjectedDocument|null,month?:string,century?:number):StructuredQuery {
   const filters=[condition('productType','EQUAL',stringValue(search.productType))]
   if(search.vesselId)filters.push(condition('vesselId','EQUAL',stringValue(search.vesselId)))
   filters.push(condition('status',search.status==='all'?'IN':'EQUAL',search.status==='all'?
     {arrayValue:{values:['weighing','completed','processed'].map(stringValue)}}:stringValue(search.status)))
   let from=search.from,to=search.to
+  if(century!==undefined){
+    // Within one century ISO bounds share their first two digits. Canonical
+    // DD/MM strings have '/' at position 2, before the ISO year digits, so no
+    // canonical value fits these server bounds, including ranges crossing 2000.
+    const start=String(century).padStart(4,'0')+'-01-01',end=String(century+99).padStart(4,'0')+'-12-31'
+    from=from>start?from:start;to=to<end?to:end
+  }
   if(month){
     from=from.slice(0,7)===month?from:`${month}-01`
     to=to.slice(0,7)===month?to:new Date(Date.UTC(Number(month.slice(0,4)),Number(month.slice(5)),0)).toISOString().slice(0,10)
@@ -131,13 +146,21 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
     if(cursor&&cursor.fingerprint!==fingerprint)throw new Error('筛选已改变，请重新查询。')
     const state:SettlementCursor=cursor?{
       ...cursor,iso:{...cursor.iso,buffer:[...cursor.iso.buffer]},canonical:{...cursor.canonical,buffer:[...cursor.canonical.buffer]},
-    }:{fingerprint,iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:false},monthIndex:0}
+    }:{fingerprint,iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:false},monthIndex:0,isoCenturyIndex:0}
     const months=monthsInRange(search)
+    const centuries=centuriesInRange(search)
+    let isoQueries=0
     async function fillIso(){
-      if(state.iso.buffer.length||state.iso.done)return
-      const docs=await run(sessionQuery(search,state.iso.after),signal)
-      state.iso.buffer=docs;state.iso.done=docs.length<PAGE_SIZE
-      state.iso.after=docs.at(-1)??state.iso.after
+      while(!state.iso.buffer.length&&!state.iso.done){
+        if(state.isoCenturyIndex>=centuries.length){state.iso.done=true;break}
+        if(isoQueries>=ISO_QUERY_BUDGET)return false
+        isoQueries++
+        const docs=await run(sessionQuery(search,state.iso.after,undefined,centuries[state.isoCenturyIndex]),signal)
+        state.iso.buffer=docs;state.iso.after=docs.at(-1)??state.iso.after
+        if(docs.length<PAGE_SIZE){state.isoCenturyIndex++;state.iso.after=null}
+        if(state.isoCenturyIndex>=centuries.length)state.iso.done=true
+      }
+      return true
     }
     let canonicalQueries=0
     async function fillCanonical(newestIsoMonth?:string){
@@ -159,7 +182,7 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
     const documents:ProjectedDocument[]=[]
     while(documents.length<PAGE_SIZE){
       signal?.throwIfAborted()
-      await fillIso()
+      if(!await fillIso())break
       const newestIso=state.iso.buffer[0]
       const canonicalReady=await fillCanonical(newestIso?legacyIsoDateFromBusinessDate(businessDateFromLegacy(text(newestIso,'weighingDate'))).slice(0,7):undefined)
       // Return a resumable partial page instead of hiding results behind hundreds

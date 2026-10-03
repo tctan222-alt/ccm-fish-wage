@@ -342,9 +342,23 @@ describe('pending checkout reconciliation', () => {
     await waitFor(()=>expect(screen.getByLabelText('船号 Vessel')).not.toBeDisabled());await chooseVessel();fill('船号 Vessel','v978')
     expect(screen.getByLabelText('小贩 Vendor')).toBeDisabled();expect(screen.getByLabelText('日期 Date')).toBeDisabled()
     fireEvent.click(screen.getByRole('button',{name:'重试结算 Retry Checkout'}));await screen.findByRole('alert')
+    expect(screen.getByLabelText('船号 Vessel')).toBeDisabled()
     expect(services.remember).toHaveBeenCalledWith({...pending,vesselCorrection:{vesselId:'v978',vesselCodeSnapshot:'978'}})
     fireEvent.click(screen.getByRole('button',{name:'重试结算 Retry Checkout'}));await screen.findByText('现金结算已保存。 Cash sale saved.')
     expect(services.save.mock.calls[1]).toEqual(services.save.mock.calls[0]);expect(services.id).not.toHaveBeenCalled()
+  })
+  it('relocks a correction with a lost save response until the committed invoice is reconciled',async()=>{
+    const pending={id:'lost-response',input:{...input,vesselId:'v833',vesselCodeSnapshot:'833'}}
+    services.restore.mockReturnValue(pending);services.save.mockRejectedValue(new Error('response lost'))
+    mount();fireEvent.click(screen.getByRole('button',{name:'核对并重选船号 Verify and Reselect Vessel'}))
+    await waitFor(()=>expect(screen.getByLabelText('船号 Vessel')).not.toBeDisabled());await chooseVessel();fill('船号 Vessel','v978')
+    fireEvent.click(screen.getByRole('button',{name:'重试结算 Retry Checkout'}));await screen.findByRole('alert')
+    expect(screen.getByLabelText('船号 Vessel')).toBeDisabled();expect(screen.getByLabelText('船号 Vessel')).toHaveValue('v978')
+    services.reconcile.mockResolvedValue({id:pending.id,...input,vesselId:'v978',vesselCodeSnapshot:'978',invoiceNumber:'05092026001'})
+    fireEvent.click(screen.getByRole('button',{name:'核对并重选船号 Verify and Reselect Vessel'}))
+    await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.reconcile).toHaveBeenLastCalledWith({...pending,vesselCorrection:{vesselId:'v978',vesselCodeSnapshot:'978'}})
+    expect(services.save).toHaveBeenCalledOnce();expect(services.id).not.toHaveBeenCalled();expect(screen.getByText('船号 Vessel：978')).toBeInTheDocument()
   })
 })
 

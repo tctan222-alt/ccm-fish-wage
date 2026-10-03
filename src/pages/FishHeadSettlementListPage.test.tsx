@@ -166,13 +166,13 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     expect(screen.getByLabelText('船号 Vessel')).toHaveValue('old')
   })
   it('distinguishes a resumable empty partial page from a confirmed empty range',async()=>{
-    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:true},canonical:{buffer:[],after:null,done:false},monthIndex:6} satisfies SettlementCursor
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:true},canonical:{buffer:[],after:null,done:false},monthIndex:6,isoCenturyIndex:0} satisfies SettlementCursor
     renderSearch(async()=>({items:[],cursor}))
     expect(await screen.findByText('当前已查询部分暂无记录，请载入更多继续查询较早月份。')).toBeInTheDocument()
     expect(screen.queryByText(/这个日期范围没有/)).not.toBeInTheDocument();expect(screen.getByRole('button',{name:/载入更多/})).toBeEnabled()
   })
   it.each(['resolve','reject'])('unlocks a timed-out next page even when it ignores abort and later %s',async outcome=>{
-    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0} satisfies SettlementCursor
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
     const stalled=deferred<{items:SettlementSummary[];cursor:null}>()
     const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockImplementationOnce(()=>stalled.promise).mockResolvedValueOnce({items:[item({id:'recovered',sessionCode:'RECOVERED'})],cursor:null})
     renderSearch(loader);await ready();vi.useFakeTimers()
@@ -188,7 +188,7 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     }finally{vi.useRealTimers()}
   })
   it('loads another cursor page, deduplicates IDs and preserves results on a retryable page error',async()=>{
-    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0} satisfies SettlementCursor
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
     const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({items:[item(),item({id:'second',sessionCode:'SECOND'})],cursor:null})
     renderSearch(loader);await ready();fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
     expect(await screen.findByRole('alert')).toHaveTextContent('offline');expect(screen.getAllByRole('article')).toHaveLength(1)

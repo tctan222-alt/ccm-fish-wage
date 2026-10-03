@@ -65,6 +65,15 @@ describe('projected server settlement search',()=>{
     expect(items.slice(0,31).every(item=>item.weighingDate==='03/10/2026')).toBe(true)
     expect(items.slice(31).every(item=>item.weighingDate==='2026-10-02')).toBe(true)
   })
+  it.each(['fish_head','fish_meal'] as const)('keeps %s queries crossing 2000 disjoint from canonical day 20 and paginates without duplicates',async productType=>{
+    const docs=Array.from({length:61},(_,index)=>session('century-'+String(index).padStart(3,'0'),index%2?'2026-10-19':'20/10/2026',{productType}))
+    const load=createSettlementPageLoader(queryFixture(docs)),query={...search,productType,from:'1990-01-01',to:'2026-10-31'}
+    const first=await load(query),second=await load(query,first.cursor),third=await load(query,second.cursor)
+    const items=[...first.items,...second.items,...third.items]
+    expect(items).toHaveLength(61);expect(new Set(items.map(item=>item.id)).size).toBe(61)
+    expect(items.slice(0,31).every(item=>item.weighingDate==='20/10/2026')).toBe(true)
+    expect(items.slice(31).every(item=>item.weighingDate==='2026-10-19')).toBe(true)
+  })
   it.each([0,24])('bounds sparse large-range work with %i ISO results and a resumable cursor',async count=>{
     const run=queryFixture(Array.from({length:count},(_,index)=>session('recent-'+index,'2026-10-03')))
     const page=await createSettlementPageLoader(run)({...search,from:'2000-01-01'})
