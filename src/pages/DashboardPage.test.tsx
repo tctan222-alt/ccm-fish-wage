@@ -1,7 +1,27 @@
-import { render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DashboardPage } from './DashboardPage'
+
+afterEach(cleanup)
+it('shows vessel loading, failure and retry without losing the ice department link',async()=>{
+  let reject!: (error: Error) => void
+  const loader=vi.fn().mockImplementationOnce(()=>new Promise((_,fail)=>{reject=fail})).mockResolvedValueOnce([{id:'v1',vesselCode:'TK141'}])
+  render(<MemoryRouter><DashboardPage vesselLoader={loader}/></MemoryRouter>)
+  expect(screen.getByRole('status')).toHaveTextContent('正在载入船号')
+  reject(new Error('offline'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('无法载入船号')
+  expect(screen.getByRole('link',{name:'查看冰工部门'})).toHaveAttribute('href','/ice-department')
+  fireEvent.click(screen.getByRole('button',{name:'重试 Retry'}))
+  expect(await screen.findByRole('link',{name:'TK141'})).toHaveAttribute('href','/ice-department/v1')
+  expect(loader).toHaveBeenCalledTimes(2)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+it('distinguishes an empty successful response from a failure',async()=>{
+  render(<MemoryRouter><DashboardPage vesselLoader={async()=>[]}/></MemoryRouter>)
+  expect(await screen.findByText(/没有启用中的船号/)).toBeInTheDocument()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
 
 describe('CCM 部门首页', () => {
   it('shows departments and shared-master-data ice vessels', async () => {

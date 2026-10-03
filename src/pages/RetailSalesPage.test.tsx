@@ -6,6 +6,8 @@ import { prepareRetailSale, type RetailFish, type RetailSale } from '../lib/reta
 import { legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import { retailToday } from '../lib/retailSales'
 import type { RetailHistoryRange } from '../lib/retailHistory'
+import { BackButton } from '../components/BackButton'
+import { DirtyStateProvider } from '../components/DirtyStateProvider'
 
 vi.mock('../services/purchaseMasterData', () => ({ loadActiveVessels: async () => [{ id: 'v833', vesselCode: '833', active: true }, { id: 'v978', vesselCode: '978', active: true }] }))
 const services = vi.hoisted(() => ({ watch: vi.fn(), save: vi.fn(), saveFish: vi.fn(), quickAdd: vi.fn(), initialize: vi.fn(), history: vi.fn(), detail: vi.fn(), id: vi.fn(), restore: vi.fn(), remember: vi.fn(), clear: vi.fn(), reconcile: vi.fn() }))
@@ -49,6 +51,23 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('mobile retail checkout', () => {
+  it('warns for a genuine invoice draft, clears after saving and retains backdated context for the next vendor',async()=>{
+    const confirm=vi.spyOn(window,'confirm').mockReturnValue(false)
+    render(<MemoryRouter initialEntries={['/retail-sales']}><DirtyStateProvider><BackButton/><RetailSalesPage/></DirtyStateProvider></MemoryRouter>)
+    fill('日期 Date','2026-09-05'); await chooseVessel(); fill('船号 Vessel','v978'); fill('小贩 Vendor','阿明');fill('备注 Remark','历史补单');add()
+    fireEvent.click(screen.getByRole('button',{name:'返回 Back'}));expect(confirm).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button',{name:'结算 Checkout'}));await screen.findByText('现金结算已保存。 Cash sale saved.')
+    const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(false)
+    fireEvent.click(screen.getByRole('button',{name:'下一位小贩 Next Vendor'}))
+    expect(screen.getByLabelText('日期 Date')).toHaveValue('2026-09-05');expect(screen.getByLabelText('船号 Vessel')).toHaveValue('v978')
+    for(const label of ['小贩 Vendor','备注 Remark','鱼名 Fish','重量 Weight (kg)','单价 Unit Price (RM/kg)']) expect(screen.getByLabelText(label)).toHaveValue('')
+    expect(screen.getByText('本单明细 Items (0)')).toBeInTheDocument();expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText(/操作参考 Operation Reference/)).not.toBeInTheDocument()
+    expect(services.restore).toHaveBeenCalledOnce();expect(services.remember).toHaveBeenCalledOnce();expect(services.clear).toHaveBeenCalledOnce();expect(services.save).toHaveBeenCalledOnce()
+    const nextUnload=new Event('beforeunload',{cancelable:true});fireEvent(window,nextUnload);expect(nextUnload.defaultPrevented).toBe(false)
+    fill('日期 Date','2026-09-06');fill('船号 Vessel','v833');expect(screen.getByLabelText('日期 Date')).toHaveValue('2026-09-06')
+    confirm.mockRestore()
+  })
   it('remembers the most recently chosen vessel for the next vendor while allowing another vessel', async () => {
     mount(); fill('小贩 Vendor', '阿明'); add(); await chooseVessel(); fill('船号 Vessel', 'v978')
     fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))

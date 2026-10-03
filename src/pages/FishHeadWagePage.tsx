@@ -1,4 +1,5 @@
 import { useEffect,useRef,useState } from 'react'
+import { useUnsavedChanges } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import { NumericKeypad } from '../components/NumericKeypad'
 import { FIXED_RATE_CENTS,money,parseRateCents,validWeight,wageCents } from '../lib/wage'
@@ -34,6 +35,7 @@ export function FishHeadWagePage({
   const [custom,setCustom]=useState('')
   const [weight,setWeight]=useState('')
   const [entries,setEntries]=useState<SessionEntry[]>([])
+  useUnsavedChanges(!!weight || entries.length > 0)
   const [savingTotal,setSavingTotal]=useState(false)
   const [message,setMessage]=useState('')
   const [savedSummary,setSavedSummary]=useState('')

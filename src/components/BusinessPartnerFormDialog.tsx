@@ -1,4 +1,5 @@
 import { useRef,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from './dirtyState'
 import {
   duplicatePartnerName,
   validateBusinessPartner,
@@ -30,6 +31,7 @@ export function BusinessPartnerFormDialog({partners,partner,defaultRole,save,onS
   const [saving,setSaving]=useState(false)
   const lock=useRef(false)
   const change=<K extends keyof BusinessPartnerInput>(key:K,next:BusinessPartnerInput[K])=>setValue(current=>({...current,[key]:next}))
+  useUnsavedForm(value)
 
   async function persist(){
     if(lock.current)return

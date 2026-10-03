@@ -1,4 +1,5 @@
 import { useEffect,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import type { FishSpeciesRecord } from '../lib/weighing'
 import { initializeDefaultFishSpecies,loadFishSpecies,saveFishSpecies } from '../services/weighing'
@@ -37,6 +38,7 @@ export function FishSpeciesPage({loader=loadFishSpecies,initializer=initializeDe
 
 function FishSpeciesDialog({item,close,save}:{item:FishSpeciesRecord;close:()=>void;save:(item:FishSpeciesRecord)=>Promise<void>}){
   const [name,setName]=useState(item.displayName),[order,setOrder]=useState(String(item.order)),[notes,setNotes]=useState(item.notes)
+  useUnsavedForm({ name, order, notes })
   const [error,setError]=useState(''),[busy,setBusy]=useState(false)
   async function submit(event:FormEvent){event.preventDefault();setBusy(true)
     try{await save({...item,displayName:name,order:Number(order),notes})}

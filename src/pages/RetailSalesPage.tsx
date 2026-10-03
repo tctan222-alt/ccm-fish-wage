@@ -9,6 +9,7 @@ import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, lo
 import { RetailFishPicker } from '../components/RetailFishPicker'
 import { RetailReceipt, RetailReceiptActions } from '../components/RetailReceipt'
 import { RetailVesselPicker, useRetailVessels } from '../components/RetailVesselPicker'
+import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import './retailSales.css'
 
 function message(error: unknown) {
@@ -73,6 +74,7 @@ export function RetailSalesPage() {
   const [pending, setPending] = useState<PendingRetailSale | null>(null), [canRepairVessel, setCanRepairVessel] = useState(false)
   const saving = useRef(false), weightInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [recoveryError, setRecoveryError] = useState('')
+  useUnsavedChanges(!sale && (!!pending || !!vendorName || !!remark || !!weight || !!price || !!selected || lines.length > 0))
   const availableFish = fish === null ? null : [...fish, ...createdFish.filter(created => !fish.some(item => item.id === created.id))]
   useEffect(() => { if (selected && !quickBusy) weightInput.current?.focus() }, [selected, quickBusy])
   useEffect(() => {
@@ -133,7 +135,7 @@ export function RetailSalesPage() {
     finally { saving.current = false; setBusy(false) }
   }
   function nextVendor() {
-    setSale(null); setLines([]); setVendor(''); setRemark(''); setDate(retailToday()); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
+    setSale(null); setLines([]); setVendor(''); setRemark(''); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成 Checkout Complete" /><p className="success retail-no-print" role="status">现金结算已保存。 Cash sale saved.</p>
     <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩 Next Vendor</button></div></main>
@@ -186,6 +188,7 @@ function RetailFishForm({ item, close }: { item: RetailFish | null; close: () =>
   const [chineseName, setChinese] = useState(item?.chineseName ?? ''), [malayName, setMalay] = useState(item?.malayName ?? '')
   const [price, setPrice] = useState(item?.suggestedPriceCents == null ? '' : (item.suggestedPriceCents / 100).toFixed(2)), [active, setActive] = useState(item?.active ?? true)
   const [aliases, setAliases] = useState(item?.aliases?.join('\n') ?? ''), [sortOrder, setSortOrder] = useState(item ? String(item.sortOrder ?? 0) : '')
+  useUnsavedForm({ chineseName, malayName, price, active, aliases, sortOrder })
   const [busy, setBusy] = useState(false), [error, setError] = useState('')
   async function submit(event: FormEvent) {
     event.preventDefault(); if (busy) return; setBusy(true); setError('')
@@ -311,6 +314,8 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [result, setResult] = useState<RetailSale | null>(null)
   const [pending, setPending] = useState<{ input: RetailSaleInput; operationId: string; originalLineIndices: number[] } | null>(null)
+  const originalLines = original.lines.map(editableLine)
+  useUnsavedChanges(!result && (!!pending || vendorName !== original.vendorName || remark !== (original.remark ?? '') || vesselId !== (original.vesselId ?? '') || JSON.stringify(lines) !== JSON.stringify(originalLines)))
   const saving = useRef(false), mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const now = useEditClock([original]), status = retailEditStatus(original, now)

@@ -1,90 +1,57 @@
-import { useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-
-function fallbackFor(pathname:string) {
-  if (pathname.startsWith('/fish-head-purchase') || pathname.startsWith('/fish-meal-purchase') || pathname.startsWith('/fish-head-wages') || pathname.startsWith('/daily') || pathname.startsWith('/monthly')) return '/fish-department'
-  if (pathname === '/ice-department') return '/dashboard'
-  if (pathname.startsWith('/ice-department/')) return '/ice-department'
-  return '/dashboard'
-}
+import { DirtyStateContext } from './dirtyState'
+import { fallbackFor } from '../lib/navigationParent'
 
 export function BackButton({ whenDirty }: { whenDirty?: boolean }) {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const navigate = useNavigate(), location = useLocation()
+  const registered = useContext(DirtyStateContext)
+  const dirty = whenDirty ?? registered?.dirty ?? false
   const retail = /^\/retail-sales(?:\/|$)/.test(location.pathname)
-  const leaveMessage = retail ? '还有未保存的资料，确定离开吗？ You have unsaved changes. Leave this page?' : '还有未保存的资料，确定离开吗？'
-  const [detectedDirty,setDetectedDirty]=useState(false)
-  const dirty=whenDirty??detectedDirty
-  const historyIndex=useRef<number|null>(null)
-  const revertingPop=useRef(false)
-  const revertToLocationKey=useRef<string|null>(null)
-  const previousLocationKey=useRef(location.key)
-  useEffect(()=>{
-    if(revertingPop.current){
-      if(revertToLocationKey.current===location.key){
-        revertingPop.current=false
-        revertToLocationKey.current=null
-        previousLocationKey.current=location.key
-      }
-      return
+  const leaveMessage = '还有未保存的资料，确定离开吗？ You have unsaved changes. Leave this page?'
+  const historyIndex = useRef<number | null>(null), restoring = useRef(false), approved = useRef(false)
+  useEffect(() => {
+    historyIndex.current = typeof window.history.state?.idx === 'number' ? window.history.state.idx : null
+    approved.current = false
+  }, [location.key, dirty])
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!dirty || approved.current) return
+      event.preventDefault(); event.returnValue = ''
     }
-    if(previousLocationKey.current===location.key)return
-    previousLocationKey.current=location.key
-    if(whenDirty===undefined)setDetectedDirty(false)
-  },[location.key,whenDirty])
-  useEffect(()=>{
-    const index=typeof window.history.state?.idx==='number'?window.history.state.idx:null
-    if(index!==null)historyIndex.current=index
-  },[location.key])
-  useEffect(()=>{
-    const markDirty=(event:Event)=>{
-      const target=event.target
-      if(target instanceof HTMLInputElement||target instanceof HTMLTextAreaElement||target instanceof HTMLSelectElement)setDetectedDirty(true)
+    const guardNavigation = (event: MouseEvent) => {
+      if (!dirty || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      const link = target.closest('a[href]'), leavesByButton = target.closest('[data-navigation-leave]')
+      if (!link && !leavesByButton) return
+      if (link instanceof HTMLAnchorElement && ((link.target && link.target !== '_self') || link.hasAttribute('download'))) return
+      if (!window.confirm(leaveMessage)) { event.preventDefault(); event.stopPropagation(); return }
+      // Router links and async Logout may leave the current form mounted. Only
+      // a native document navigation consumes the subsequent beforeunload warning.
+      approved.current = link instanceof HTMLAnchorElement && !link.hasAttribute('data-discover')
     }
-    const clearDirty=()=>setDetectedDirty(false)
-    const warnBeforeUnload=(event:BeforeUnloadEvent)=>{
-      if(!dirty)return
-      event.preventDefault()
-      event.returnValue=''
+    const guardPopState = (event: PopStateEvent) => {
+      const nextIndex = typeof event.state?.idx === 'number' ? event.state.idx : null
+      // Capture before BrowserRouter's listener, so cancelling never unmounts the draft.
+      if (restoring.current) { restoring.current = false; event.stopImmediatePropagation(); return }
+      if (!dirty || approved.current || nextIndex === null || historyIndex.current === null) { historyIndex.current = nextIndex; approved.current = false; return }
+      if (window.confirm(leaveMessage)) { historyIndex.current = nextIndex; return }
+      const delta = historyIndex.current - nextIndex
+      if (delta !== 0) { event.stopImmediatePropagation(); restoring.current = true; window.history.go(delta) }
     }
-    const guardNavigation=(event:MouseEvent)=>{
-      if(!dirty||event.defaultPrevented||event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return
-      const target=event.target
-      if(!(target instanceof Element))return
-      const link=target.closest('a[href]')
-      const leavesByButton=target.closest('[data-navigation-leave]')
-      if(!link&&!leavesByButton)return
-      if(link&&link instanceof HTMLAnchorElement&&link.target&&link.target!=='_self')return
-      if(!window.confirm(leaveMessage)){
-        event.preventDefault();event.stopPropagation();return
-      }
-      setDetectedDirty(false)
+    document.addEventListener('click', guardNavigation, true)
+    window.addEventListener('beforeunload', warnBeforeUnload)
+    window.addEventListener('popstate', guardPopState, true)
+    return () => {
+      document.removeEventListener('click', guardNavigation, true)
+      window.removeEventListener('beforeunload', warnBeforeUnload)
+      window.removeEventListener('popstate', guardPopState, true)
     }
-    const guardPopState=(event:PopStateEvent)=>{
-      const nextIndex=typeof event.state?.idx==='number'?event.state.idx:null
-      if(revertingPop.current){historyIndex.current=nextIndex;return}
-      if(!dirty||nextIndex===null||historyIndex.current===null){historyIndex.current=nextIndex;return}
-      if(window.confirm(leaveMessage)){setDetectedDirty(false);historyIndex.current=nextIndex;return}
-      const delta=historyIndex.current-nextIndex
-      if(delta!==0){revertingPop.current=true;revertToLocationKey.current=previousLocationKey.current;window.history.go(delta)}
-    }
-    document.addEventListener('input',markDirty,true)
-    document.addEventListener('change',markDirty,true)
-    document.addEventListener('click',guardNavigation,true)
-    window.addEventListener('ccm:form-saved',clearDirty)
-    window.addEventListener('beforeunload',warnBeforeUnload)
-    window.addEventListener('popstate',guardPopState)
-    return ()=>{
-      document.removeEventListener('input',markDirty,true)
-      document.removeEventListener('change',markDirty,true)
-      document.removeEventListener('click',guardNavigation,true)
-      window.removeEventListener('ccm:form-saved',clearDirty)
-      window.removeEventListener('beforeunload',warnBeforeUnload)
-      window.removeEventListener('popstate',guardPopState)
-    }
-  },[dirty,leaveMessage])
+  }, [dirty, leaveMessage])
   function goBack() {
     if (dirty && !window.confirm(leaveMessage)) return
+    approved.current = true
     const index = typeof window.history.state?.idx === 'number' ? window.history.state.idx : 0
     if (index > 0) navigate(-1)
     else navigate(fallbackFor(location.pathname))

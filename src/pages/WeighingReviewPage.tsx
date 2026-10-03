@@ -1,4 +1,5 @@
 import { useEffect,useMemo,useState,type FormEvent } from 'react'
+import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import { Link,useNavigate,useParams } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
 import type { Vessel } from '../lib/purchasing'
@@ -41,6 +42,7 @@ export function WeighingReviewPage({
     setBundle(loaded);setSuppliers(partners);setVessels(loadedVessels.filter(item=>item.active))
   }).catch(()=>setError('无法载入现场称重单。'))},[sessionId,bundleLoader,supplierLoader,vesselLoader])
   const groups=useMemo(()=>groupWeighingEntries(bundle?.entries??[]),[bundle])
+  useUnsavedChanges(bundle?.session.status === 'completed' && (!!supplierId || Object.values(prices).some(Boolean)))
   if(!bundle)return <main><p className={error?'error':'notice'} role={error?'alert':undefined}>{error||'正在载入现场称重单…'}</p></main>
   const {session,entries}=bundle
   const completedEditable=canEditCompletedWeighing(session,now())
@@ -134,6 +136,7 @@ function SessionEditDialog({session,vessels,busy,close,save}:{session:WeighingSe
   const [sessionCode,setSessionCode]=useState(session.sessionCode),[weighingDate,setWeighingDate]=useState(session.weighingDate)
   const [vesselId,setVesselId]=useState(session.vesselId),[externalSlipNo,setExternalSlipNo]=useState(session.externalSlipNo),[notes,setNotes]=useState(session.notes),[reason,setReason]=useState('后台资料修正')
   const vessel=vessels.find(item=>item.id===vesselId)
+  useUnsavedForm({ sessionCode, weighingDate, vesselId, externalSlipNo, notes, reason })
   function submit(event:FormEvent){event.preventDefault();if(vessel)void save({sessionCode,weighingDate,vessel,externalSlipNo,notes,reason})}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true" aria-label="后台修改本单"><h2>后台修改本单</h2>
     <p>这是受控后台动作，不等同于现场页面切换船号；所有修改都会保留审计记录。</p><form className="master-form" onSubmit={submit}>
