@@ -26,9 +26,9 @@ async function seedWeighing(id:string,data=weighingRecord()) {
   return doc(environment.authenticatedContext('u1').firestore(),'weighingSessions',id)
 }
 
-async function changeWeighing(ref:DocumentReference,type:string,patch:DocumentData) {
+async function changeWeighing(ref:DocumentReference,type:string,patch:DocumentData,revisionDelta=1) {
   const before=(await getDoc(ref)).data()!,actionId=`${type}-${before.revision+1}`
-  const after={...before,...patch,revision:before.revision+1,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:actionId}
+  const after={...before,...patch,revision:before.revision+revisionDelta,updatedBy:'u1',updatedAt:serverTimestamp(),lastActionId:actionId}
   const batch=writeBatch(ref.firestore)
   batch.set(ref,after)
   batch.set(doc(ref,'actions',actionId),{type,sessionId:ref.id,entryId:null,reason:'修正记录',performedBy:'u1',performedAt:serverTimestamp(),
@@ -346,6 +346,23 @@ describe('Firestore Rules: retail cash sales', () => {
 })
 
 describe('Firestore Rules: vessels and ice-work audit', () => {
+  it.each([
+    {type:'session_update',status:'completed',patch:{externalSlipNo:'FH-REVISION'}},
+    {type:'reopen',status:'completed',patch:{status:'weighing'}},
+    {type:'complete',status:'weighing',patch:{status:'completed'}},
+    {type:'session_void',status:'completed',patch:{status:'voided',voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()}},
+  ])('requires an atomic source revision increment for $type',async({type,status,patch})=>{
+    const vesselId=`revision-vessel-${type}`
+    await environment.withSecurityRulesDisabled(async context=>setDoc(doc(context.firestore(),'vessels',vesselId),vessel))
+    const ref=await seedWeighing(`revision-${type}`,weighingRecord(6,{status,vesselId}))
+    await assertFails(changeWeighing(ref,type,patch,0))
+    await assertFails(changeWeighing(ref,type,patch,2))
+    expect((await getDoc(ref)).data()).toMatchObject({revision:2,status,externalSlipNo:''})
+    await assertSucceeds(changeWeighing(ref,type,patch))
+    expect((await getDoc(ref)).data()).toMatchObject({revision:3,status:type==='reopen'?'weighing':type==='session_void'?'voided':'completed',
+      externalSlipNo:type==='session_update'?'FH-REVISION':''})
+  })
+
   it('allows reopening a completed weighing session only during its seven-day edit window',async()=>{
     const within=await seedWeighing('within-window',weighingRecord(6)),expired=await seedWeighing('expired-window',weighingRecord(8))
     await assertFails(changeWeighing(within,'reopen',{status:'weighing',completedAt:null,completedBy:null}))
@@ -387,13 +404,27 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
         await assertFails(write('entry_create',{weightGrams:-500},-500,1))
         await assertFails(write('entry_create',{},500,1,{totalWeightGrams:1}))
         await assertFails(write('entry_create',{},500,1,{completedAt:null,completedBy:null}))
+        await assertFails(write('entry_create',{},500,1,{revision:2}))
+        expect((await getDoc(entryRef)).exists()).toBe(false)
+        expect((await getDoc(ref)).data()?.revision).toBe(2)
         await expect(write('entry_create',{},500,1)).resolves.toBeUndefined()
+        expect((await getDoc(ref)).data()).toMatchObject({revision:3,totalWeightGrams:1500})
         await assertFails(write('entry_create',{},500,1))
         await assertFails(write('entry_update',{weightGrams:700},200,0,{completedAt:serverTimestamp()}))
         await assertFails(write('entry_update',{weightGrams:700},200,0,{vesselId:'v833'}))
+        await assertFails(write('entry_update',{weightGrams:700},200,0,{revision:3}))
+        expect((await getDoc(entryRef)).data()).toMatchObject({weightGrams:500,revision:1})
         await expect(write('entry_update',{weightGrams:700},200)).resolves.toBeUndefined()
-        expect((await getDoc(ref)).data()?.totalWeightGrams).toBe(1700)
+        expect((await getDoc(ref)).data()).toMatchObject({revision:4,totalWeightGrams:1700})
+        const speciesPatch={fishSpeciesId:'custom_other',fishSpeciesCodeSnapshot:'custom_other',fishSpeciesNameSnapshot:'其他鱼',displayNameSnapshot:'其他鱼'}
+        await assertFails(write('entry_update',speciesPatch,0,0,{revision:4}))
+        await expect(write('entry_update',speciesPatch,0)).resolves.toBeUndefined()
+        expect((await getDoc(entryRef)).data()).toMatchObject({...speciesPatch,revision:3})
+        expect((await getDoc(ref)).data()).toMatchObject({revision:5,totalWeightGrams:1700})
+        await assertFails(write('entry_void',{voided:true,voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()},-700,-1,{revision:5}))
+        expect((await getDoc(entryRef)).data()?.voided).toBe(false)
         await expect(write('entry_void',{voided:true,voidReason:'修正记录',voidedBy:'u1',voidedAt:serverTimestamp()},-700,-1)).resolves.toBeUndefined()
+        expect((await getDoc(ref)).data()).toMatchObject({revision:6,totalWeightGrams:1000})
         expect((await getDoc(ref)).data()?.completedAt).toEqual((await getDoc(ref)).data()?.createdAt)
       } else {
         await assertFails(write('entry_create',{},500,1))

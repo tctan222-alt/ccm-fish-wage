@@ -2,7 +2,7 @@ import { collection,doc,getDoc,getDocs,query,where,runTransaction,serverTimestam
 import { auth,db,firebaseConfigured } from '../firebase'
 import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import { asSettlementSourceEntry,assertValidPurchaseSettlementDraft,draftIdForSettlement,draftIdForSourceSession,type PurchaseSettlementDraft,type PurchaseSettlementLine } from '../lib/purchaseSettlement'
-import { loadWeighingBundle,loadWeighingSessions,type WeighingBundle } from './weighing'
+import { loadStableWeighingBundle,loadWeighingSessions,type WeighingBundle } from './weighing'
 import { canModifyWeighing,type WeighingProductType,type WeighingSession } from '../lib/weighing'
 
 const DRAFT_COLLECTION='purchaseSettlementDrafts'
@@ -114,14 +114,15 @@ export async function loadPurchaseSettlementDraftForSource(bundle:WeighingBundle
 }
 
 export async function loadPurchaseSettlementSource(vesselId:string,businessDate:string,productType:WeighingProductType,
-  sessionLoader=loadWeighingSessions,bundleLoader=loadWeighingBundle):Promise<PurchaseSettlementSource>{
+  sessionLoader=loadWeighingSessions,bundleLoader=loadStableWeighingBundle):Promise<PurchaseSettlementSource>{
   const canonical=businessDateFromLegacy(businessDate)
   const sessions=await sessionLoader()
   const matching=sessions.filter(item=>item.vesselId===vesselId&&item.productType===productType&&item.status!=='voided'
     &&businessDateFromLegacy(item.weighingDate)===canonical)
   if(matching.length>1)throw new Error(`同船同日有多张称重单，请从结单列表选择（${matching.map(item=>item.id).sort().join(', ')}）。`)
   const session=matching[0]??null
-  return {session,bundle:session?await bundleLoader(session.id):null}
+  const bundle=session?await bundleLoader(session.id):null
+  return {session:bundle?.session??null,bundle}
 }
 
 export async function loadPurchaseSettlementDraft(productType:WeighingProductType,dateSortKey:number,vesselId:string):Promise<PurchaseSettlementDraft|null>{
@@ -140,14 +141,8 @@ export async function savePurchaseSettlementDraft(value:PurchaseSettlementDraft)
   const primary=await boundDrafts(sourceSessionId,value.productType)
   if(primary.length&&(!value.draftId||primary[0].draftId!==actualId))throw new Error(`来源称重单已有结单（${primary[0].draftId}），请重新载入。`)
   if(!value.draftId){
-    // Identity-only discovery prevents stale new clients from stranding saved legacy prices.
-    // This does not introduce the separate stable source revision read protocol (Priority 6).
-    const source=await getDoc(doc(db,'weighingSessions',sourceSessionId))
-    if(!source.exists())throw new Error('找不到来源称重单。')
-    const [entries,actions]=await Promise.all([getDocs(collection(db,'weighingSessions',sourceSessionId,'entries')),getDocs(collection(db,'weighingSessions',sourceSessionId,'actions'))])
-    const bundle={session:{...source.data(),id:sourceSessionId} as WeighingSession,
-      entries:entries.docs.map(item=>({...item.data(),id:item.id,sessionId:sourceSessionId})) as WeighingBundle['entries'],
-      actions:actions.docs.map(item=>({...item.data(),id:item.id})) as WeighingBundle['actions']}
+    // Legacy ownership proof must use entries and correction history from one stable source revision.
+    const bundle=await loadStableWeighingBundle(sourceSessionId)
     const resolved=await loadPurchaseSettlementDraftForSource(bundle,value.productType)
     if(resolved)throw new Error(`来源称重单已有结单（${resolved.draftId}），请重新载入。`)
   }

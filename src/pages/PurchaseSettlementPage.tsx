@@ -6,7 +6,7 @@ import { canModifyWeighing,formatWeightKg,type WeighingEntry,type WeighingProduc
 import type { Vessel } from '../lib/purchasing'
 import { loadVessels } from '../services/purchaseMasterData'
 import { loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
-import { loadWeighingBundle,type WeighingBundle } from '../services/weighing'
+import { loadStableWeighingBundle,type WeighingBundle } from '../services/weighing'
 
 function lineKey(line:PurchaseSettlementLine){return line.sourceEntryIds.join('|')}
 function priceText(value:number|null){return value===null?'':(value/100).toFixed(2)}
@@ -26,7 +26,7 @@ export function PurchaseSettlementPage({
   draftLoader=loadPurchaseSettlementDraftForSource,
   legacyDraftLoader=loadPurchaseSettlementDraft,
   draftSaver=savePurchaseSettlementDraft,
-  bundleLoader=loadWeighingBundle,
+  bundleLoader=loadStableWeighingBundle,
   today=malaysiaBusinessDate,
   now=()=>new Date(),
 }: {
@@ -46,6 +46,7 @@ export function PurchaseSettlementPage({
   const [entries,setEntries]=useState<WeighingEntry[]>([]),[lines,setLines]=useState<PurchaseSettlementLine[]>([])
   const [receiptNo,setReceiptNo]=useState(''),[priceInputs,setPriceInputs]=useState<Record<string,string>>({}),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const [loading,setLoading]=useState(true)
+  const [loadFailed,setLoadFailed]=useState(false),[loadAttempt,setLoadAttempt]=useState(0)
   const [sourceSession,setSourceSession]=useState<WeighingSession|null>(null)
   const [loadedKey,setLoadedKey]=useState(''),[draftRevision,setDraftRevision]=useState(0)
   const [draftId,setDraftId]=useState<string|undefined>()
@@ -60,13 +61,14 @@ export function PurchaseSettlementPage({
   useEffect(()=>{
     if(!sessionId&&!requestedVesselId){setLoading(false);return}
     let cancelled=false
-    setLoading(true);setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setMessage('')
+    setLoading(true);setLoadFailed(false);setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setMessage('')
     void (async()=>{
       const source=sessionId?await bundleLoader(sessionId):(await sourceLoader(requestedVesselId,requestedDate,productType)).bundle
       if(sessionId&&source?.session.id!==sessionId)throw new Error('来源现场单与当前路径不一致，请重新载入。')
       if(source?.session.productType&&source.session.productType!==productType)throw new Error('结单类型与来源称重单不一致。')
       const date=source?businessDateFromLegacy(source.session.weighingDate):requestedDate
       const sourceVesselId=source?.session.vesselId??requestedVesselId
+      if(!sessionId&&source&&(date!==requestedDate||sourceVesselId!==requestedVesselId))throw new Error('称重资料日期或船号已变更，请重新选择或从结单列表打开。')
       const draft=source?await draftLoader(source,productType):await legacyDraftLoader(productType,sortKeyFromBusinessDate(date),sourceVesselId)
       if(cancelled)return
       if(draft?.sourceSessionId&&source&&draft.sourceSessionId!==source.session.id)throw new Error('结单关联了另一张称重单，请核查来源。')
@@ -78,9 +80,9 @@ export function PurchaseSettlementPage({
       setLines(nextLines);setPriceInputs(Object.fromEntries(nextLines.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])))
       if(sessionId){setVesselId(sourceVesselId);setBusinessDate(date)}
       setLoadedKey(contextKey)
-    })().catch(problem=>{if(!cancelled)setError(problem instanceof Error?problem.message:'无法载入结单资料。')}).finally(()=>{if(!cancelled)setLoading(false)})
+    })().catch(problem=>{if(!cancelled){setLoadFailed(true);setError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{if(!cancelled)setLoading(false)})
     return()=>{cancelled=true}
-  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,sessionId,contextKey])
+  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,sessionId,contextKey,loadAttempt])
 
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const total=useMemo(()=>totalSettlementAmountCents(lines),[lines])
@@ -113,8 +115,8 @@ export function PurchaseSettlementPage({
     <section className="settlement-context"><label>船号<select aria-label="船号" value={vesselId} disabled={Boolean(sessionId)||busy} onChange={event=>setVesselId(event.target.value)}>{vessels.map(item=><option value={item.id} key={item.id}>{item.vesselCode}</option>)}{sourceSession&&!selectedVessel&&<option value={sourceSession.vesselId}>{sourceSession.vesselCodeSnapshot}</option>}</select></label>
       <label>日期<input aria-label="日期" type="date" value={dateInputValue(businessDate)} disabled={Boolean(sessionId)||busy} onChange={event=>{if(event.target.value)setBusinessDate(event.target.value.split('-').reverse().join('/'))}}/><small>{businessDate}</small></label>
       <label className="settlement-receipt-no">单号（可之后补填）<input aria-label="单号" value={receiptNo} disabled={!editable||busy} onChange={event=>setReceiptNo(event.target.value)} placeholder="可留空"/></label></section>
-    {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="notice" role="status">{message}</p>}
-    {loading?<p className="notice">正在载入结单资料…</p>:<section className="settlement-table-section"><p className="settlement-meta">船号：{sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
+    {error&&<p className="error" role="alert">{error}</p>}{error&&!loading&&<button type="button" disabled={busy} onClick={()=>setLoadAttempt(current=>current+1)}>重新载入结单</button>}{message&&<p className="notice" role="status">{message}</p>}
+    {loading?<p className="notice">正在载入结单资料…</p>:loadFailed?null:<section className="settlement-table-section"><p className="settlement-meta">船号：{sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
       {ready&&sourceSession&&<p className="notice">{editable?'首次完成称重后 7 天内可修改；重开不会延长期限。':'本单已锁定或超过 7 天修改期，只能查看。'}</p>}
       {ready&&sourceSession?.status==='completed'&&editable&&<Link className="page-link" to={`/weighing/${sourceSession.id}/review`}>修改称重（7 天内）</Link>}
       {lines.length===0?<p className="notice">当前没有称重资料，不能结单。</p>:<><div className="settlement-table-scroll"><table className="settlement-table"><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>单价 RM/kg</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td>{formatWeightKg(line.totalWeightGrams)} kg</td><td>{fishHead?`${line.basketCount}篮`:mealCountText(line)}</td><td>{priceText(line.defaultUnitPriceCentsPerKg)?`RM ${priceText(line.defaultUnitPriceCentsPerKg)}`:'-'}</td><td><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" disabled={!editable||busy} value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td>{formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>总额</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div><div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button><button className="primary-action" type="button" disabled={busy||!editable} onClick={()=>void saveDraft()}>保存结单草稿</button></div></>}
