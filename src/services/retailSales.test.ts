@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { makeRetailLine, type RetailSaleInput } from '../lib/retailSales'
 import seed from '../data/retailFishSeed.json'
 
-const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), failPath: '', uid: 'u1', nextId: 0 }))
+const state = vi.hoisted(() => ({ records: new Map<string, Record<string, unknown>>(), versions: new Map<string, number>(), retries: 0, writes: vi.fn(), failPath: '', uid: 'u1', nextId: 0, beforeCommit: null as ((paths: string[]) => void) | null }))
 vi.mock('../firebase', () => ({ db: {}, auth: { get currentUser() { return { uid: state.uid } } } }))
 vi.mock('firebase/firestore', () => {
   const snapshot = (path: string) => ({ id: path.split('/').at(-1), exists: () => state.records.has(path), data: () => state.records.get(path) })
@@ -34,6 +34,7 @@ vi.mock('firebase/firestore', () => {
           set,
           update: (ref: { path: string }, data: Record<string, unknown>) => set(ref, { ...state.records.get(ref.path), ...data }),
         })
+        state.beforeCommit?.([...staged.keys()])
         if ([...reads].some(([path, version]) => version !== (state.versions.get(path) ?? 0))) { state.retries++; continue }
         for (const [path, data] of staged) { state.writes(path); state.records.set(path, data); state.versions.set(path, (state.versions.get(path) ?? 0) + 1) }
         return result
@@ -44,7 +45,7 @@ vi.mock('firebase/firestore', () => {
 })
 import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, loadRetailSale, loadRetailSales, quickAddRetailFish, rememberPendingRetailSale, saveRetailFish, saveRetailSale, updateRetailSale, watchRetailFish } from './retailSales'
 const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', lines: [makeRetailLine(seed[0], '2', '6.15')] }
-beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; sessionStorage.clear() })
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
 
 describe('retail quick-add fish', () => {
   it('rejects saved aliases and Other Chinese names colliding with Malay, but allows two Malay translations to match', async () => {
@@ -205,6 +206,56 @@ describe('Retail invoice counters and audited updates', () => {
     const lines = [makeRetailLine({ ...seed[1], id: 'replacement' }, '1', '5')]
     expect((await updateRetailSale('sale', { ...input, lines }, 2, 'active-replacement')).lines).toEqual(lines)
     expect(state.records.get('retailFish/replacement')?.suggestedPriceCents).toBe(seed[1].suggestedPriceCents)
+  })
+  it('revalidates a newly added copy or replacement even when that fish ID already exists in another original line', async () => {
+    const lines = [input.lines[0], makeRetailLine(seed[1], '1', '8')]
+    await saveRetailSale('sale', { ...input, lines })
+    state.records.set(`retailFish/${seed[0].id}`, { ...seed[0], active: false })
+    // The picker selected it while active, then Master was deactivated before Save.
+    const replacement = { ...input, lines: [lines[0], input.lines[0]] }
+    await expect(updateRetailSale('sale', replacement, 1, 'replace-existing', [0, -1])).rejects.toMatchObject({ code: 'retail/inactive-fish' })
+    await expect(updateRetailSale('sale', { ...input, lines: [...lines, input.lines[0]] }, 1, 'add-existing', [0, 1, -1])).rejects.toMatchObject({ code: 'retail/inactive-fish' })
+    expect((await loadRetailSale('sale')).revision).toBe(1)
+    // Removing another line preserves the surviving original's identity, not its position.
+    await expect(updateRetailSale('sale', { ...input, lines: [lines[0]] }, 1, 'retain-original', [0])).resolves.toMatchObject({ revision: 2 })
+  })
+  it('retains original inactive rows after removal/reordering and rejects forged or duplicated origin indices', async () => {
+    const lines = [input.lines[0], makeRetailLine(seed[1], '1', '8')]
+    await saveRetailSale('sale', { ...input, lines })
+    state.records.set(`retailFish/${seed[1].id}`, { ...seed[1], active: false })
+    await expect(updateRetailSale('sale', { ...input, lines: [lines[1]] }, 1, 'keep-second', [1])).resolves.toMatchObject({ revision: 2 })
+    await expect(updateRetailSale('sale', { ...input, lines: [lines[1], lines[1]] }, 2, 'duplicate-origin', [0, 0])).rejects.toMatchObject({ code: 'retail/invalid-origin' })
+    await expect(updateRetailSale('sale', { ...input, lines: [lines[0]] }, 2, 'fake-origin', [0])).rejects.toMatchObject({ code: 'retail/invalid-origin' })
+    expect((await loadRetailSale('sale')).revision).toBe(2)
+  })
+  it('preserves separate duplicate historical rows by their unique origins, including reordering', async () => {
+    const lines = [input.lines[0], { ...input.lines[0], unitPriceCents: 800, amountCents: 1600 }]
+    await saveRetailSale('sale', { ...input, lines })
+    state.records.set(`retailFish/${seed[0].id}`, { ...seed[0], active: false })
+    const result = await updateRetailSale('sale', { ...input, lines: [lines[1], lines[0]] }, 1, 'reorder-originals', [1, 0])
+    expect(result.lines).toEqual([lines[1], lines[0]])
+    expect(result.totalAmountCents).toBe(2830)
+  })
+  it('rejects replacement back to the original fish after it becomes inactive, even though its ID is historical', async () => {
+    await saveRetailSale('sale', input)
+    state.records.set(`retailFish/${seed[0].id}`, { ...seed[0], active: false })
+    await expect(updateRetailSale('sale', input, 1, 'replace-back', [-1])).rejects.toMatchObject({ code: 'retail/inactive-fish' })
+    expect((await loadRetailSale('sale')).revision).toBe(1)
+  })
+  it('retries when a replacement Master becomes inactive after the transaction read, then rejects without committing an edit', async () => {
+    await saveRetailSale('sale', input)
+    const masterPath = `retailFish/${seed[1].id}`
+    state.records.set(masterPath, { ...seed[1], active: true })
+    state.beforeCommit = paths => {
+      if (!paths.includes('retailSales/sale')) return
+      state.beforeCommit = null
+      state.records.set(masterPath, { ...seed[1], active: false })
+      state.versions.set(masterPath, (state.versions.get(masterPath) ?? 0) + 1)
+    }
+    await expect(updateRetailSale('sale', { ...input, lines: [makeRetailLine(seed[1], '1', '8')] }, 1, 'deactivated-during-save', [-1])).rejects.toMatchObject({ code: 'retail/inactive-fish' })
+    expect(state.retries).toBeGreaterThan(0)
+    expect((await loadRetailSale('sale')).revision).toBe(1)
+    expect(state.records.has('retailSales/sale/actions/deactivated-during-save')).toBe(false)
   })
   it('allocates 001, 002 for one business date and resets for the next date', async () => {
     expect((await saveRetailSale('first', input)).invoiceNumber).toBe('06092026001')

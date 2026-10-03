@@ -253,9 +253,9 @@ export function RetailReceiptPage() {
   return <main className="retail-page"><RetailHeader title="门市现金结算单" />{error ? <p className="error" role="alert">{error}</p> : !sale ? <p role="status">正在载入结算单… Loading invoice…</p> : <><RetailReceipt sale={sale} /><RetailEditEntry sale={sale} now={now} /><RetailReceiptActions sale={sale} /></>}</main>
 }
 
-type EditableRetailLine = { key: number; fishId: string; chineseName: string; malayName: string; weight: string; price: string }
+type EditableRetailLine = { key: number; sourceIndex: number; fishId: string; chineseName: string; malayName: string; weight: string; price: string }
 function editableLine(line: RetailLine, key: number): EditableRetailLine {
-  return { key, fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weight: retailWeightKg(line), price: (line.unitPriceCents / 100).toFixed(2) }
+  return { key, sourceIndex: key, fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weight: retailWeightKg(line), price: (line.unitPriceCents / 100).toFixed(2) }
 }
 function editedLine(line: EditableRetailLine): RetailLine {
   return makeRetailLine({ id: line.fishId, chineseName: line.chineseName, malayName: line.malayName, suggestedPriceCents: null, active: true }, line.weight, line.price)
@@ -283,7 +283,7 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
   const fishInput = useRef<HTMLInputElement>(null)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [result, setResult] = useState<RetailSale | null>(null)
-  const [pending, setPending] = useState<{ input: RetailSaleInput; operationId: string } | null>(null)
+  const [pending, setPending] = useState<{ input: RetailSaleInput; operationId: string; originalLineIndices: number[] } | null>(null)
   const saving = useRef(false), mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const now = useEditClock([original]), status = retailEditStatus(original, now)
@@ -293,7 +293,7 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
   function changeLine(key: number, update: Partial<EditableRetailLine>) { setLines(current => current.map(line => line.key === key ? { ...line, ...update } : line)) }
   function selectFish(selected: RetailFish) {
     if (!selected.active || changingKey === null) return
-    const snapshot = { fishId: selected.id, chineseName: selected.chineseName, malayName: selected.malayName, price: selected.suggestedPriceCents === null ? '' : (selected.suggestedPriceCents / 100).toFixed(2) }
+    const snapshot = { sourceIndex: -1, fishId: selected.id, chineseName: selected.chineseName, malayName: selected.malayName, price: selected.suggestedPriceCents === null ? '' : (selected.suggestedPriceCents / 100).toFixed(2) }
     if (changingKey === -1) {
       if (lines.length >= MAX_RETAIL_LINES) return
       setLines(current => [...current, { key: nextLineKey.current++, ...snapshot, weight: '' }])
@@ -312,11 +312,11 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
       // An uncertain committed update may be retried after expiry using the same operation ID.
       if (!update) {
         if (retailEditStatus(original) !== 'editable') throw new Error(editWindowMessage(retailEditStatus(original)))
-        update = { input: prepareRetailSale({ businessDate: original.businessDate, vendorName, remark, lines: lines.map(editedLine) }), operationId: newRetailSaleId() }
+        update = { input: prepareRetailSale({ businessDate: original.businessDate, vendorName, remark, lines: lines.map(editedLine) }), operationId: newRetailSaleId(), originalLineIndices: lines.map(line => line.sourceIndex) }
         setPending(update)
       }
       saving.current = true; setBusy(true)
-      const updated = await updateRetailSale(original.id, update.input, original.revision ?? 1, update.operationId)
+      const updated = await updateRetailSale(original.id, update.input, original.revision ?? 1, update.operationId, update.originalLineIndices)
       if (mounted.current) { setResult(updated); setPending(null); saved() }
     } catch (problem) { if (mounted.current) setError(message(problem)) }
     finally { saving.current = false; if (mounted.current) setBusy(false) }

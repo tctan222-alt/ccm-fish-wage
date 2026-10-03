@@ -171,14 +171,24 @@ function assertEditable(id: string, data: Record<string, unknown>, clean: Retail
   if (!timestamp || !Number.isFinite(timestamp.toDate().getTime())) throw retailError('retail/time-unavailable', '无法确认首次保存时间，暂不可修改。 Original save timestamp unavailable.')
 }
 
-async function assertActiveReplacements(transaction: Transaction, previous: RetailSale, clean: RetailSaleInput) {
-  const historicalIds = new Set(previous.lines.map(line => line.fishId))
-  const newIds = [...new Set(clean.lines.map(line => line.fishId))].filter(id => !historicalIds.has(id))
-  const snapshots = await Promise.all(newIds.map(id => transaction.get(doc(db, 'retailFish', id))))
+async function assertActiveReplacements(transaction: Transaction, previous: RetailSale, clean: RetailSaleInput, originalLineIndices?: number[]) {
+  const origins = originalLineIndices ?? clean.lines.map((line, index) => previous.lines[index]?.fishId === line.fishId ? index : -1)
+  const retained = new Set<number>(), newIds = new Set<string>()
+  if (origins.length !== clean.lines.length) throw retailError('retail/invalid-origin', '明细来源无效，请重新载入。 Invalid item origin. Reload the invoice.')
+  clean.lines.forEach((line, index) => {
+    const origin = origins[index]
+    if (!Number.isInteger(origin) || origin < -1 || origin >= previous.lines.length
+      || (origin >= 0 && (retained.has(origin) || previous.lines[origin].fishId !== line.fishId))) {
+      throw retailError('retail/invalid-origin', '明细来源无效，请重新载入。 Invalid item origin. Reload the invoice.')
+    }
+    if (origin >= 0) retained.add(origin)
+    else newIds.add(line.fishId)
+  })
+  const snapshots = await Promise.all([...newIds].map(id => transaction.get(doc(db, 'retailFish', id))))
   if (snapshots.some(snapshot => !snapshot.exists() || snapshot.data()?.active !== true)) throw retailError('retail/inactive-fish', '替换鱼种已停用或不存在，请重新选择。 The replacement fish is inactive or missing. Please select again.')
 }
 
-export async function updateRetailSale(id: string, input: RetailSaleInput, expectedRevision: number, operationId: string): Promise<RetailSale> {
+export async function updateRetailSale(id: string, input: RetailSaleInput, expectedRevision: number, operationId: string, originalLineIndices?: number[]): Promise<RetailSale> {
   const uid = userId(), clean = prepareRetailSale(input), ref = doc(db, 'retailSales', id)
   assertOperationId(id); assertOperationId(operationId)
   if (operationId === id || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new Error('修改版本或操作编号无效，请重新载入。 Invalid revision or operation ID. Please reload.')
@@ -195,7 +205,7 @@ export async function updateRetailSale(id: string, input: RetailSaleInput, expec
       if (action.exists()) { assertReplay(action.data(), id, uid, clean, 'update', revision); return }
       const data = existing.data()
       assertEditable(id, data, clean, expectedRevision)
-      await assertActiveReplacements(transaction, saleFromDocument(id, data), clean)
+      await assertActiveReplacements(transaction, saleFromDocument(id, data), clean, originalLineIndices)
       const after = { ...data, ...saleHeader(clean), lineGroups, revision, groupSetId: operationId, lastActionId: operationId, updatedBy: uid, updatedAt: serverTimestamp() }
       transaction.set(ref, after)
       transaction.set(actionRef, { type: 'update', saleId: id, clientOperationId: operationId, revision, performedBy: uid, performedAt: serverTimestamp(), beforeSnapshot: data, afterSnapshot: after })

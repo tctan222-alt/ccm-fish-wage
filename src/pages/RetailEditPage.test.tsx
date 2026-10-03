@@ -45,7 +45,7 @@ describe('Retail 30-day editing', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' }))
     await screen.findByText('修改已保存。 Changes saved.')
     expect(service.update).toHaveBeenCalledWith(original.id, expect.objectContaining({ businessDate: original.businessDate, vendorName: '新小贩', remark: '已核对', totalAmountCents: 8813,
-      lines: [expect.objectContaining({ chineseName: '修正名', malayName: 'corrected', weightDeciKg: 125, unitPriceCents: 705, amountCents: 8813 })] }), 1, 'edit-operation')
+      lines: [expect.objectContaining({ chineseName: '修正名', malayName: 'corrected', weightDeciKg: 125, unitPriceCents: 705, amountCents: 8813 })] }), 1, 'edit-operation', [0])
     expect(service.save).not.toHaveBeenCalled(); expect(service.saveFish).not.toHaveBeenCalled(); expect(service.quickAdd).not.toHaveBeenCalled()
   })
   it('searches aliases through the P9 picker and only a changed fish gets its current default price', async () => {
@@ -66,6 +66,18 @@ describe('Retail 30-day editing', () => {
     expect(screen.getByText(/此鱼种已停用/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' })); await screen.findByText('修改已保存。 Changes saved.')
     expect(service.update.mock.calls[0][1].lines).toEqual(original.lines)
+  })
+  it('keeps replacement provenance when selecting away and back to the original fish ID', async () => {
+    await editReady()
+    for (const query of ['马鱼', '旧称']) {
+      fireEvent.click(screen.getByRole('button', { name: '替换鱼种 Change Fish 1' })); fill('鱼名 Fish', query)
+      fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Enter' })
+    }
+    expect(screen.getByLabelText('中文鱼名 Chinese Fish Name 1')).toHaveValue('最新鱼名')
+    expect(screen.getByLabelText('单价 Unit Price (RM/kg) 1')).toHaveValue('999.00')
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' }))
+    await screen.findByText('修改已保存。 Changes saved.')
+    expect(service.update.mock.calls[0][4]).toEqual([-1])
   })
   it('reuses Other quick-add without nested forms and still snapshots the official name', async () => {
     const view = await editReady(); expect(view).toBeInTheDocument()
