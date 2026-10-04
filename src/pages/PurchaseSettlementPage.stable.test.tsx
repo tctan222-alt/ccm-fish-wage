@@ -4,7 +4,7 @@ import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import { buildWeighingEntry,newWeighingSession } from '../lib/weighing'
 
-afterEach(cleanup)
+afterEach(()=>{cleanup();window.localStorage.clear()})
 
 describe('settlement stable read error and retry',()=>{
   it('distinguishes an unstable source from no data and can retry in the same page',async()=>{

@@ -2,8 +2,10 @@ import { app,auth } from '../firebase'
 import { businessDateFromLegacy,legacyIsoDateFromBusinessDate } from '../lib/businessDate'
 import type { WeighingProductType as ProductType } from '../lib/weighing'
 import type { WeighingSession,WeighingSessionStatus } from '../lib/weighing'
+import { canEditSettlement } from '../lib/settlementLifecycle'
 
 export interface SettlementSearch {
+  mode?:'date'|'vessel'
   productType:ProductType
   from:string
   to:string
@@ -24,8 +26,9 @@ export interface SettlementSummary {
   referenceNumber:string
   revision:number
   processedReceiptId:string|null
+  settlementState?:'draft'|'finalized'|'locked'|'pending'|'legacy_processed'|'weighing'
 }
-type Value={stringValue?:string;integerValue?:string;booleanValue?:boolean;referenceValue?:string;arrayValue?:{values:Value[]}}
+type Value={stringValue?:string;integerValue?:string;booleanValue?:boolean;referenceValue?:string;timestampValue?:string;arrayValue?:{values:Value[]}}
 export interface ProjectedDocument {name:string;fields:Record<string,Value>}
 export interface StructuredQuery {
   select:{fields:{fieldPath:string}[]}
@@ -49,7 +52,7 @@ export type SettlementPageLoader=(search:SettlementSearch,cursor?:SettlementCurs
 const PAGE_SIZE=25
 const CANONICAL_QUERY_BUDGET=6
 const ISO_QUERY_BUDGET=2
-const SESSION_FIELDS=['sessionCode','productType','weighingDate','vesselId','vesselCodeSnapshot','status','revision',
+const SESSION_FIELDS=['sessionCode','productType','weighingDate','dateSortKey','vesselId','vesselCodeSnapshot','status','revision',
   'fishHeadBasketCount','fishHeadWeightGrams','fishMealBucketBasketCount','fishMealBagBasketCount','fishMealTotalWeightGrams',
   'processedReceiptId','processedReceiptCode','externalSlipNo']
 const text=(doc:ProjectedDocument,key:string)=>doc.fields[key]?.stringValue??''
@@ -59,6 +62,11 @@ const stringValue=(value:string):Value=>({stringValue:value})
 const condition=(fieldPath:string,op:string,value:Value)=>({fieldFilter:{field:{fieldPath},op,value}})
 
 export function assertSettlementSearch(search:SettlementSearch){
+  if(search.productType!=='fish_head'&&search.productType!=='fish_meal')throw new Error('结单类别无效。')
+  if(search.mode==='vessel'){
+    if(!search.vesselId.trim())throw new Error('请选择船号。')
+    return
+  }
   for(const date of [search.from,search.to]){
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||legacyIsoDateFromBusinessDate(businessDateFromLegacy(date))!==date)throw new Error('请选择有效的开始和结束日期。')
   }
@@ -87,6 +95,9 @@ function sessionQuery(search:SettlementSearch,after:ProjectedDocument|null,month
   if(search.vesselId)filters.push(condition('vesselId','EQUAL',stringValue(search.vesselId)))
   filters.push(condition('status',search.status==='all'?'IN':'EQUAL',search.status==='all'?
     {arrayValue:{values:['weighing','completed','processed'].map(stringValue)}}:stringValue(search.status)))
+  if(search.mode==='vessel')return {select:{fields:SESSION_FIELDS.map(fieldPath=>({fieldPath}))},from:[{collectionId:'weighingSessions'}],
+    where:{compositeFilter:{op:'AND',filters}},orderBy:[{field:{fieldPath:'dateSortKey'},direction:'DESCENDING'},{field:{fieldPath:'__name__'},direction:'DESCENDING'}],limit:PAGE_SIZE,
+    ...(after?{startAt:{values:[{integerValue:after.fields.dateSortKey.integerValue},{referenceValue:after.name}],before:false as const}}:{})}
   let from=search.from,to=search.to
   if(century!==undefined){
     // Within one century ISO bounds share their first two digits. Canonical
@@ -131,7 +142,8 @@ function summary(doc:ProjectedDocument,search:SettlementSearch):SettlementSummar
     vesselId:text(doc,'vesselId'),vesselCodeSnapshot:text(doc,'vesselCodeSnapshot'),status:text(doc,'status') as WeighingSessionStatus,
     basketCount:search.productType==='fish_head'?integer(doc,'fishHeadBasketCount'):integer(doc,'fishMealBucketBasketCount')+integer(doc,'fishMealBagBasketCount'),
     weightGrams:integer(doc,search.productType==='fish_head'?'fishHeadWeightGrams':'fishMealTotalWeightGrams'),
-    totalAmountCents:null,referenceNumber:text(doc,'processedReceiptCode')||text(doc,'externalSlipNo'),revision:integer(doc,'revision'),processedReceiptId:text(doc,'processedReceiptId')||null}
+    totalAmountCents:null,referenceNumber:text(doc,'processedReceiptCode')||text(doc,'externalSlipNo'),revision:integer(doc,'revision'),processedReceiptId:text(doc,'processedReceiptId')||null,
+    settlementState:text(doc,'status')==='processed'?'legacy_processed':text(doc,'status')==='weighing'?'weighing':'pending'}
 }
 
 function amountsQuery(collectionId:string,fieldPath:string,values:Value[],fields:string[]):StructuredQuery {
@@ -147,8 +159,8 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
     const state:SettlementCursor=cursor?{
       ...cursor,iso:{...cursor.iso,buffer:[...cursor.iso.buffer]},canonical:{...cursor.canonical,buffer:[...cursor.canonical.buffer]},
     }:{fingerprint,iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:false},monthIndex:0,isoCenturyIndex:0}
-    const months=monthsInRange(search)
-    const centuries=centuriesInRange(search)
+    const months=search.mode==='vessel'?[]:monthsInRange(search)
+    const centuries=search.mode==='vessel'?[]:centuriesInRange(search)
     let isoQueries=0
     async function fillIso(){
       while(!state.iso.buffer.length&&!state.iso.done){
@@ -180,7 +192,11 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
       return true
     }
     const documents:ProjectedDocument[]=[]
-    while(documents.length<PAGE_SIZE){
+    if(search.mode==='vessel'){
+      const docs=await run(sessionQuery(search,state.iso.after),signal)
+      documents.push(...docs);state.iso.after=docs.at(-1)??state.iso.after;state.iso.done=docs.length<PAGE_SIZE;state.canonical.done=true
+    }
+    while(search.mode!=='vessel'&&documents.length<PAGE_SIZE){
       signal?.throwIfAborted()
       if(!await fillIso())break
       const newestIso=state.iso.buffer[0]
@@ -200,16 +216,21 @@ export function createSettlementPageLoader(run:QueryRunner=runProjectedQuery):Se
       const receipts=items.filter(item=>item.processedReceiptId)
       const [drafts,receiptHeaders]=await Promise.all([
         run(amountsQuery('purchaseSettlementDrafts','sourceSessionId',items.map(item=>stringValue(item.id)),
-          ['sourceSessionId','sourceSessionRevision','productType','totalAmountCents','receiptNo','voided']),signal),
+          ['sourceSessionId','sourceSessionRevision','productType','totalAmountCents','receiptNo','voided','status','finalizedAt']),signal),
         receipts.length?run(amountsQuery('purchaseReceipts','__name__',receipts.map(item=>({referenceValue:`projects/${app.options.projectId}/databases/(default)/documents/purchaseReceipts/${item.processedReceiptId}`})),
           ['totalAmountCents','receiptCode']),signal):Promise.resolve([]),
       ])
       if(drafts.length>PAGE_SIZE)throw new Error('结单草稿数量异常，请管理员核对来源身份。')
       for(const item of items){
         const receipt=receiptHeaders.find(doc=>id(doc)===item.processedReceiptId)
-        const matching=drafts.filter(doc=>text(doc,'sourceSessionId')===item.id&&text(doc,'productType')===search.productType&&integer(doc,'sourceSessionRevision')===item.revision&&doc.fields.voided?.booleanValue!==true)
+        const matching=drafts.filter(doc=>text(doc,'sourceSessionId')===item.id&&text(doc,'productType')===search.productType&&doc.fields.voided?.booleanValue!==true)
         if(matching.length>1)throw new Error('同一现场单有多个结单草稿，请管理员核对。')
-        const amount=receipt??matching[0]
+        const draft=matching[0],finalized=draft&&text(draft,'status')==='settlement_finalized'
+        if(draft&&!receipt){
+          if(finalized)item.settlementState=canEditSettlement({status:'settlement_finalized',finalizedAt:new Date(draft.fields.finalizedAt?.timestampValue??'')})?'finalized':'locked'
+          else if(text(draft,'status')==='settlement_draft')item.settlementState='draft'
+        }
+        const amount=receipt??(draft&&(finalized||integer(draft,'sourceSessionRevision')===item.revision)?draft:undefined)
         if(amount&&amount.fields.totalAmountCents?.integerValue!==undefined){
           const cents=integer(amount,'totalAmountCents')
           if(!Number.isSafeInteger(cents)||cents<0)throw new Error('结单金额无效，请管理员核对。')

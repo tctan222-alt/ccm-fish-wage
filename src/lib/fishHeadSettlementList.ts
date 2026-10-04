@@ -2,14 +2,15 @@ import { assertBusinessDate,businessDateFromLegacy,formatAuditTimestamp,legacyIs
 import type { WeighingSession,WeighingSessionStatus } from './weighing'
 
 export const FISH_HEAD_SETTLEMENT_STATUS_NAMES:Record<WeighingSessionStatus,string>={
-  weighing:'称重中',completed:'待结单',processed:'已结单',voided:'已作废',
+  weighing:'称重中',completed:'待结单',processed:'旧版采购单 Legacy processed',voided:'已作废',
 }
 
 const WEEKDAYS=['星期日 Sun','星期一 Mon','星期二 Tue','星期三 Wed','星期四 Thu','星期五 Fri','星期六 Sat']
 
 export type FishHeadSettlementFilter={
   status:'completed'|'weighing'|'processed'|'all'
-  mode:'all'|'today'|'week'|'month'|'custom'
+  mode:'all'|'date'|'vessel'|'today'|'week'|'month'|'custom'
+  dateMode?:'today'|'week'|'month'|'custom'
   anchor:string
   start:string
   end:string
@@ -27,6 +28,8 @@ function validIsoDate(value:string):boolean {
 }
 
 export function fishHeadSettlementRange(filter:FishHeadSettlementFilter):{start:string;end:string;title:string}|null {
+  if(filter.mode==='vessel')return null
+  if(filter.mode==='date')return fishHeadSettlementRange({...filter,mode:filter.dateMode??'custom'})
   if(filter.mode==='all')return null
   if(filter.mode==='custom'){
     if(!filter.start||!filter.end)throw new Error('请选择开始日期和结束日期。')
@@ -51,6 +54,7 @@ export function fishHeadSettlementRange(filter:FishHeadSettlementFilter):{start:
 }
 
 export function shiftFishHeadSettlementFilter(filter:FishHeadSettlementFilter,direction:-1|1):FishHeadSettlementFilter {
+  if(filter.mode==='date')return {...shiftFishHeadSettlementFilter({...filter,mode:filter.dateMode??'custom'},direction),mode:'date',dateMode:filter.dateMode??'custom'}
   if(filter.mode!=='week'&&filter.mode!=='month')return filter
   const date=new Date(`${legacyIsoDateFromBusinessDate(businessDateFromLegacy(filter.anchor))}T00:00:00Z`)
   if(filter.mode==='month'){
@@ -64,22 +68,24 @@ export function parseFishHeadSettlementFilter(params:URLSearchParams,todayBusine
   const defaults=defaultFishHeadSettlementFilter(todayBusinessDate)
   const status=params.get('status')
   const requestedMode=params.get('mode')
-  const mode:FishHeadSettlementFilter['mode']=requestedMode==='today'||requestedMode==='week'||requestedMode==='month'||requestedMode==='custom'?requestedMode:'all'
+  const mode:FishHeadSettlementFilter['mode']=requestedMode==='date'||requestedMode==='vessel'||requestedMode==='today'||requestedMode==='week'||requestedMode==='month'||requestedMode==='custom'?requestedMode:'all'
+  const dateMode=params.get('dateMode')
+  const effectiveMode=mode==='date'?dateMode:mode
   const anchor=params.get('anchor')??''
   const month=params.get('month')??''
   let parsedAnchor=validIsoDate(anchor)?anchor:defaults.anchor
-  if(mode==='today')parsedAnchor=defaults.anchor
-  else if(mode==='month'&&/^\d{4}-\d{2}$/.test(month)&&validIsoDate(`${month}-01`))parsedAnchor=`${month}-01`
+  if(effectiveMode==='today')parsedAnchor=defaults.anchor
+  else if(effectiveMode==='month'&&/^\d{4}-\d{2}$/.test(month)&&validIsoDate(`${month}-01`))parsedAnchor=`${month}-01`
   return {...defaults,
     status:status==='weighing'||status==='processed'||status==='all'?status:'completed',
-    mode,anchor:parsedAnchor,
-    start:params.get('start')??(mode==='custom'?'':defaults.start),end:params.get('end')??(mode==='custom'?'':defaults.end),
+    mode,...(mode==='date'||mode==='vessel'?{dateMode:dateMode==='today'||dateMode==='week'||dateMode==='month'?dateMode:'custom' as const}:{}),anchor:parsedAnchor,
+    start:params.get('start')??(effectiveMode==='custom'?'':defaults.start),end:params.get('end')??(effectiveMode==='custom'?'':defaults.end),
     vesselId:params.get('vessel')??'',
   }
 }
 
 export function fishHeadSettlementFilterParams(filter:FishHeadSettlementFilter):URLSearchParams {
-  return new URLSearchParams({status:filter.status,mode:filter.mode,anchor:filter.anchor,
+  return new URLSearchParams({status:filter.status,mode:filter.mode,...(filter.dateMode?{dateMode:filter.dateMode}:{}),anchor:filter.anchor,
     start:filter.start,end:filter.end,vessel:filter.vesselId})
 }
 
