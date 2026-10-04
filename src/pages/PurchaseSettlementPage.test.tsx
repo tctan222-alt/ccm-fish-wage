@@ -1,11 +1,12 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
-import { MemoryRouter,Route,Routes } from 'react-router-dom'
+import { MemoryRouter,Route,Routes,useNavigate } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import type { PurchaseSettlementSource } from '../services/purchaseSettlements'
 import type { WeighingEntry,WeighingSession } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice } from '../lib/purchaseSettlement'
+import { createSettlementLocalDraftStore } from '../services/settlementLocalDrafts'
 
 const vessel:Vessel={id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:0,notes:''}
 const otherVessel:Vessel={id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:1,notes:''}
@@ -23,7 +24,7 @@ function renderPage(productType:'fish_head'|'fish_meal',entries:WeighingEntry[],
 }
 
 const clipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard')
-afterEach(()=>{cleanup();if(clipboardDescriptor)Object.defineProperty(navigator,'clipboard',clipboardDescriptor);else Reflect.deleteProperty(navigator,'clipboard')})
+afterEach(()=>{cleanup();window.localStorage.clear();if(clipboardDescriptor)Object.defineProperty(navigator,'clipboard',clipboardDescriptor);else Reflect.deleteProperty(navigator,'clipboard')})
 
 describe('purchase settlement MVP pages',()=>{
   const tsv='鱼名\t总重量\t篮数\t预设价\t单价 RM/kg\t金额\n金线\t160.5 kg\t1篮\t2.10\t2.10\tRM 337.05\n总额\tRM 337.05'
@@ -129,13 +130,14 @@ describe('purchase settlement MVP pages',()=>{
     expect(sourceLoader).not.toHaveBeenCalled()
   })
 
-  it('keeps expired settlements visible while locking prices, slip number and saving',async()=>{
+  it('keeps 90-day expired finalized settlements visible while locking prices, slip number and saving',async()=>{
     const saver=vi.fn(async draft=>draft)
-    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-10T02:00:00.001Z')}/></MemoryRouter>)
+    const draft={...makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'FINAL',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(headEntry('jin'))],'fish_head','978'),sourceEntryIds:['jin']}),status:'settlement_finalized' as const,finalizedAt:new Date('2026-04-01T00:00:00Z'),finalizedBy:'u1'}
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>draft} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-10T02:00:00.001Z')}/></MemoryRouter>)
     expect(await screen.findByRole('table')).toBeInTheDocument()
     expect(screen.getByLabelText('金线单价')).toBeDisabled()
     expect(screen.getByLabelText('鱼头纸单号')).toBeDisabled()
-    expect(screen.getByRole('button',{name:'保存结单草稿'})).toBeDisabled()
+    expect(screen.getByRole('button',{name:'修改结单 Edit'})).toBeDisabled()
     expect(screen.queryByRole('link',{name:'修改称重（7 天内）'})).not.toBeInTheDocument()
     expect(saver).not.toHaveBeenCalled()
   })
@@ -147,6 +149,200 @@ describe('purchase settlement MVP pages',()=>{
     fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
     expect(await screen.findByRole('alert')).toBeInTheDocument()
     expect(saver).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
+  })
+
+  it('preserves unconfirmed price and paper number through unmount/reload, with explicit restore or discard',async()=>{
+    const first=renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.23'}})
+    fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'PAPER-123'}})
+    first.unmount()
+    const second=renderPage('fish_head',[headEntry('jin')])
+    await screen.findByRole('heading',{name:'发现未完成草稿'})
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(second.saver).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.23')
+    expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('PAPER-123')
+    second.unmount()
+    renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('heading',{name:'发现未完成草稿'})
+    fireEvent.click(screen.getByRole('button',{name:'放弃草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(window.localStorage.length).toBe(0)
+  })
+  it('retains local input on save failure and clears only after a confirmed successful retry',async()=>{
+    const saver=vi.fn().mockRejectedValueOnce(new Error('网络断开')).mockImplementation(async draft=>({...draft,revision:1}))
+    renderPage('fish_head',[headEntry('jin')],saver);await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.25'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('网络断开')
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.25')
+    expect(window.localStorage.length).toBe(1)
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await screen.findByText('结单草稿已保存（第 1 版）。')
+    expect(window.localStorage.length).toBe(0)
+  })
+  it.each(['source','settlement'] as const)('blocks blind recovery when the %s revision changed and exposes manual comparison',async(kind)=>{
+    const first=renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.11'}});first.unmount()
+    const latest={...session,revision:kind==='source'?2:1}
+    const serverDraft=kind==='settlement'?makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'SERVER',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(headEntry('jin'))],'fish_head','978'),sourceEntryIds:['jin'],revision:3}):null
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session:latest,bundle:{session:latest,entries:[headEntry('jin')]}})} draftLoader={async()=>serverDraft}/></MemoryRouter>)
+    expect(await screen.findByRole('alert')).toHaveTextContent('服务器资料已更新，本机草稿需要重新核对。')
+    expect(screen.getByRole('button',{name:'恢复草稿'})).toBeDisabled()
+    expect(screen.getByRole('table',{name:'本机与服务器核对'})).toHaveTextContent('1.11')
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(window.localStorage.length).toBe(1)
+  })
+  it('retries a true source read failure safely before offering the preserved local draft',async()=>{
+    const first=renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.31'}});first.unmount()
+    const loader=vi.fn().mockRejectedValueOnce(new Error('读取失败')).mockResolvedValue({session,bundle:{session,entries:[headEntry('jin')]}})
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel]} sourceLoader={loader} draftLoader={async()=>null}/></MemoryRouter>)
+    expect(await screen.findByRole('alert')).toHaveTextContent('读取失败')
+    fireEvent.click(screen.getByRole('button',{name:'重新载入结单'}))
+    await screen.findByRole('heading',{name:'发现未完成草稿'})
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.31')
+  })
+  it('retries vessels separately without reading or replacing an unsaved settlement',async()=>{
+    const vesselLoader=vi.fn().mockRejectedValueOnce(new Error('vessels offline')).mockResolvedValue([vessel])
+    const bundleLoader=vi.fn(async()=>({session,entries:[headEntry('jin')]}))
+    render(<MemoryRouter initialEntries={['/fish-head-settlement/session-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={vesselLoader} bundleLoader={bundleLoader} draftLoader={async()=>null}/>}/></Routes></MemoryRouter>)
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.41'}})
+    fireEvent.click(screen.getByRole('button',{name:'重试船号'}))
+    await waitFor(()=>expect(vesselLoader).toHaveBeenCalledTimes(2))
+    expect(bundleLoader).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.41')
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
+  })
+  it('protects local input from in-page vessel changes until explicit discard',async()=>{
+    const loader=vi.fn(async()=>({session,bundle:{session,entries:[headEntry('jin')]}}))
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel,otherVessel]} sourceLoader={loader} draftLoader={async()=>null}/></MemoryRouter>)
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.51'}})
+    fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
+    expect(screen.getByLabelText('船号')).toHaveValue('v978')
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.51')
+    expect(loader).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button',{name:'放弃当前未保存草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(window.localStorage.length).toBe(0)
+  })
+  it('finalizes then edits the same identity, displaying trusted time and independent 90-day deadline',async()=>{
+    const finalizedAt=new Date('2026-08-04T00:00:00Z'),finalizer=vi.fn(async draft=>({...draft,draftId:'stable',status:'settlement_finalized' as const,revision:1,finalizedAt,finalizedBy:'u1'}))
+    const saver=vi.fn(async draft=>({...draft,revision:2,status:'settlement_finalized' as const,finalizedAt,finalizedBy:'u1'}))
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} now={()=>new Date('2026-09-04T00:00:00Z')} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} finalizer={finalizer} draftSaver={saver}/></MemoryRouter>)
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'FINAL-PAPER'}})
+    fireEvent.click(screen.getByRole('button',{name:'完成结单 Finalize'}))
+    await screen.findByText('已完成结单（第 1 版）。')
+    expect(screen.getByText(/首次完成：/)).toHaveTextContent('04/08/2026')
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(window.localStorage.length).toBe(0)
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.60'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存修改'}))
+    await screen.findByText('结单修改已保存（第 2 版）。')
+    expect(saver).toHaveBeenCalledWith(expect.objectContaining({draftId:'stable',revision:1,status:'settlement_finalized',receiptNo:'FINAL-PAPER'}))
+    expect(window.localStorage.length).toBe(0)
+  })
+
+  it.each(['weight','baskets'])('persists a %s-only finalized edit and discards to the complete saved snapshot',async(kind)=>{
+    const saved={...makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'FINAL',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(headEntry('jin'))],'fish_head','978'),sourceEntryIds:['jin'],revision:4}),status:'settlement_finalized' as const,finalizedAt:new Date('2026-08-04T00:00:00Z'),finalizedBy:'u1',sourceSessionId:session.id,sourceSessionRevision:1}
+    const latest={...session,revision:2},saver=vi.fn(),entries=kind==='weight'?[headEntry('jin','金线','jin_xian',200000)]:[headEntry('jin','金线','jin_xian',100000),headEntry('jin-added','金线','jin_xian',100000)]
+    const open=()=>render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} now={()=>new Date('2026-08-05T00:00:00Z')} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session:latest,bundle:{session:latest,entries}})} draftLoader={async()=>saved} draftSaver={saver}/></MemoryRouter>)
+    const first=open();await screen.findByRole('table')
+    expect(screen.getByText('160.5 kg')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    expect(screen.getByText('200 kg')).toBeInTheDocument()
+    expect(window.localStorage.length).toBe(1)
+    fireEvent.click(screen.getByRole('button',{name:'放弃当前未保存草稿'}))
+    expect(screen.getByText('160.5 kg')).toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(window.localStorage.length).toBe(0)
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}));first.unmount()
+    open();await screen.findByRole('heading',{name:'发现未完成草稿'})
+    fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
+    expect(screen.getByText('200 kg')).toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).not.toBeDisabled()
+    expect(saver).not.toHaveBeenCalled()
+  })
+
+  it('does not let an older save success delete a newer local draft from another page',async()=>{
+    const store=createSettlementLocalDraftStore('test')
+    let finish!:()=>void
+    const saver=vi.fn((draft:ReturnType<typeof makeSettlementDraft>)=>new Promise<ReturnType<typeof makeSettlementDraft>>(resolve=>{finish=()=>resolve({...draft,revision:1})}))
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} draftSaver={saver} localDraftStore={store}/></MemoryRouter>)
+    await screen.findByRole('table')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.25'}})
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await waitFor(()=>expect(saver).toHaveBeenCalledOnce())
+    const newer={...store.load('fish_head',session.id)!,receiptNo:'NEWER-PAPER',updatedAt:'2026-10-04T10:00:00Z'}
+    store.save(newer)
+    await act(async()=>finish())
+    await screen.findByText('结单草稿已保存（第 1 版）。')
+    expect(store.load('fish_head',session.id)).toEqual(newer)
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'OLDER-PAGE-EDIT'}})
+    expect(store.load('fish_head',session.id)).toEqual(newer)
+    fireEvent.click(screen.getByRole('button',{name:'重试本机草稿'}))
+    await screen.findByRole('heading',{name:'发现未完成草稿'})
+    expect(screen.getByText(/本机纸单号：NEWER-PAPER/)).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'恢复草稿'})).toBeDisabled()
+  })
+
+  it('blocks editing when a stored draft is unreadable and preserves it until explicit discard',async()=>{
+    const store=createSettlementLocalDraftStore('test'),key='ccm:settlement-draft:v1:test:fish_head:'+session.id
+    window.localStorage.setItem(key,'{broken')
+    render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} localDraftStore={store}/></MemoryRouter>)
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法读取本机草稿')
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(screen.getByRole('button',{name:'保存结单草稿'})).toBeDisabled()
+    fireEvent.click(screen.getByRole('button',{name:'重试本机草稿'}))
+    expect(window.localStorage.getItem(key)).toBe('{broken')
+    fireEvent.click(screen.getByRole('button',{name:'放弃无法读取的本机草稿'}))
+    expect(window.localStorage.getItem(key)).toBeNull()
+    expect(screen.getByLabelText('金线单价')).not.toBeDisabled()
+  })
+
+  it.each(['price','paper'])('stores the current baseline after %s is reverted instead of recovering an obsolete edit',async(kind)=>{
+    const saved=makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(headEntry('jin'))],'fish_head','978').map(line=>updateSettlementLinePrice(line,'2.10')),sourceEntryIds:['jin'],revision:4})
+    const open=()=>render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" today={()=>'03/08/2026'} vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>saved}/></MemoryRouter>)
+    const first=open();await screen.findByRole('table')
+    const input=screen.getByLabelText(kind==='price'?'金线单价':'鱼头纸单号')
+    fireEvent.change(input,{target:{value:kind==='price'?'1.23':'TEMP'}})
+    fireEvent.change(input,{target:{value:kind==='price'?'2.10':''}});first.unmount()
+    open();await screen.findByRole('heading',{name:'发现未完成草稿'})
+    fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
+    expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('')
+  })
+
+  it('ignores an older pending save after browser Back loads another source in the same route',async()=>{
+    const secondSession={...session,id:'session-833',sessionCode:'FH-833',vesselId:'v833',vesselCodeSnapshot:'833'}
+    const secondEntry={...headEntry('lai','来戈','lai_ge',90000),sessionId:secondSession.id,vesselId:'v833',vesselCodeSnapshot:'833'}
+    const secondDraft={...makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v833',vesselCodeSnapshot:'833',receiptNo:'B-PAPER',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(secondEntry)],'fish_head','833'),sourceEntryIds:['lai'],revision:7}),draftId:'stable-B',sourceSessionId:secondSession.id,sourceSessionRevision:1}
+    let finish!:()=>void
+    const saver=vi.fn().mockImplementationOnce((draft:ReturnType<typeof makeSettlementDraft>)=>new Promise(resolve=>{finish=()=>resolve({...draft,draftId:'stable-A',revision:1})})).mockImplementation(async draft=>({...draft,revision:8}))
+    function HistoryBack(){const navigate=useNavigate();return <button type="button" onClick={()=>navigate(-1)}>返回上一张</button>}
+    render(<MemoryRouter initialEntries={['/fish-head-settlement/session-833','/fish-head-settlement/session-978']}><HistoryBack/><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel,otherVessel]} bundleLoader={async id=>id===session.id?{session,entries:[headEntry('jin')]}:{session:secondSession,entries:[secondEntry]}} draftLoader={async source=>source.session.id===session.id?null:secondDraft} draftSaver={saver}/>}/></Routes></MemoryRouter>)
+    await screen.findByRole('table');fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await waitFor(()=>expect(saver).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button',{name:'返回上一张'}))
+    await screen.findByText('来戈')
+    expect(screen.getByLabelText('来戈单价')).not.toBeDisabled()
+    fireEvent.change(screen.getByLabelText('来戈单价'),{target:{value:'1.55'}})
+    await act(async()=>finish())
+    expect(screen.getByLabelText('来戈单价')).toHaveValue('1.55')
+    expect(screen.queryByText('金线')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await screen.findByText('结单草稿已保存（第 8 版）。')
+    expect(saver).toHaveBeenLastCalledWith(expect.objectContaining({sourceSessionId:secondSession.id,draftId:'stable-B',revision:7,receiptNo:'B-PAPER',totalAmountCents:13950}))
   })
 
   it('reads legacy dates and source vessel snapshots even when the master vessel is absent',async()=>{

@@ -5,7 +5,7 @@ import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice } from '../lib/purchaseSettlement'
 import { newWeighingSession,buildWeighingEntry } from '../lib/weighing'
 
-afterEach(cleanup)
+afterEach(()=>{cleanup();window.localStorage.clear()})
 
 describe('settlement source identity on the page',()=>{
   it.each([

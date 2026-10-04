@@ -20,6 +20,7 @@ describe('Firestore Emulator: projected settlement queries', () => {
       const db = context.firestore()
       await Promise.all(Array.from({ length: 27 }, (_, index) => setDoc(doc(db, 'weighingSessions', `${prefix}-${String(index).padStart(2, '0')}`), {
         sessionCode: `${prefix}-${index}`, productType, weighingDate: index % 2 ? '2026-10-19' : '20/10/2026', monthKey: index % 2 ? '2026-10' : '10/2026',
+        dateSortKey:index%2?20261019:20261020,
         vesselId: 'rest-inactive', vesselCodeSnapshot: '历史船', status: 'completed', revision: 1,
         fishHeadBasketCount: 1, fishHeadWeightGrams: 80500, fishMealBucketBasketCount: 1, fishMealBagBasketCount: 0, fishMealTotalWeightGrams: 80500,
         notes: 'must not download this field',
@@ -43,6 +44,12 @@ describe('Firestore Emulator: projected settlement queries', () => {
     expect([...first.items, ...second.items].slice(14).every(item => item.weighingDate === '2026-10-19')).toBe(true)
     if (from === '2026-10-01') expect(second.cursor).toBeNull()
     else expect(second.cursor).not.toBeNull()
+    const vesselCriteria={...criteria,mode:'vessel' as const,from:'',to:''}
+    const vesselFirst=await load(vesselCriteria),vesselSecond=await load(vesselCriteria,vesselFirst.cursor)
+    expect([vesselFirst.items.length,vesselSecond.items.length]).toEqual([25,2])
+    expect(vesselSecond.cursor).toBeNull()
+    expect(new Set([...vesselFirst.items,...vesselSecond.items].map(item=>item.id)).size).toBe(27)
+    expect(vesselFirst.items.slice(0,14).every(item=>item.weighingDate==='20/10/2026')).toBe(true)
   })
 })
 
@@ -312,7 +319,7 @@ describe('Firestore Rules: source-authoritative purchase settlement identity', (
   async function source(id:string,overrides:DocumentData={}) {
     return seedWeighing(id,weighingRecord(1,{weighingDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,...overrides}))
   }
-  async function save(id:string,sourceSessionId:string,patch:DocumentData={},options:{guard?:boolean;audit?:boolean;userId?:string;guardPatch?:DocumentData}={}) {
+  async function save(id:string,sourceSessionId:string,patch:DocumentData={},options:{guard?:boolean;audit?:boolean;userId?:string;guardPatch?:DocumentData;auditPatch?:DocumentData}={}) {
     const userId=options.userId??'u1',db=environment.authenticatedContext(userId).firestore()
     const ref=doc(db,'purchaseSettlementDrafts',id),existing=await getDoc(ref),before=existing.exists()?existing.data()!:null
     const next:DocumentData={...(before??draft(sourceSessionId,{createdBy:userId})),sourceSessionId,
@@ -320,7 +327,8 @@ describe('Firestore Rules: source-authoritative purchase settlement identity', (
     const batch=writeBatch(db)
     batch.set(ref,next)
     if(options.audit!==false)batch.set(doc(ref,'actions',String(next.revision)),{
-      beforeSnapshot:before,afterSnapshot:next,performedBy:userId,performedAt:serverTimestamp()})
+      beforeSnapshot:before,afterSnapshot:next,performedBy:userId,performedAt:serverTimestamp(),revision:next.revision,
+      type:before?.status==='settlement_finalized'?'edit_after_finalize':next.status==='settlement_finalized'?'finalize':'save_draft',...options.auditPatch})
     const guardRef=doc(db,'purchaseSettlementSources',`${next.productType}_session_${sourceSessionId}`)
     if(options.guard!==false&&!(await getDoc(guardRef)).exists())batch.set(guardRef,{
       productType:next.productType,sourceSessionId,draftId:id,createdBy:userId,createdAt:serverTimestamp(),...options.guardPatch})
@@ -338,6 +346,52 @@ describe('Firestore Rules: source-authoritative purchase settlement identity', (
     })
     return value
   }
+  it('finalizes atomically using request.time and enforces permanent first finalization and identity',async()=>{
+    const sourceId='life-finalize',id=`fish_head_session_${sourceId}`,db=environment.authenticatedContext('u1').firestore()
+    await source(sourceId,{completedAt:Timestamp.fromMillis(Date.now()-8*86400000)})
+    await assertSucceeds(save(id,sourceId))
+    const finalize={status:'settlement_finalized',finalizedAt:serverTimestamp(),finalizedBy:'u1'}
+    await assertFails(save(id,sourceId,{...finalize,finalizedAt:Timestamp.fromMillis(Date.now()-10000)}))
+    await assertFails(save(id,sourceId,{...finalize,finalizedBy:'forged'}))
+    await assertFails(save(id,sourceId,finalize,{audit:false}))
+    await assertFails(save(id,sourceId,finalize,{auditPatch:{type:'save_draft'}}))
+    await assertSucceeds(save(id,sourceId,finalize))
+    const first=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    const action=(await getDoc(doc(db,'purchaseSettlementDrafts',id,'actions','2'))).data()!
+    expect(first.finalizedAt).toEqual(first.updatedAt)
+    expect(action).toMatchObject({type:'finalize',revision:2,beforeSnapshot:{status:'settlement_draft'},afterSnapshot:{status:'settlement_finalized'}})
+    await assertFails(save(id,sourceId,finalize))
+    await assertFails(save(id,sourceId,{status:'settlement_draft'}))
+    await assertFails(save(id,sourceId,{finalizedBy:'another'}))
+    await assertFails(save(id,sourceId,{revision:2}))
+    await assertFails(save(id,sourceId,{receiptNo:'EDIT'},{auditPatch:{revision:99}}))
+    await assertSucceeds(save(id,sourceId,{receiptNo:'EDIT'}))
+    const edited=(await getDoc(doc(db,'purchaseSettlementDrafts',id))).data()!
+    expect(edited.finalizedAt).toEqual(first.finalizedAt)
+    expect((await getDoc(doc(db,'purchaseSettlementDrafts',id,'actions','3'))).data()).toMatchObject({type:'edit_after_finalize',revision:3,beforeSnapshot:first,afterSnapshot:edited})
+    await source(sourceId,{weighingDate:'04/08/2026',dateSortKey:20260804,revision:3})
+    await assertFails(save(id,sourceId,{businessDate:'04/08/2026',dateSortKey:20260804,sourceSessionRevision:3}))
+  })
+  it('enforces the 90-day boundary using server time even for forged updated/finalized timestamps',async()=>{
+    for(const age of [90*86400000-1000,90*86400000,91*86400000]){
+      const sourceId=`life-age-${age}`,id=`fish_head_session_${sourceId}`
+      await source(sourceId)
+      await seedLegacy(id,sourceId,true,{status:'settlement_finalized',finalizedAt:Timestamp.fromMillis(Date.now()-age),finalizedBy:'original-owner',sourceSessionRevision:2})
+      if(age<90*86400000)await assertSucceeds(save(id,sourceId,{receiptNo:'allowed'}))
+      else {
+        await assertFails(save(id,sourceId,{receiptNo:'blocked'}))
+        await assertFails(save(id,sourceId,{finalizedAt:serverTimestamp(),updatedAt:Timestamp.fromMillis(Date.now()-86400000)}))
+      }
+    }
+  })
+  it('requires completed source for first finalization; draft-only fields and missing dates remain rejected',async()=>{
+    const sourceId='life-incomplete',id=`fish_head_session_${sourceId}`
+    await source(sourceId,{status:'weighing'})
+    await assertSucceeds(save(id,sourceId))
+    await assertFails(save(id,sourceId,{status:'settlement_finalized',finalizedAt:serverTimestamp(),finalizedBy:'u1'}))
+    await assertFails(save(id,sourceId,{finalizedAt:serverTimestamp()}))
+    for(const patch of [{businessDate:null},{monthKey:null},{monthSortKey:null},{lines:null},{createdAt:null},{dateSortKey:20191231},{receiptNo:null}])await assertFails(save(id,sourceId,patch))
+  })
   it('allows canonical audited creation and rejects tuple, arbitrary ID, missing guard or mismatched guard target',async()=>{
     const sourceId='p5-canonical',canonical=`fish_head_session_${sourceId}`
     await source(sourceId)
@@ -489,7 +543,7 @@ describe('Firestore Rules: source-authoritative purchase settlement identity', (
         const value=draft(sourceId,{createdBy:userId,updatedBy:userId})
         transaction.set(ref,value)
         transaction.set(guard,{productType:'fish_head',sourceSessionId:sourceId,draftId:id,createdBy:userId,createdAt:serverTimestamp()})
-        transaction.set(doc(ref,'actions','1'),{beforeSnapshot:null,afterSnapshot:value,performedBy:userId,performedAt:serverTimestamp()})
+        transaction.set(doc(ref,'actions','1'),{beforeSnapshot:null,afterSnapshot:value,performedBy:userId,performedAt:serverTimestamp(),type:'save_draft',revision:1})
         return id
       })
     }
@@ -812,7 +866,7 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
       batch.set(draftRef,next)
       const guardRef=doc(db,'purchaseSettlementSources','fish_head_session_settlement-source')
       if(!(await getDoc(guardRef)).exists())batch.set(guardRef,{productType:'fish_head',sourceSessionId:'settlement-source',draftId:draftRef.id,createdBy:'u1',createdAt:serverTimestamp()})
-      if(audit)batch.set(doc(draftRef,'actions',String(next.revision)),{beforeSnapshot:before,afterSnapshot:next,performedBy:'u1',performedAt:serverTimestamp()})
+      if(audit)batch.set(doc(draftRef,'actions',String(next.revision)),{beforeSnapshot:before,afterSnapshot:next,performedBy:'u1',performedAt:serverTimestamp(),type:'save_draft',revision:next.revision})
       return batch.commit()
     }
     await assertFails(write({},false))
@@ -829,10 +883,10 @@ describe('Firestore Rules: vessels and ice-work audit', () => {
     await assertFails(deleteDoc(doc(draftRef,'actions','1')))
     await assertFails(deleteDoc(draftRef))
     await seedWeighing('settlement-source',weighingRecord(8,{weighingDate:'03/08/2026'}))
-    await assertFails(write())
+    await assertSucceeds(write())
     await assertSucceeds(getDoc(draftRef))
     await seedWeighing('settlement-source',weighingRecord(8,{status:'weighing',weighingDate:'03/08/2026'}))
-    await assertFails(write())
+    await assertSucceeds(write())
     for(const status of ['processed','voided']) {
       await seedWeighing('settlement-source',weighingRecord(1,{status,weighingDate:'03/08/2026'}))
       await assertFails(write())

@@ -1,9 +1,10 @@
-import { collection,doc,getDoc,getDocs,query,where,runTransaction,serverTimestamp } from 'firebase/firestore'
+import { collection,doc,getDoc,getDocFromServer,getDocs,query,where,runTransaction,serverTimestamp } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
 import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import { asSettlementSourceEntry,assertValidPurchaseSettlementDraft,draftIdForSettlement,draftIdForSourceSession,type PurchaseSettlementDraft,type PurchaseSettlementLine } from '../lib/purchaseSettlement'
 import { loadStableWeighingBundle,loadWeighingSessions,type WeighingBundle } from './weighing'
-import { canModifyWeighing,type WeighingProductType,type WeighingSession } from '../lib/weighing'
+import { type WeighingProductType,type WeighingSession } from '../lib/weighing'
+import { canEditSettlement } from '../lib/settlementLifecycle'
 
 const DRAFT_COLLECTION='purchaseSettlementDrafts'
 const SOURCE_COLLECTION='purchaseSettlementSources'
@@ -20,11 +21,13 @@ function requireUser(){
 }
 
 function draftFrom(id:string,data:Record<string,unknown>):PurchaseSettlementDraft {
+  if(data.status!=='settlement_draft'&&data.status!=='settlement_finalized')throw new Error(`结单状态无法确认（${id}），请管理员核查。`)
   return {
     draftId:id,
     productType:data.productType as WeighingProductType,businessDate:String(data.businessDate),dateSortKey:Number(data.dateSortKey),
     monthKey:String(data.monthKey),monthSortKey:Number(data.monthSortKey),vesselId:String(data.vesselId),
-    vesselCodeSnapshot:String(data.vesselCodeSnapshot),receiptNo:String(data.receiptNo??''),status:'settlement_draft',
+    vesselCodeSnapshot:String(data.vesselCodeSnapshot),receiptNo:String(data.receiptNo??''),status:data.status==='settlement_finalized'?'settlement_finalized':'settlement_draft',
+    ...(data.status==='settlement_finalized'?{finalizedAt:data.finalizedAt,finalizedBy:String(data.finalizedBy??'')}:{}),
     lines:(Array.isArray(data.lines)?data.lines:[]) as PurchaseSettlementLine[],totalAmountCents:Number(data.totalAmountCents),
     sourceEntryIds:(Array.isArray(data.sourceEntryIds)?data.sourceEntryIds:[]).map(String),createdAt:data.createdAt,createdBy:data.createdBy?String(data.createdBy):undefined,
     updatedAt:data.updatedAt,updatedBy:data.updatedBy?String(data.updatedBy):undefined,revision:Number(data.revision),voided:false,
@@ -132,6 +135,14 @@ export async function loadPurchaseSettlementDraft(productType:WeighingProductTyp
 }
 
 export async function savePurchaseSettlementDraft(value:PurchaseSettlementDraft):Promise<PurchaseSettlementDraft>{
+  return writeSettlement(value,false)
+}
+
+export async function finalizePurchaseSettlement(value:PurchaseSettlementDraft):Promise<PurchaseSettlementDraft>{
+  return writeSettlement(value,true)
+}
+
+async function writeSettlement(value:PurchaseSettlementDraft,finalize:boolean):Promise<PurchaseSettlementDraft>{
   assertValidPurchaseSettlementDraft(value)
   const user=requireUser()
   if(!value.sourceSessionId)throw new Error('缺少来源称重单，请重新载入。')
@@ -151,17 +162,22 @@ export async function savePurchaseSettlementDraft(value:PurchaseSettlementDraft)
   const dateSortKey=sortKeyFromBusinessDate(date)
   const monthSortKey=monthSortKeyFromMonthKey(monthKey)
   const reference=doc(db,DRAFT_COLLECTION,actualId),guardReference=doc(db,SOURCE_COLLECTION,canonicalId)
-  return runTransaction(db,async transaction=>{
+  const result=await runTransaction(db,async transaction=>{
     const [existing,source,guard]=await Promise.all([transaction.get(reference),transaction.get(doc(db,'weighingSessions',sourceSessionId)),transaction.get(guardReference)])
     if(!source.exists())throw new Error('找不到来源称重单。')
     const session=source.data() as WeighingSession
-    if(!canModifyWeighing(session))throw new Error('已超过首次完成称重后的 7 天修改期，或本单已锁定。')
+    if(!['weighing','completed'].includes(session.status))throw new Error('来源称重单已作废或已转旧版采购单，不能保存新版结单。')
+    if(finalize&&session.status!=='completed')throw new Error('请先完成称重，再完成结单。')
     if(session.vesselId!==value.vesselId||session.vesselCodeSnapshot!==value.vesselCodeSnapshot||session.productType!==value.productType||businessDateFromLegacy(session.weighingDate)!==date
       ||session.revision!==value.sourceSessionRevision)throw new Error('称重资料已变更，请重新载入后检查结单。')
     if(guard.exists()&&(guard.data().draftId!==actualId||guard.data().sourceSessionId!==sourceSessionId||guard.data().productType!==value.productType))throw new Error(`结单来源已绑定至 ${String(guard.data().draftId)}，请重新载入并核查。`)
     if(existing.exists()){
-      validateSourceDraft(draftFrom(existing.id,existing.data()),sourceSessionId,value.productType)
+      const previous=draftFrom(existing.id,existing.data())
+      validateSourceDraft(previous,sourceSessionId,value.productType)
       if(!value.draftId||Number(existing.data().revision)!==value.revision)throw new Error('结单已在其他装置修改，请重新载入。')
+      if(finalize&&previous.status==='settlement_finalized')throw new Error('结单已正式完成，请保存修改，不要重复完成。')
+      if(!canEditSettlement(previous))throw new Error('已超过 90 天结单修改期限，只能查看。')
+      if(previous.status==='settlement_finalized'&&(previous.businessDate!==date||previous.vesselId!==value.vesselId||previous.vesselCodeSnapshot!==value.vesselCodeSnapshot))throw new Error('已完成结单的日期和船号不能修改，请核对来源。')
       if(!existing.data().sourceSessionId){
         if(actualId!==draftIdForSettlement(value.productType,Number(existing.data().dateSortKey),String(existing.data().vesselId)))throw new Error(`无法证明旧结单的 document ID（${actualId}）。`)
         const savedIds=existing.data().sourceEntryIds
@@ -173,14 +189,18 @@ export async function savePurchaseSettlementDraft(value:PurchaseSettlementDraft)
     }else if(value.draftId)throw new Error(`结单不存在（${actualId}），请重新载入。`)
     const now=serverTimestamp()
     const persisted={...value};delete persisted.draftId
-    const next={...persisted,businessDate:date,dateSortKey,monthKey,monthSortKey,status:'settlement_draft' as const,
+    delete persisted.finalizedAt;delete persisted.finalizedBy
+    const wasFinalized=existing.exists()&&existing.data().status==='settlement_finalized'
+    if(!wasFinalized&&!finalize&&value.status==='settlement_finalized')throw new Error('结单状态已变更，请重新载入。')
+    const next={...persisted,businessDate:date,dateSortKey,monthKey,monthSortKey,status:wasFinalized||finalize?'settlement_finalized' as const:'settlement_draft' as const,
+      ...(wasFinalized?{finalizedAt:existing.data().finalizedAt,finalizedBy:existing.data().finalizedBy}:finalize?{finalizedAt:now,finalizedBy:user.uid}:{}),
       totalAmountCents:value.lines.reduce((sum,line)=>sum+line.amountCents,0),sourceEntryIds:[...value.sourceEntryIds],
       createdBy:existing.exists()?String(existing.data().createdBy):user.uid,createdAt:existing.exists()?existing.data().createdAt:now,
       updatedBy:user.uid,updatedAt:now,revision:existing.exists()?Number(existing.data().revision)+1:1,voided:false as const}
     if(!guard.exists())transaction.set(guardReference,{productType:value.productType,sourceSessionId,draftId:actualId,createdBy:user.uid,createdAt:now})
     transaction.set(reference,next)
     transaction.set(doc(reference,'actions',String(next.revision)),{beforeSnapshot:existing.exists()?existing.data():null,
-      afterSnapshot:next,performedBy:user.uid,performedAt:now})
+      afterSnapshot:next,performedBy:user.uid,performedAt:now,revision:next.revision,type:finalize?'finalize':wasFinalized?'edit_after_finalize':'save_draft'})
     return {...next,draftId:actualId}
   }).catch(async(problem:unknown)=>{
     const code=problem&&typeof problem==='object'&&'code' in problem?String(problem.code):''
@@ -210,6 +230,14 @@ export async function savePurchaseSettlementDraft(value:PurchaseSettlementDraft)
     if(code==='unavailable'||code==='deadline-exceeded')throw new Error(`网络连接暂时不可用，无法确认结单保存结果；请重新载入后重试（${code}）。`,{cause:problem})
     throw problem
   })
+  // Resolve the trusted timestamp, rather than returning a serverTimestamp sentinel to the UI.
+  if(result.status==='settlement_finalized'){
+    const confirmed=await getDocFromServer(reference)
+    if(!confirmed.exists())throw new Error('无法确认结单保存结果，请重新载入核对；本机草稿已保留。')
+    if(Number(confirmed.data().revision)!==result.revision)throw new Error('结单保存后又被其他装置修改，请重新打开核对最新版本；本机草稿已保留。')
+    return draftFrom(confirmed.id,confirmed.data())
+  }
+  return result
 }
 
 export { asSettlementSourceEntry }

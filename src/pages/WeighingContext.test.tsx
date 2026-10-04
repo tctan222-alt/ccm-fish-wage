@@ -25,6 +25,31 @@ function mount(overrides:Partial<Parameters<typeof WeighingEntryPage>[0]>={}){
 async function ready(){await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())}
 function typeWeight(value='80.5'){fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value}})}
 
+it.each(['weight','remark','date','paper'] as const)('blocks completion with an unconfirmed %s, and explicit clear retains committed baskets/queue',async(kind)=>{
+  const {store}=mount(kind==='remark'?{fixedProductType:'fish_meal'}:{});await ready()
+  if(kind==='remark')fireEvent.click(screen.getByRole('button',{name:'桶鱼仔'}))
+  typeWeight('80.5')
+  fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+  await screen.findByText('第 1 篮')
+  await waitFor(()=>expect(screen.getByRole('button',{name:'完成称重'})).not.toBeDisabled())
+  const count=(await store.getPending()).length
+  if(kind==='weight')typeWeight('38.5')
+  else if(kind==='remark'){fireEvent.click(screen.getByRole('button',{name:'总重量'}));fireEvent.change(screen.getByLabelText('备注'),{target:{value:'未确认备注'}})}
+  else if(kind==='date')fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/'}})
+  else fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'UNSAVED'}})
+  fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getAllByRole('alert').some(element=>element.textContent?.includes('尚未确认'))).toBe(true)
+  expect((await store.getPending()).length).toBe(count)
+  fireEvent.click(screen.getByRole('button',{name:'清除当前未确认输入'}))
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('')
+  expect(screen.getByLabelText(kind==='remark'?'鱼仔纸单号':'鱼头纸单号')).toHaveValue('')
+  expect(screen.getByLabelText('日期')).toHaveValue('30/07/2026')
+  expect(screen.getByText('第 1 篮')).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button',{name:'完成称重'}))
+  expect(screen.getByRole('dialog')).toHaveTextContent('确认完成称重')
+})
+
 it('lets an operator type a complete date without switching or moving focus until blur',async()=>{
   const user=userEvent.setup(),openSessionLoader=vi.fn(async()=>null)
   mount({openSessionLoader});await ready()

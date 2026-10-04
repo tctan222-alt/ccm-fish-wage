@@ -515,8 +515,27 @@ export function WeighingEntryPage({
     await syncNow(currentId)
   }
 
+  function unconfirmedInputMessage(){
+    if(weight)return `还有 ${weight}kg 尚未确认，请先确认这一篮或清除当前输入。`
+    if(remark)return '还有备注尚未确认，请先保存当前输入或清除。'
+    if(dateInput!==acceptedDate.current)return '日期尚未确认，请先完成日期输入或清除。'
+    if(externalSlipNo.trim()!==(session?.externalSlipNo??'').trim())return '纸单号修改尚未确认，请先随当前重量保存，或清除当前输入。'
+    return ''
+  }
+  function requestCompletion(){
+    const problem=unconfirmedInputMessage()
+    if(problem){setError(problem);return}
+    setShowComplete(true)
+  }
+  function clearUnconfirmedInput(){
+    setWeight('');setRemark('');setDateInput(acceptedDate.current);setDateError('')
+    setExternalSlipNo(session?.externalSlipNo??'');slipEdited.current=false;slipEditVersion.current+=1
+    setError('')
+  }
   async function complete(){
     if(!store||!session||saveLock.current||entryMutationLock.current||busy||syncing||contextLoading||session.status!=='weighing')return
+    const problem=unconfirmedInputMessage()
+    if(problem){setShowComplete(false);setError(problem);return}
     const local={...session,status:'completed' as const,revision:session.revision+1}
     const operationId=`complete_${session.id}_${local.revision}`
     saveLock.current=true;setBusy(true);setError('')
@@ -624,7 +643,8 @@ export function WeighingEntryPage({
         {productType==='fish_head'&&<span className="entry-row-action">{!locked&&!item.voided?'编辑':'查看'} ›</span>}
       </button>)}</div>
     </section>
-    {session?.status==='weighing'&&activeContextEntries.length>0&&<button className="complete-weighing" type="button" disabled={busy||syncing||contextLoading} onClick={()=>setShowComplete(true)}>完成称重</button>}
+    {session?.status==='weighing'&&activeContextEntries.length>0&&<><button className="complete-weighing" type="button" disabled={busy||syncing||contextLoading} onClick={requestCompletion}>完成称重</button>
+      {unconfirmedInputMessage()&&<button type="button" disabled={busy||syncing||contextLoading} onClick={clearUnconfirmedInput}>清除当前未确认输入</button>}</>}
     {session?.status==='completed'&&<div className="settlement-actions">{pending===0?<><Link className="primary-action settlement-link" to={productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>查看{productType==='fish_head'?'鱼头':'鱼仔'}结单</Link>
       <Link className="page-link" to={`/weighing/${session.id}/review`}>修改称重（完成后 7 天内）</Link></>:<div className="notice"><p>{syncing?'正在同步称重，完成后即可查看结单。':'称重记录已保存在本机，同步成功后即可查看结单。'}</p>
       <button type="button" disabled={syncing} onClick={()=>void syncNow(session.id)}>重试同步</button></div>}</div>}

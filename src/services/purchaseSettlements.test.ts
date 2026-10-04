@@ -36,7 +36,7 @@ vi.mock('firebase/firestore',()=>{
     },
   }
 })
-import { asSettlementSourceEntry,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft } from './purchaseSettlements'
+import { asSettlementSourceEntry,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,finalizePurchaseSettlement } from './purchaseSettlements'
 
 const legacyDraftPath='purchaseSettlementDrafts/fish_head_20260803_v978',draftPath='purchaseSettlementDrafts/fish_head_session_source',sourcePath='weighingSessions/source'
 const guardPath='purchaseSettlementSources/fish_head_session_source'
@@ -74,6 +74,45 @@ beforeEach(()=>{
   vi.mocked(loadWeighingBundle).mockReset().mockImplementation(async sessionId=>bundle(sessionId))
 })
 afterEach(()=>vi.useRealTimers())
+
+describe('atomic settlement finalization',()=>{
+  it('finalizes the same document with trusted first timestamp and typed before/after audit',async()=>{
+    const draft=await savePurchaseSettlementDraft(input())
+    const finalized=await finalizePurchaseSettlement({...draft,receiptNo:'FINAL'})
+    expect(finalized).toMatchObject({draftId:draft.draftId,status:'settlement_finalized',revision:2,createdAt:draft.createdAt,finalizedBy:'u1',finalizedAt:new Date()})
+    expect(state.records.get(`${draftPath}/actions/2`)).toMatchObject({type:'finalize',revision:2,beforeSnapshot:{status:'settlement_draft'},afterSnapshot:{status:'settlement_finalized'}})
+    await expect(finalizePurchaseSettlement(finalized)).rejects.toThrow('不要重复完成')
+    await expect(finalizePurchaseSettlement(draft)).rejects.toThrow('其他装置')
+  })
+  it('retains finalized identity/time, increments revision, audits edits and rejects exactly 90 days',async()=>{
+    const finalized=await finalizePurchaseSettlement(input())
+    const first=finalized.finalizedAt as Date
+    vi.setSystemTime(new Date(first.getTime()+90*86400000-1000))
+    const edited=await savePurchaseSettlementDraft({...finalized,receiptNo:'changed',finalizedAt:new Date('2030-01-01'),finalizedBy:'forged'})
+    expect(edited).toMatchObject({revision:2,status:'settlement_finalized',finalizedAt:first,finalizedBy:'u1',createdAt:finalized.createdAt})
+    expect(state.records.get(`${draftPath}/actions/2`)).toMatchObject({type:'edit_after_finalize',revision:2,beforeSnapshot:{receiptNo:''},afterSnapshot:{receiptNo:'changed'}})
+    vi.setSystemTime(new Date(first.getTime()+90*86400000))
+    await expect(savePurchaseSettlementDraft(edited)).rejects.toThrow('90 天')
+  })
+  it('rejects changing finalized vessel/business date even when the source also changed',async()=>{
+    const finalized=await finalizePurchaseSettlement(input())
+    state.records.set(sourcePath,{...state.records.get(sourcePath),vesselId:'v833',vesselCodeSnapshot:'833',weighingDate:'04/08/2026',revision:4})
+    await expect(savePurchaseSettlementDraft({...finalized,vesselId:'v833',vesselCodeSnapshot:'833',businessDate:'04/08/2026',sourceSessionRevision:4})).rejects.toThrow('不能修改')
+  })
+  it('requires completed weighing, commits no half finalization if audit fails, and preserves the original on concurrent finalize',async()=>{
+    state.records.set(sourcePath,{...state.records.get(sourcePath),status:'weighing'})
+    await expect(finalizePurchaseSettlement(input())).rejects.toThrow('先完成称重')
+    state.records.set(sourcePath,{...state.records.get(sourcePath),status:'completed'})
+    state.failPath=`${draftPath}/actions/1`
+    await expect(finalizePurchaseSettlement(input())).rejects.toThrow('connection interrupted')
+    expect(state.records.has(draftPath)).toBe(false)
+    expect(state.records.has(guardPath)).toBe(false)
+    state.failPath=''
+    const results=await Promise.allSettled([finalizePurchaseSettlement(input()),finalizePurchaseSettlement(input())])
+    expect(results.filter(result=>result.status==='fulfilled')).toHaveLength(1)
+    expect([...state.records.keys()].filter(path=>path.startsWith('purchaseSettlementDrafts/')&&!path.includes('/actions/'))).toHaveLength(1)
+  })
+})
 
 describe('source-authoritative draft lookup',()=>{
   it('returns the accepted stable session and entries through the legacy vessel/date route',async()=>{
@@ -274,15 +313,14 @@ describe('settlement draft transactions',()=>{
     expect(state.writes).not.toHaveBeenCalled()
   })
 
-  it.each(['completed','weighing'])('locks expired %s sources using the original completion timestamp',async status=>{
+  it.each(['completed','weighing'])('allows draft pricing independently of the %s source 7-day weighing window',async status=>{
     state.records.set(sourcePath,{...state.records.get(sourcePath),status,completedAt:new Date('2026-07-27T02:00:00Z')})
-    await expect(savePurchaseSettlementDraft(input())).rejects.toThrow('7 天')
-    expect(state.writes).not.toHaveBeenCalled()
+    expect(await savePurchaseSettlementDraft(input())).toMatchObject({status:'settlement_draft'})
   })
 
   it.each(['processed','voided'])('does not edit a %s source even during the time window',async status=>{
     state.records.set(sourcePath,{...state.records.get(sourcePath),status})
-    await expect(savePurchaseSettlementDraft(input())).rejects.toThrow('锁定')
+    await expect(savePurchaseSettlementDraft(input())).rejects.toThrow('不能保存新版结单')
     expect(state.writes).not.toHaveBeenCalled()
   })
 

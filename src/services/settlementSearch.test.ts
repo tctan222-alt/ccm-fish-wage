@@ -16,13 +16,60 @@ function queryFixture(docs:ProjectedDocument[]){
       const expected=value.stringValue??value.referenceValue
       return op==='IN'?value.arrayValue!.values.some(item=>(item.stringValue??item.referenceValue)===actual):op==='EQUAL'?actual===expected:op==='GREATER_THAN_OR_EQUAL'?actual!==undefined&&actual>=expected!:actual!==undefined&&actual<=expected!
     }))
-    result.sort((a,b)=>(b.fields.weighingDate?.stringValue??'').localeCompare(a.fields.weighingDate?.stringValue??'')||b.name.localeCompare(a.name))
+    const sortField=query.orderBy[0]?.field.fieldPath
+    if(sortField==='dateSortKey')result=result.filter(doc=>doc.fields.dateSortKey?.integerValue!==undefined)
+    result.sort((a,b)=>sortField==='dateSortKey'?Number(b.fields.dateSortKey.integerValue)-Number(a.fields.dateSortKey.integerValue)||b.name.localeCompare(a.name):
+      (b.fields.weighingDate?.stringValue??'').localeCompare(a.fields.weighingDate?.stringValue??'')||b.name.localeCompare(a.name))
     if(query.startAt){const index=result.findIndex(doc=>doc.name===query.startAt!.values[1].referenceValue);result=result.slice(index+1)}
     return result.slice(0,query.limit)
   })
 }
 afterEach(()=>vi.unstubAllGlobals())
 describe('projected server settlement search',()=>{
+  it.each(['fish_head','fish_meal'] as const)('runs a date-free %s vessel query with one numeric date stream and 25-row cursors',async(productType)=>{
+    const days=[20261003,20260930,20260831]
+    const docs=Array.from({length:61},(_,index)=>session(`vessel-${String(index).padStart(3,'0')}`,['03/10/2026','30/09/2026','2026-08-31'][index%3],{productType,dateSortKey:days[index%3]}))
+    docs.push(session('other-vessel','04/10/2026',{productType,vesselId:'another',dateSortKey:20261004}),session('other-product','04/10/2026',{productType:productType==='fish_head'?'fish_meal':'fish_head',dateSortKey:20261004}))
+    const run=queryFixture(docs),load=createSettlementPageLoader(run)
+    const query={...search,mode:'vessel' as const,productType,from:'',to:'',vesselId:'v833'}
+    const first=await load(query),savedCursor=JSON.stringify(first.cursor),second=await load(query,first.cursor),third=await load(query,second.cursor)
+    expect([first.items.length,second.items.length,third.items.length]).toEqual([25,25,11])
+    expect(new Set([...first.items,...second.items,...third.items].map(item=>item.id)).size).toBe(61)
+    expect(third.cursor).toBeNull();expect(JSON.stringify(first.cursor)).toBe(savedCursor)
+    const dates=[...first.items,...second.items,...third.items].map(item=>item.weighingDate)
+    expect(dates.slice(0,21)).toEqual(Array(21).fill('03/10/2026'))
+    const queries=run.mock.calls.map(([query])=>query).filter(query=>query.from[0].collectionId==='weighingSessions')
+    expect(queries).toHaveLength(3)
+    for(const query of queries){
+      expect(query.limit).toBe(25)
+      expect(query.orderBy[0].field.fieldPath).toBe('dateSortKey')
+      expect(JSON.stringify(query.where)).not.toMatch(/monthKey|GREATER_THAN|LESS_THAN/)
+      expect(query.select.fields.map(field=>field.fieldPath)).not.toContain('lines')
+    }
+  })
+  it('requires a vessel in vessel mode, without validating unused date fields',async()=>{
+    const load=createSettlementPageLoader(queryFixture([]))
+    await expect(load({...search,mode:'vessel',from:'',to:'',vesselId:''})).rejects.toThrow('船号')
+    expect((await load({...search,mode:'vessel',from:'not-a-date',to:'',vesselId:'inactive-historical'})).items).toEqual([])
+  })
+  it('projects finalized status/time in one batch, retaining formal amounts after source revision changes',async()=>{
+    const docs=[session('draft'),session('final'),session('expired'),session('processed','03/10/2026',{status:'processed',processedReceiptId:'legacy'})]
+    for(const [source,status,stamp] of [['draft','settlement_draft',''],['final','settlement_finalized',new Date().toISOString()],['expired','settlement_finalized',new Date(Date.now()-91*86400000).toISOString()]] as const){
+      const header=document(`draft-${source}`,{sourceSessionId:source,sourceSessionRevision:source==='final'?2:3,productType:'fish_head',status,totalAmountCents:1234,voided:false})
+      header.name=header.name.replace('/weighingSessions/','/purchaseSettlementDrafts/')
+      if(stamp)header.fields.finalizedAt={timestampValue:stamp}
+      docs.push(header)
+    }
+    const run=queryFixture(docs),page=await createSettlementPageLoader(run)(search)
+    expect(page.items.find(item=>item.id==='draft')?.settlementState).toBe('draft')
+    expect(page.items.find(item=>item.id==='final')).toMatchObject({settlementState:'finalized',totalAmountCents:1234})
+    expect(page.items.find(item=>item.id==='expired')?.settlementState).toBe('locked')
+    expect(page.items.find(item=>item.id==='processed')?.settlementState).toBe('legacy_processed')
+    const headerQueries=run.mock.calls.map(([query])=>query).filter(query=>query.from[0].collectionId==='purchaseSettlementDrafts')
+    expect(headerQueries).toHaveLength(1)
+    expect(headerQueries[0].select.fields.map(field=>field.fieldPath)).toContain('finalizedAt')
+    expect(headerQueries[0].select.fields.map(field=>field.fieldPath)).not.toContain('lines')
+  })
   it.each(['fish_head','fish_meal'] as const)('keeps %s separate, filters date/status/vessel on the server and never reads source details',async productType=>{
     const docs=[session('match','03/10/2026',{productType}),session('too-old','19/09/2026',{productType}),session('other-product','03/10/2026',{productType:productType==='fish_head'?'fish_meal':'fish_head'}),session('other-vessel','03/10/2026',{productType,vesselId:'another'}),session('wrong-status','03/10/2026',{productType,status:'weighing'})]
     const run=queryFixture(docs),page=await createSettlementPageLoader(run)({...search,productType,vesselId:'v833',status:'completed'})

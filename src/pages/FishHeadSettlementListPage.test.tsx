@@ -70,7 +70,7 @@ function renderListWithDetail(items:WeighingSession[],initialPath='/fish-head-se
   return {bundleLoader,sourceLoader,draftLoader,draftSaver}
 }
 
-afterEach(()=>{cleanup();vi.restoreAllMocks()})
+afterEach(()=>{cleanup();window.localStorage.clear();vi.restoreAllMocks()})
 
 function fixtureLoader(items:WeighingSession[]):SettlementPageLoader {
   return async search=>({items:items.filter(item=>item.productType===search.productType&&item.status!=='voided'
@@ -84,6 +84,31 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
   const renderSearch=(pageLoader:SettlementPageLoader=async()=>({items:[item()],cursor:null}),path='/list')=>render(<MemoryRouter initialEntries={[path]}><LocationProbe/><SettlementListPage productType={productType} pageLoader={pageLoader} vesselLoader={async()=>[vessel,{...vessel,id:'old',vesselCode:'旧船',active:false}]} today={()=>'03/10/2026'}/></MemoryRouter>)
   const search=()=>fireEvent.click(screen.getByRole('button',{name:'查询 Search'}))
   const ready=async()=>(await screen.findAllByRole('article'))[0]
+  it('switches to truly date-free vessel search and restores vessel/status from the URL',async()=>{
+    const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}))
+    renderSearch(loader);await ready()
+    fireEvent.click(screen.getByRole('button',{name:'按船号 Vessel'}))
+    expect(screen.queryByLabelText('开始日期 Start Date')).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('结束日期 End Date')).not.toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'查询 Search'})).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent('请选择船号')
+    fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'old'}});search();await ready()
+    expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({mode:'vessel',from:'',to:'',vesselId:'old',status:'all'})
+    expect(screen.getByTestId('current-path')).toHaveTextContent('mode=vessel')
+    expect(screen.getByTestId('current-path')).toHaveTextContent('vessel=old')
+    cleanup()
+    renderSearch(loader,'/list?mode=vessel&vessel=old&status=completed');await ready()
+    expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({mode:'vessel',from:'',to:'',vesselId:'old',status:'completed'})
+    expect(screen.getByLabelText('船号 Vessel')).toHaveValue('old')
+  })
+  it('displays draft, finalized, 90-day locked and legacy processed distinctly',async()=>{
+    renderSearch(async()=>({items:(['draft','finalized','locked','legacy_processed'] as const).map((state,index)=>item({id:String(index),sessionCode:'STATE-'+index,settlementState:state})),cursor:null}))
+    await ready()
+    expect(screen.getByText('草稿 Draft')).toBeInTheDocument()
+    expect(screen.getByText('已完成 Finalized')).toBeInTheDocument()
+    expect(screen.getByText('已锁定 Locked（90 天期限已到）')).toBeInTheDocument()
+    expect(screen.getAllByText('旧版采购单 Legacy processed').length).toBeGreaterThan(0)
+  })
   it('defaults to the selected month-to-today and all vessels with product isolation',async()=>{
     const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}))
     renderSearch(loader);await ready()
@@ -126,18 +151,20 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
   it('uses an optional inactive historical vessel and status as server criteria',async()=>{
     const loader=vi.fn<SettlementPageLoader>(async()=>({items:[item()],cursor:null}));renderSearch(loader);await ready()
     await screen.findByRole('option',{name:/旧船/});fireEvent.change(screen.getByLabelText('船号 Vessel'),{target:{value:'old'}})
-    fireEvent.click(screen.getByRole('button',{name:'已结单'}));search();await ready()
+    fireEvent.click(screen.getByRole('button',{name:'旧版采购单 Legacy processed'}));search();await ready()
     expect(loader.mock.calls.at(-1)?.[0]).toMatchObject({vesselId:'old',status:'processed'})
   })
   it('renders only summary data and preserves selected-session detail identity',async()=>{
     renderSearch();const row=await ready();expect(row).toHaveTextContent('160.5 kg');expect(row).toHaveTextContent('RM 9.63');expect(row).toHaveTextContent('REFERENCE-1')
-    expect(within(row).getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/head-833-a`)
+    const href=within(row).getByRole('link',{name:'查看结单'}).getAttribute('href')!
+    expect(href.split('?')[0]).toBe(`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/head-833-a`)
+    expect(new URLSearchParams(href.split('?')[1]).get('return')).toContain('mode=date')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })
   it('keeps weighing actions distinct from processed read-only details',async()=>{
     renderSearch(async()=>({items:[item({status:'weighing'}),item({id:'done',sessionCode:'DONE',status:'processed'})],cursor:null}));await ready()
     expect(screen.getByRole('link',{name:'继续称重'})).toHaveAttribute('href','/weighing/head-833-a')
-    expect(screen.getByRole('link',{name:'查看结单'})).toHaveAttribute('href',`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/done`)
+    expect(screen.getByRole('link',{name:'查看结单'}).getAttribute('href')?.split('?')[0]).toBe(`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/done`)
   })
   it('keeps same-vessel same-date sessions separate and shows unknown RM instead of zero',async()=>{
     renderSearch(async()=>({items:[item({totalAmountCents:null}),item({id:'second',sessionCode:'SECOND'})],cursor:null}));await screen.findByRole('article',{name:'现场单 SECOND'})
@@ -235,7 +262,7 @@ describe('Fish Head Settlement list to existing detail routes',()=>{
     expect(screen.getByLabelText('鱼头纸单号')).toBeDisabled()
     expect(screen.getByRole('button',{name:'保存结单草稿'})).toBeDisabled()
     expect(screen.queryByRole('link',{name:'修改称重（7 天内）'})).not.toBeInTheDocument()
-    expect(screen.getByText('本单已锁定或超过 7 天修改期，只能查看。')).toBeInTheDocument()
+    expect(screen.getByText('来源已转旧版采购单 Legacy processed，本页只读。')).toBeInTheDocument()
     expect(result.sourceLoader).not.toHaveBeenCalled()
     expect(result.draftSaver).not.toHaveBeenCalled()
   })

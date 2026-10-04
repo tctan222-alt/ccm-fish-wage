@@ -1,6 +1,7 @@
 import { lineAmountCents } from './purchasing'
 import { getDefaultFishHeadPriceCents,getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
 import type { FishMealQuality,WeighingEntry,WeighingEntryMode,WeighingProductType } from './weighing'
+import type { SettlementStatus } from './settlementLifecycle'
 
 export interface SettlementSourceEntry {
   id:string
@@ -46,7 +47,9 @@ export interface PurchaseSettlementDraft {
   vesselId:string
   vesselCodeSnapshot:string
   receiptNo:string
-  status:'settlement_draft'
+  status:SettlementStatus
+  finalizedAt?:unknown
+  finalizedBy?:string
   lines:PurchaseSettlementLine[]
   totalAmountCents:number
   sourceEntryIds:string[]
@@ -124,7 +127,7 @@ export function updateSettlementLinePrice(line:PurchaseSettlementLine,input:stri
 export function totalSettlementAmountCents(lines:PurchaseSettlementLine[]){return lines.reduce((sum,line)=>sum+line.amountCents,0)}
 
 export function assertValidPurchaseSettlementDraft(draft:PurchaseSettlementDraft):void {
-  if(draft.status!=='settlement_draft'||draft.voided!==false||!Array.isArray(draft.lines))throw new Error('结单草稿格式不正确。')
+  if(!['settlement_draft','settlement_finalized'].includes(draft.status)||draft.voided!==false||!Array.isArray(draft.lines))throw new Error('结单格式不正确。')
   for(const line of draft.lines){
     if(line.lineType!==draft.productType||!line.nameSnapshot.trim()||!Number.isSafeInteger(line.totalWeightGrams)||line.totalWeightGrams<0
       ||!Number.isSafeInteger(line.basketCount)||line.basketCount<0||!Number.isSafeInteger(line.totalWeightEntryCount)||line.totalWeightEntryCount<0

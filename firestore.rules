@@ -556,32 +556,24 @@ service cloud.firestore {
         && 'afterSnapshot' in data;
     }
 
-    // Settlement drafts are editable, non-authoritative working data. The client
-    // domain layer validates each line; Firestore Rules keeps the compact state
-    // guard here because the backend compiler has a strict expression budget.
+    // Lifecycle/identity/time are authoritative here; integer line calculations
+    // remain in the existing domain validator.
     function validPurchaseSettlementDraft(data) {
       return data.keys().hasOnly([
           'productType', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey',
           'vesselId', 'vesselCodeSnapshot', 'receiptNo', 'status', 'lines',
           'totalAmountCents', 'sourceEntryIds', 'createdAt', 'createdBy',
           'updatedAt', 'updatedBy', 'revision', 'voided', 'voidReason',
-          'voidedBy', 'voidedAt', 'sourceSessionId', 'sourceSessionRevision'
-        ])
-        && data.keys().hasAll([
-          'productType', 'businessDate', 'dateSortKey', 'monthKey', 'monthSortKey',
-          'vesselId', 'vesselCodeSnapshot', 'receiptNo', 'status', 'lines',
-          'totalAmountCents', 'sourceEntryIds', 'createdAt', 'createdBy',
-          'updatedAt', 'updatedBy', 'revision', 'voided'
+          'voidedBy', 'voidedAt', 'sourceSessionId', 'sourceSessionRevision', 'finalizedAt', 'finalizedBy'
         ])
         && data.productType in ['fish_head', 'fish_meal']
-        && data.businessDate is string && data.businessDate.size() >= 8 && data.businessDate.size() <= 10
+        // validSettlementSource requires the canonical valid date and exact month.
         && data.dateSortKey is int && data.dateSortKey >= 20200101
-        && data.monthKey is string && data.monthKey.size() >= 7 && data.monthKey.size() <= 7
-        && data.monthSortKey is int && data.monthSortKey >= 202001
+        && data.monthSortKey is int
         && data.vesselId is string && data.vesselId.size() > 0 && data.vesselId.size() <= 80
         && data.vesselCodeSnapshot is string && data.vesselCodeSnapshot.size() > 0 && data.vesselCodeSnapshot.size() <= 30
         && data.receiptNo is string && data.receiptNo.size() <= 100
-        && data.status == 'settlement_draft'
+        && data.status in ['settlement_draft', 'settlement_finalized']
         && data.lines is list && data.lines.size() <= 100
         && data.totalAmountCents is int && data.totalAmountCents >= 0
         && data.sourceEntryIds is list && data.sourceEntryIds.size() > 0 && data.sourceEntryIds.size() <= 500
@@ -590,9 +582,9 @@ service cloud.firestore {
         && data.revision is int && data.revision >= 1
         && data.voided is bool
         && ((data.voided == false
-            && (!('voidReason' in data) || data.voidReason == null)
-            && (!('voidedBy' in data) || data.voidedBy == null)
-            && (!('voidedAt' in data) || data.voidedAt == null))
+            && data.get('voidReason', null) == null
+            && data.get('voidedBy', null) == null
+            && data.get('voidedAt', null) == null)
           || (data.voided == true
             && data.voidReason is string && data.voidReason.size() >= 3 && data.voidReason.size() <= 100
             && data.voidedBy is string && data.voidedAt is timestamp));
@@ -600,14 +592,16 @@ service cloud.firestore {
 
     function validPurchaseSettlementDraftUpdate() {
       return validPurchaseSettlementDraft(incomingData())
+        && validSettlementLifecycle(existingData())
         && incomingData().productType == existingData().productType
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt
         && incomingData().updatedBy == uid()
         && incomingData().updatedAt == now()
         && incomingData().revision == existingData().revision + 1
-        && ((existingData().voided == false && incomingData().voided == false)
-          || (existingData().voided == false && incomingData().voided == true
+        && existingData().voided == false
+        && (incomingData().voided == false
+          || (incomingData().voided == true
             && incomingData().diff(existingData()).affectedKeys().hasOnly([
               'voided', 'voidReason', 'voidedBy', 'voidedAt', 'updatedBy', 'updatedAt', 'revision'
             ])
@@ -627,7 +621,27 @@ service cloud.firestore {
         && data.monthSortKey == int(data.businessDate[6:10] + data.businessDate[3:5])
         && (source.weighingDate == data.businessDate
           || source.weighingDate == data.businessDate[6:10] + '-' + data.businessDate[3:5] + '-' + data.businessDate[0:2])
-        && weighingCanModify(source);
+        && source.status in ['weighing', 'completed'];
+    }
+
+    function validSettlementLifecycle(before) {
+      let data = incomingData();
+      return (before != null && before.status == 'settlement_finalized')
+        ? data.status == 'settlement_finalized'
+          && data.finalizedAt == before.finalizedAt && data.finalizedBy == before.finalizedBy
+          && before.finalizedAt is timestamp && now() < before.finalizedAt + duration.value(90, 'd')
+          && data.diff(before).affectedKeys().hasOnly(['receiptNo', 'lines', 'totalAmountCents', 'sourceEntryIds', 'sourceSessionRevision', 'updatedAt', 'updatedBy', 'revision'])
+        : ((data.status == 'settlement_draft' && !data.keys().hasAny(['finalizedAt', 'finalizedBy']))
+          || (data.status == 'settlement_finalized' && data.finalizedAt == now() && data.finalizedBy == uid()
+            && afterData(weighingSessionPath(data.sourceSessionId)).status == 'completed'));
+    }
+
+    function validSettlementAction(action, before, after) {
+      return action.afterSnapshot == after && action.beforeSnapshot == before
+        && action.performedBy == uid() && action.performedAt == now()
+        && action.revision == after.revision
+        && action.type == (before != null && before.status == 'settlement_finalized' ? 'edit_after_finalize'
+          : after.status == 'settlement_finalized' ? 'finalize' : 'save_draft');
     }
 
     function settlementSourcePath(data) {
@@ -643,9 +657,8 @@ service cloud.firestore {
 
     function validSettlementAudit(draftId) {
       let action = afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)/actions/$(string(incomingData().revision)));
-      return action.afterSnapshot == incomingData()
-        && action.beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) ? existingData() : null)
-        && action.performedBy == uid() && action.performedAt == now();
+      return validSettlementAction(action,
+        exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) ? existingData() : null, incomingData());
     }
 
     function validLinkedPurchaseAction(receiptId, actionType) {
@@ -2134,19 +2147,16 @@ service cloud.firestore {
     match /purchaseSettlementDrafts/{draftId} {
       allow read: if signedIn();
       allow create: if signedIn() && validPurchaseSettlementDraft(incomingData())
+        && validSettlementLifecycle(null)
         && incomingData().revision == 1
         && draftId == incomingData().productType + '_session_' + incomingData().sourceSessionId
         && afterData(settlementSourcePath(incomingData())).draftId == draftId
         && validSettlementSource() && validSettlementAudit(draftId)
-        && incomingData().productType in ['fish_head', 'fish_meal']
         && incomingData().createdBy == uid()
         && incomingData().createdAt == now()
         && incomingData().updatedBy == uid()
         && incomingData().updatedAt == now()
-        && incomingData().voided == false
-        && (!('voidReason' in incomingData()) || incomingData().voidReason == null)
-        && (!('voidedBy' in incomingData()) || incomingData().voidedBy == null)
-        && (!('voidedAt' in incomingData()) || incomingData().voidedAt == null);
+        && incomingData().voided == false;
       allow update: if signedIn() && validSettlementSource() && validSettlementAudit(draftId)
         && afterData(settlementSourcePath(incomingData())).draftId == draftId
         && (('sourceSessionId' in existingData())
@@ -2156,12 +2166,12 @@ service cloud.firestore {
       match /actions/{revision} {
         allow read: if signedIn();
         allow create: if signedIn()
-          && incomingData().afterSnapshot == afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
+          && validSettlementAction(incomingData(),
+            exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
+              ? beforeData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) : null,
+            afterData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)))
           && revision == string(incomingData().afterSnapshot.revision)
-          && incomingData().afterSnapshot.updatedAt == now()
-          && incomingData().beforeSnapshot == (exists(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId))
-            ? beforeData(/databases/$(database)/documents/purchaseSettlementDrafts/$(draftId)) : null)
-          && incomingData().performedBy == uid() && incomingData().performedAt == now();
+          && incomingData().afterSnapshot.updatedAt == now();
         allow update, delete: if false;
       }
     }

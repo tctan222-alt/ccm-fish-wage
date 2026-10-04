@@ -1,5 +1,23 @@
 # ERP Master Backlog
 
+## Owner follow-up: settlement lifecycle, recovery and vessel history (2026-10-04)
+
+Implemented on the focused settlement branch from main `3001a3540bebc608c44b22a3e7ee6ccb0146d828`:
+Draft → server-trusted Finalize → independently audited edits before 90 consecutive
+days → read-only exactly at 90 days. First finalization and finalized identity never
+reset. Reuses P5/P6 source binding and actions; weighing 7d / settlement 90d / Retail
+30d stay separate. Local persistent input recovery, stale-draft comparison, separate
+read/save/validation/clipboard errors, vessel retry and unconfirmed-input completion
+guard are included. Date queries retained; independent date-free vessel mode uses
+projected numeric-date cursor pagination, 25 rows, one additional index definition.
+
+Owner confirmed missing legacy dateSortKey backfill as a **future release prerequisite**.
+This task includes only a pure read-only audit helper and exact preflight plan;
+no production backfill, data writes, indexes, Rules or Hosting release. `processed`
+retains its legacy purchase-receipt meaning. Full contract and release gate:
+[Settlement lifecycle](SETTLEMENT_LIFECYCLE.md). Merge only after tests/CI/review;
+sync clean main and STOP. No new backlog phase starts automatically.
+
 Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和交付状态；详细实现与验证放在各 focused PR。
 
 ## 执行约定

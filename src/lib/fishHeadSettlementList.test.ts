@@ -186,7 +186,7 @@ describe('fish-head settlement list',()=>{
     const items=[session('completed'),session('weighing',{status:'weighing'}),session('processed',{status:'processed'}),
       session('voided',{status:'voided'}),session('meal',{productType:'fish_meal'}),session('legacy',{productType:undefined})]
     expect(fishHeadSettlementSessions(items).map(item=>item.id)).toEqual(['completed','processed','weighing'])
-    expect(FISH_HEAD_SETTLEMENT_STATUS_NAMES).toEqual({weighing:'称重中',completed:'待结单',processed:'已结单',voided:'已作废'})
+    expect(FISH_HEAD_SETTLEMENT_STATUS_NAMES).toEqual({weighing:'称重中',completed:'待结单',processed:'旧版采购单 Legacy processed',voided:'已作废'})
   })
 
   it('sorts canonical business dates first, supports legacy ISO and does not trust stale dateSortKey',()=>{
