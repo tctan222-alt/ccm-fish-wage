@@ -44,6 +44,7 @@ describe('purchase settlement MVP pages',()=>{
     expect(fallback).toHaveValue(tsv);expect(fallback).toHaveAttribute('readonly')
     expect(screen.queryByText('表格已复制，可以贴到 Excel。')).not.toBeInTheDocument()
     expect(screen.getByRole('alert')).toHaveTextContent(mode==='unsupported'?'浏览器不支持自动复制':'无法自动复制表格')
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
   })
   it.each(['fish_head','fish_meal'] as const)('links the %s detail back to its own settlement list and distinguishes paper and system numbers',async(productType)=>{
     renderPage(productType,[]);await waitFor(()=>expect(screen.queryByText('正在载入结单资料…')).not.toBeInTheDocument())
