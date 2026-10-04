@@ -106,6 +106,7 @@ export function WeighingEntryPage({
   const [species,setSpecies]=useState<FishSpeciesRecord[]>([])
   const [vesselId,setVesselId]=useState(sessionId?'':DEFAULT_VESSELS[0].id)
   const [date,setDate]=useState(today())
+  const acceptedDate=useRef(date)
   const [dateInput,setDateInput]=useState(date)
   const [dateError,setDateError]=useState('')
   const [externalSlipNo,setExternalSlipNo]=useState('')
@@ -249,7 +250,7 @@ export function WeighingEntryPage({
         }
         if(cancelled)return
         setSession(bundle.session);setEntries(bundle.entries);setVesselId(bundle.session.vesselId)
-        setDate(bundle.session.weighingDate);setExternalSlipNo(current=>slipEdited.current?current:bundle.session.externalSlipNo)
+        acceptedDate.current=bundle.session.weighingDate;setDate(bundle.session.weighingDate);setExternalSlipNo(current=>slipEdited.current?current:bundle.session.externalSlipNo)
         if(bundle.session.productType)setProductType(bundle.session.productType)
       }).catch(()=>{if(!cancelled)setError('无法载入现场称重单。')}).finally(()=>{if(!cancelled){setContextLoading(false);setCheckedContext(`session:${sessionId}`)}})
     }
@@ -357,11 +358,15 @@ export function WeighingEntryPage({
   }
 
   function requestContext(next:WeighingContext,source:'date'|'selection'='selection'){
-    if(next.vesselId===vesselId&&next.date===date&&next.productType===productType)return
-    try{if(weighingDraftKey(next.productType,next.date,next.vesselId)===contextKey)return}catch{/* Invalid/partial dates still need draft protection. */}
+    // A later selector handler may still close over the date from before this blur.
+    if(source==='selection')next={...next,date:acceptedDate.current}
+    if(next.vesselId===vesselId&&next.date===acceptedDate.current&&next.productType===productType)return
+    try{if(weighingDraftKey(next.productType,next.date,next.vesselId)===weighingDraftKey(productType,acceptedDate.current,vesselId))return}catch{/* Invalid/partial dates still need draft protection. */}
     // A valid date submission carries its own edit; other selections would discard it.
-    if((source!=='date'&&dateInput!==date) || weight || remark || externalSlipNo.trim()!==(session?.externalSlipNo??'').trim()){
-      setPendingContext({...next,vessel:vessels.find(item=>item.id===next.vesselId)??(next.vesselId===vesselId?vesselSelection.current:undefined)})
+    if((source!=='date'&&dateInput!==acceptedDate.current) || weight || remark || externalSlipNo.trim()!==(session?.externalSlipNo??'').trim()){
+      // Date blur and the next selector event can be batched into the same interaction.
+      setPendingContext(current=>({...next,date:source==='date'?next.date:current?.date??next.date,
+        vessel:vessels.find(item=>item.id===next.vesselId)??(next.vesselId===vesselId?vesselSelection.current:undefined)}))
     }else applyContext(next)
   }
 
@@ -378,6 +383,7 @@ export function WeighingEntryPage({
     setPendingContext(null);setContextLoading(true);setCheckedContext('')
     setSession(null);setEntries([]);setPending(0);setExternalSlipNo('');setWeight('');setRemark('');setError('')
     if(next.productType!==productType)setEntryMode('individual')
+    acceptedDate.current=next.date
     setVesselId(nextVesselId);setDate(next.date);setDateInput(next.date);setDateError('');setProductType(next.productType)
     queueMicrotask(()=>weightRef.current?.focus())
   }

@@ -102,6 +102,24 @@ it.each(['vessel','product'] as const)('protects an unfinished date edit before 
   else expect(screen.getByRole('button',{name:'鱼仔'})).toHaveAttribute('aria-pressed','true')
 })
 
+it.each([['vessel',true],['product',true],['vessel',false],['product',false]] as const)('keeps the valid date when blur is followed by a %s selection (basket draft: %s)',async(kind,dirty)=>{
+  const openSessionLoader=vi.fn(async()=>null)
+  mount({openSessionLoader});await ready();if(dirty)typeWeight()
+  fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+  // Both handlers can run in the same direct date-to-selector interaction.
+  act(()=>{
+    fireEvent.blur(screen.getByLabelText('日期'))
+    if(kind==='vessel')fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
+    else fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
+  })
+  if(dirty)fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'继续切换'}))
+  else expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  await ready()
+  expect(screen.getByLabelText('日期')).toHaveValue('31/07/2026')
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('')
+  expect(openSessionLoader).toHaveBeenLastCalledWith(kind==='vessel'?'v833':'v978','31/07/2026',kind==='product'?'fish_meal':'fish_head')
+})
+
 it('keeps the unconfirmed kg when correcting the fish species',async()=>{
   mount();await ready();typeWeight()
   fireEvent.click(within(screen.getByRole('group',{name:'鱼名'})).getByRole('button',{name:'来戈'}))
