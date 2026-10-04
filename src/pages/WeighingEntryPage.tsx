@@ -395,6 +395,7 @@ export function WeighingEntryPage({
 
   async function saveEntry(request:number){
     if(!store||!selectedVessel)return
+    const savedSlipVersion=slipEditVersion.current
     let vesselForEntry=selectedVessel
     if(vesselForEntry.id===vesselForEntry.vesselCode&&!vesselForEntry.createdBy){
       try{
@@ -419,7 +420,6 @@ export function WeighingEntryPage({
         speciesForEntry=resolved;setSpecies(initialized);setSpeciesId(resolved.id);speciesSelection.current=resolved
       }catch{setError('无法建立默认鱼名，请连接网络后重试。');return}
     }
-    const savedSlipVersion=slipEditVersion.current
     const recordedAtClient=now(),cleanExternalSlipNo=externalSlipNo.trim(),base=session
       ?{...session,externalSlipNo:cleanExternalSlipNo}
       :newWeighingSession({

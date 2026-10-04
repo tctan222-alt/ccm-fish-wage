@@ -1,4 +1,4 @@
-import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
+import { act,cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach,expect,it,vi } from 'vitest'
 import { DEFAULT_FISH_SPECIES,newWeighingSession,type WeighingEntry,type WeighingSession } from '../lib/weighing'
@@ -13,12 +13,13 @@ function mount(overrides:Partial<Parameters<typeof WeighingEntryPage>[0]>={}){
   const store=createMemoryWeighingStore()
   let sequence=0
   const remoteSync=vi.fn(async():Promise<{session?:WeighingSession;entry?:WeighingEntry}>=>{throw new Error('Offline fixture')})
-  render(<MemoryRouter><WeighingEntryPage vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES}
-    vesselInitializer={async()=>vessels} speciesInitializer={async()=>DEFAULT_FISH_SPECIES}
-    openSessionLoader={async()=>null} closedSessionLoader={async()=>null} bundleLoader={async()=>{throw new Error('Offline fixture')}}
-    offlineStore={store} remoteSync={remoteSync} today={()=>'30/07/2026'} now={()=>'2026-07-30T04:00:00Z'}
-    idFactory={kind=>`${kind}-${++sequence}`} {...overrides}/></MemoryRouter>)
-  return {store,remoteSync}
+  const props:Parameters<typeof WeighingEntryPage>[0]={vesselLoader:async()=>vessels,speciesLoader:async()=>DEFAULT_FISH_SPECIES,
+    vesselInitializer:async()=>vessels,speciesInitializer:async()=>DEFAULT_FISH_SPECIES,
+    openSessionLoader:async()=>null,closedSessionLoader:async()=>null,bundleLoader:async()=>{throw new Error('Offline fixture')},
+    offlineStore:store,remoteSync,today:()=> '30/07/2026',now:()=> '2026-07-30T04:00:00Z',
+    idFactory:kind=>`${kind}-${++sequence}`,...overrides}
+  const view=render(<MemoryRouter><WeighingEntryPage {...props}/></MemoryRouter>)
+  return {store,remoteSync,props,...view}
 }
 async function ready(){await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())}
 function typeWeight(value='80.5'){fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value}})}
@@ -114,6 +115,28 @@ it('does not overwrite a typed paper correction when a delayed existing session 
   resolve({session:existing,entries:[]});await ready()
   expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('CORRECTION')
   fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+  expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+})
+
+it('protects a paper edit made during asynchronous species initialization instead of marking it committed',async()=>{
+  let resolve!:(value:typeof DEFAULT_FISH_SPECIES)=>void
+  const initialization=new Promise<typeof DEFAULT_FISH_SPECIES>(done=>{resolve=done})
+  const speciesInitializer=vi.fn(()=>initialization)
+  const {store,props,rerender}=mount({speciesLoader:async()=>[],speciesInitializer})
+  await ready()
+  fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'COMMIT-A'}});typeWeight()
+  fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+  await waitFor(()=>expect(speciesInitializer).toHaveBeenCalledTimes(2))
+  fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'UNSAVED-B'}})
+  await act(async()=>resolve(DEFAULT_FISH_SPECIES));await screen.findByText('已保存')
+  const saved=await store.getSession((await store.getPending())[0].sessionId)
+  expect(saved?.externalSlipNo).toBe('COMMIT-A')
+  expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('UNSAVED-B')
+  // Recheck the same local context as a changed loader/reference would do.
+  rerender(<MemoryRouter><WeighingEntryPage {...props} bundleLoader={async()=>({session:saved!,entries:await store.getEntries(saved!.id)})}/></MemoryRouter>)
+  await ready()
+  expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('UNSAVED-B')
+  fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
   expect(screen.getByRole('alertdialog')).toBeInTheDocument()
 })
 

@@ -360,7 +360,7 @@ export async function updateWeighingSessionDetails(input:{
     if(current.status==='processed')throw new Error('已结单的现场单必须先建立调整单，不能直接修改。')
     if(current.status==='voided')throw new Error('已作废的现场单不能修改。')
     if(!canModifyWeighing(current))throw new Error('已超过首次完成称重后的 7 天修改期。')
-    if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('单号前缀必须与产品类型一致。')
+    if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('系统现场单号前缀必须与产品类型一致。')
     if(!vesselSnapshot.exists()||vesselSnapshot.data().active!==true)throw new Error('船号已停用或不存在。')
     const weighingDate=businessDateFromLegacy(input.weighingDate),monthKey=monthKeyFromBusinessDate(weighingDate)
     const next={...current,sessionCode:code,weighingDate,monthKey,dateSortKey:sortKeyFromBusinessDate(weighingDate),monthSortKey:monthSortKeyFromMonthKey(monthKey),
