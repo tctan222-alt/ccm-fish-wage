@@ -72,6 +72,13 @@ are blocked until Save/explicit discard. Vessel retry only retries vessels; sour
 retry only follows read failure and offers recovery after successful read. Validation,
 save, vessel, source, clipboard and local-storage errors are separate.
 
+Dirty tracking includes the complete line snapshot, including weight/basket-only
+corrections. Explicit discard restores all baseline lines/prices/paper and exits
+finalized Edit mode. Once tracked, a local draft stays synchronized even when input
+returns to baseline. An unreadable local record blocks editing/autosave until explicit
+retry/discard; it is not overwritten. Save success removes only the exact submitted
+stored snapshot, preserving newer local input written by another page during the save.
+
 ## Complete weighing
 
 Unconfirmed kg, any remark (including a hidden total-weight meal remark), unfinished
@@ -131,7 +138,7 @@ fixed size guard. This Windows host's Node 26 experimental Web Storage conflicts
 with jsdom; local browser tests use process-only NODE_OPTIONS=--no-experimental-webstorage.
 CI browser uses Node 20 and Rules uses Node 22; no permanent machine setting changed.
 
-Local validation: 994/994 app tests, 74/74 Rules tests; typecheck, lint and build
+Local validation: 1001/1001 app tests, 74/74 Rules tests; typecheck, lint and build
 passed. Compiled Rules: 253,695 / 253,952 bytes. Local browser fixtures exercised
 reload/recovery/finalization and vessel search at 320/375/390/430px without whole-page
 horizontal overflow or console errors. These are not production or physical iPhone checks.

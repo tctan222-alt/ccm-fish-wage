@@ -29,4 +29,14 @@ describe('stable local settlement draft recovery',()=>{
     expect(()=>store.save(draft)).toThrow('本机草稿')
     expect(()=>store.remove('fish_head','source-A')).toThrow('本机草稿')
   })
+  it('clears only an unchanged submitted generation, preserving a newer or previously absent draft',()=>{
+    const store=createSettlementLocalDraftStore('owner');store.save(draft)
+    const newer={...draft,receiptNo:'newer',updatedAt:'2026-10-04T02:00:00Z'}
+    store.save(newer)
+    expect(store.removeIfUnchanged('fish_head','source-A',draft)).toBe(false)
+    expect(store.removeIfUnchanged('fish_head','source-A',null)).toBe(false)
+    expect(store.load('fish_head','source-A')).toEqual(newer)
+    expect(store.removeIfUnchanged('fish_head','source-A',newer)).toBe(true)
+    expect(store.load('fish_head','source-A')).toBeNull()
+  })
 })

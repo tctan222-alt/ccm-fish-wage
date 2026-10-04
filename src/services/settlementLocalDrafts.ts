@@ -21,6 +21,7 @@ export interface SettlementLocalDraftStore {
   load:(product:WeighingProductType,source:string)=>SettlementLocalDraft|null
   save:(draft:SettlementLocalDraft)=>void
   remove:(product:WeighingProductType,source:string)=>void
+  removeIfUnchanged:(product:WeighingProductType,source:string,submitted:SettlementLocalDraft|null)=>boolean
 }
 export function localDraftMatches(draft:SettlementDraftIdentity,current:SettlementDraftIdentity):boolean {
   return (['productType','sourceSessionId','sourceSessionRevision','settlementRevision','businessDate','vesselId','vesselCodeSnapshot'] as const).every(key=>draft[key]===current[key])
@@ -54,5 +55,12 @@ export function createSettlementLocalDraftStore(userId:string,storage?:Pick<Stor
     },
     save(draft){try{(storage??window.localStorage).setItem(key(draft.productType,draft.sourceSessionId),JSON.stringify(draft))}catch{throw new Error('本机草稿保存失败，请勿关闭页面；请检查浏览器储存空间或权限。')}},
     remove(product,source){try{(storage??window.localStorage).removeItem(key(product,source))}catch{throw new Error('本机草稿无法清除，请检查浏览器储存权限。')}},
+    removeIfUnchanged(product,source,submitted){
+      try{
+        const target=storage??window.localStorage
+        if(target.getItem(key(product,source))!==(submitted===null?null:JSON.stringify(submitted)))return false
+        target.removeItem(key(product,source));return true
+      }catch{throw new Error('本机草稿无法清除，请检查浏览器储存权限。')}
+    },
   }
 }
