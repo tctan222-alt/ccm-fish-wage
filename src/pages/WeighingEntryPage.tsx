@@ -5,7 +5,7 @@ import { auth } from '../firebase'
 import { DEFAULT_VESSELS,type Vessel } from '../lib/purchasing'
 import { DecimalKeypad } from '../components/DecimalKeypad'
 import { FishHeadLiveSummary } from '../components/FishHeadLiveSummary'
-import { malaysiaBusinessDate } from '../lib/businessDate'
+import { businessDateFromLegacy,malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
   DEFAULT_FISH_SPECIES,
@@ -106,6 +106,8 @@ export function WeighingEntryPage({
   const [species,setSpecies]=useState<FishSpeciesRecord[]>([])
   const [vesselId,setVesselId]=useState(sessionId?'':DEFAULT_VESSELS[0].id)
   const [date,setDate]=useState(today())
+  const [dateInput,setDateInput]=useState(date)
+  const [dateError,setDateError]=useState('')
   const [externalSlipNo,setExternalSlipNo]=useState('')
   const [session,setSession]=useState<WeighingSession|null>(null)
   const [entries,setEntries]=useState<WeighingEntry[]>([])
@@ -130,7 +132,7 @@ export function WeighingEntryPage({
   const [checkedContext,setCheckedContext]=useState('')
   const [referencesReady,setReferencesReady]=useState(false)
   const [pendingContext,setPendingContext]=useState<WeighingContext|null>(null)
-  useUnsavedChanges(!!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
+  useUnsavedChanges(dateInput!==date || !!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
   const vesselSelection=useRef<Vessel>(DEFAULT_VESSELS[0])
   const vesselSelectedByUser=useRef(false)
   const speciesSelection=useRef<FishSpeciesRecord>(DEFAULT_FISH_SPECIES[0])
@@ -158,8 +160,9 @@ export function WeighingEntryPage({
   let contextKey=''
   try{contextKey=sessionId?`session:${sessionId}`:weighingDraftKey(productType,date,vesselId)}catch{/* A partially typed date cannot be saved. */}
   const contextPending=contextLoading||checkedContext!==contextKey||Boolean(sessionId&&session?.id!==sessionId)
-  const savePending=!contextKey||contextPending||!referencesReady
+  const savePending=dateInput!==date||!contextKey||contextPending||!referencesReady
 
+  useEffect(()=>{setDateInput(date);setDateError('')},[date])
   useEffect(()=>{if(fixedProductType)setProductType(fixedProductType)},[fixedProductType])
   useEffect(()=>{if(!busy&&refocusAfterSave.current){refocusAfterSave.current=false;weightRef.current?.focus()}},[busy])
 
@@ -343,6 +346,16 @@ export function WeighingEntryPage({
     requestContext({vesselId,date,productType:next})
   }
 
+  function commitDate(){
+    if(dateInput===date)return
+    let nextDate:string
+    try{nextDate=businessDateFromLegacy(dateInput)}
+    catch{setDateError('日期必须为有效的 DD/MM/YYYY 格式。');return}
+    // The field is a text editor; only a finished, valid date may change session identity.
+    setDateInput(date);setDateError('')
+    requestContext({vesselId,date:nextDate,productType})
+  }
+
   function requestContext(next:WeighingContext){
     if(next.vesselId===vesselId&&next.date===date&&next.productType===productType)return
     try{if(weighingDraftKey(next.productType,next.date,next.vesselId)===contextKey)return}catch{/* Invalid/partial dates still need draft protection. */}
@@ -364,7 +377,7 @@ export function WeighingEntryPage({
     setPendingContext(null);setContextLoading(true);setCheckedContext('')
     setSession(null);setEntries([]);setPending(0);setExternalSlipNo('');setWeight('');setRemark('');setError('')
     if(next.productType!==productType)setEntryMode('individual')
-    setVesselId(nextVesselId);setDate(next.date);setProductType(next.productType)
+    setVesselId(nextVesselId);setDate(next.date);setDateInput(next.date);setDateError('');setProductType(next.productType)
     queueMicrotask(()=>weightRef.current?.focus())
   }
 
@@ -531,7 +544,11 @@ export function WeighingEntryPage({
     <section className="weighing-setup">
         <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} disabled={Boolean(sessionId)||busy} onChange={event=>void selectVessel(event.target.value)}>
         <option value="">请选择船号</option>{vesselId&&!selectedVessel&&<option value={vesselId} disabled>{vesselSelection.current.vesselCode}（不可用）</option>}{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-        <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(sessionId)||busy} onChange={event=>requestContext({vesselId,date:event.target.value,productType})}/><small>{formatMalaysiaDate(date)}</small></label>
+        <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={dateInput} disabled={Boolean(sessionId)||busy}
+          aria-invalid={Boolean(dateError)} aria-describedby={dateError?'weighing-date-error':undefined}
+          onChange={event=>{setDateInput(event.target.value);setDateError('')}} onBlur={commitDate}
+          onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();commitDate()}}}/><small>{formatMalaysiaDate(date)}</small>
+          {dateError&&<small id="weighing-date-error" className="error" role="alert">{dateError}</small>}</label>
       <label className="slip-field">{productType==='fish_head'?'鱼头纸单号（可之后补填）':'鱼仔纸单号（可之后补填）'}
         <input aria-label={productType==='fish_head'?'鱼头纸单号':'鱼仔纸单号'} value={externalSlipNo} maxLength={100} onChange={event=>{vesselSelectedByUser.current=true;slipEdited.current=true;slipEditVersion.current+=1;setExternalSlipNo(event.target.value)}}/></label>
     </section>
@@ -565,7 +582,7 @@ export function WeighingEntryPage({
       </form>
       <DecimalKeypad value={weight} onChange={changeWeight} onConfirm={()=>void confirmEntry()} disabled={busy||locked}
         confirmDisabled={savePending||!store||!selectedVessel?.active}/>
-      {savePending&&!locked&&<p className="notice" role="status">正在核对现场单…可先输入重量，核对完成后再确认。</p>}
+      {savePending&&!locked&&<p className="notice" role="status">{dateInput!==date?'请完成日期输入，离开日期栏或按 Enter 确认；已输入的重量仍保留。':'正在核对现场单…可先输入重量，核对完成后再确认。'}</p>}
       {!savePending&&!selectedVessel&&<p className="notice">请选择可用船号；已输入的重量仍保留。</p>}
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
         <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>{vesselSelectedByUser.current=true;setRemark(event.target.value)}}/></label>}

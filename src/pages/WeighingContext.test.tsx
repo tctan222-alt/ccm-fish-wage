@@ -1,5 +1,6 @@
 import { act,cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import userEvent from '@testing-library/user-event'
 import { afterEach,expect,it,vi } from 'vitest'
 import { DEFAULT_FISH_SPECIES,newWeighingSession,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore } from '../services/weighingOffline'
@@ -23,6 +24,59 @@ function mount(overrides:Partial<Parameters<typeof WeighingEntryPage>[0]>={}){
 }
 async function ready(){await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())}
 function typeWeight(value='80.5'){fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value}})}
+
+it('lets an operator type a complete date without switching or moving focus until blur',async()=>{
+  const user=userEvent.setup(),openSessionLoader=vi.fn(async()=>null)
+  mount({openSessionLoader});await ready()
+  const input=screen.getByLabelText('日期'),reads=openSessionLoader.mock.calls.length
+  await user.clear(input)
+  await user.type(input,'31/07/2026')
+  expect(input).toHaveValue('31/07/2026')
+  expect(input).toHaveFocus()
+  expect(openSessionLoader).toHaveBeenCalledTimes(reads)
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('')
+  expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
+  await user.tab();await ready()
+  expect(openSessionLoader).toHaveBeenLastCalledWith('v978','31/07/2026','fish_head')
+})
+
+it('waits for the complete typed date before asking to discard a basket and restores the date on cancel',async()=>{
+  const user=userEvent.setup(),openSessionLoader=vi.fn(async()=>null)
+  mount({openSessionLoader});await ready();typeWeight()
+  fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'PAPER-DRAFT'}})
+  const input=screen.getByLabelText('日期'),reads=openSessionLoader.mock.calls.length
+  await user.clear(input);await user.type(input,'31/07/2026')
+  expect(input).toHaveFocus()
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(openSessionLoader).toHaveBeenCalledTimes(reads)
+  await user.tab()
+  await user.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'取消，保留资料'}))
+  expect(input).toHaveValue('30/07/2026')
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
+  expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('PAPER-DRAFT')
+  expect(openSessionLoader).toHaveBeenCalledTimes(reads)
+  fireEvent.change(input,{target:{value:'31/07/2026'}});fireEvent.keyDown(input,{key:'Enter'})
+  fireEvent.click(screen.getByRole('button',{name:'继续切换'}));await ready()
+  expect(input).toHaveValue('31/07/2026')
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('')
+  expect(openSessionLoader).toHaveBeenLastCalledWith('v978','31/07/2026','fish_head')
+})
+
+it('rejects an impossible completed date without querying or discarding the original draft',async()=>{
+  const openSessionLoader=vi.fn(async()=>null)
+  mount({openSessionLoader});await ready();typeWeight()
+  const input=screen.getByLabelText('日期'),reads=openSessionLoader.mock.calls.length
+  fireEvent.change(input,{target:{value:'31/02/2026'}});fireEvent.blur(input)
+  expect(input).toHaveAttribute('aria-invalid','true')
+  expect(screen.getByRole('alert')).toHaveTextContent('日期必须为有效的 DD/MM/YYYY 格式。')
+  expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
+  expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()
+  expect(openSessionLoader).toHaveBeenCalledTimes(reads)
+  fireEvent.change(input,{target:{value:'30/07/2026'}});fireEvent.blur(input)
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled()
+})
 
 it('keeps the unconfirmed kg when correcting the fish species',async()=>{
   mount();await ready();typeWeight()
@@ -53,7 +107,7 @@ it.each(['vessel','date','product'] as const)('clears only the old unconfirmed d
   const savedEntries=await store.getEntries(sessionId),savedSession=await store.getSession(sessionId)
   typeWeight();fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'NOT-SAVED'}})
   if(kind==='vessel')fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
-  if(kind==='date')fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+  if(kind==='date'){fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}});fireEvent.blur(screen.getByLabelText('日期'))}
   if(kind==='product')fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
   fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'继续切换'}))
   await ready()
@@ -73,6 +127,7 @@ it('retains kg when adjusting fish-meal quality and protects a total remark even
   typeWeight('');fireEvent.click(screen.getByRole('button',{name:'总重量'}))
   fireEvent.change(screen.getByLabelText('备注'),{target:{value:'48包'}})
   fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+  fireEvent.blur(screen.getByLabelText('日期'))
   fireEvent.keyDown(screen.getByRole('alertdialog'),{key:'Escape'})
   expect(screen.getByLabelText('日期')).toHaveValue('30/07/2026')
   expect(screen.getByLabelText('备注')).toHaveValue('48包')
@@ -89,7 +144,7 @@ it.each(['vessel','date','product'] as const)('protects a hidden fish-meal remar
   expect(screen.queryByLabelText('备注')).not.toBeInTheDocument()
   const request=()=>{
     if(kind==='vessel')fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
-    if(kind==='date')fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+    if(kind==='date'){fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}});fireEvent.blur(screen.getByLabelText('日期'))}
     if(kind==='product')fireEvent.click(screen.getByRole('button',{name:'鱼头'}))
   }
   request();fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'取消，保留资料'}))
@@ -136,6 +191,7 @@ it('does not overwrite a typed paper correction when a delayed existing session 
   resolve({session:existing,entries:[]});await ready()
   expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('CORRECTION')
   fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+  fireEvent.blur(screen.getByLabelText('日期'))
   expect(screen.getByRole('alertdialog')).toBeInTheDocument()
 })
 
@@ -165,6 +221,7 @@ it('ignores a same-day formatting change and switches a committed paper number w
   mount();await ready()
   fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:' PAPER-1 '}})
   typeWeight();fireEvent.change(screen.getByLabelText('日期'),{target:{value:'2026-07-30'}})
+  fireEvent.blur(screen.getByLabelText('日期'))
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
   fireEvent.click(screen.getByRole('button',{name:'确认加入'}));await screen.findByText('已保存')
