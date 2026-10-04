@@ -1,5 +1,5 @@
 import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
-import { MemoryRouter,Route,Routes } from 'react-router-dom'
+import { MemoryRouter,Route,Routes,useNavigate } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import type { PurchaseSettlementSource } from '../services/purchaseSettlements'
@@ -287,6 +287,13 @@ describe('purchase settlement MVP pages',()=>{
     await act(async()=>finish())
     await screen.findByText('结单草稿已保存（第 1 版）。')
     expect(store.load('fish_head',session.id)).toEqual(newer)
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'OLDER-PAGE-EDIT'}})
+    expect(store.load('fish_head',session.id)).toEqual(newer)
+    fireEvent.click(screen.getByRole('button',{name:'重试本机草稿'}))
+    await screen.findByRole('heading',{name:'发现未完成草稿'})
+    expect(screen.getByText(/本机纸单号：NEWER-PAPER/)).toBeInTheDocument()
+    expect(screen.getByRole('button',{name:'恢复草稿'})).toBeDisabled()
   })
 
   it('blocks editing when a stored draft is unreadable and preserves it until explicit discard',async()=>{
@@ -314,6 +321,28 @@ describe('purchase settlement MVP pages',()=>{
     fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
     expect(screen.getByLabelText('金线单价')).toHaveValue('2.10')
     expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('')
+  })
+
+  it('ignores an older pending save after browser Back loads another source in the same route',async()=>{
+    const secondSession={...session,id:'session-833',sessionCode:'FH-833',vesselId:'v833',vesselCodeSnapshot:'833'}
+    const secondEntry={...headEntry('lai','来戈','lai_ge',90000),sessionId:secondSession.id,vesselId:'v833',vesselCodeSnapshot:'833'}
+    const secondDraft={...makeSettlementDraft({productType:'fish_head',businessDate:'03/08/2026',dateSortKey:20260803,monthKey:'08/2026',monthSortKey:202608,vesselId:'v833',vesselCodeSnapshot:'833',receiptNo:'B-PAPER',lines:buildPurchaseSettlementLines([asSettlementSourceEntry(secondEntry)],'fish_head','833'),sourceEntryIds:['lai'],revision:7}),draftId:'stable-B',sourceSessionId:secondSession.id,sourceSessionRevision:1}
+    let finish!:()=>void
+    const saver=vi.fn().mockImplementationOnce((draft:ReturnType<typeof makeSettlementDraft>)=>new Promise(resolve=>{finish=()=>resolve({...draft,draftId:'stable-A',revision:1})})).mockImplementation(async draft=>({...draft,revision:8}))
+    function HistoryBack(){const navigate=useNavigate();return <button type="button" onClick={()=>navigate(-1)}>返回上一张</button>}
+    render(<MemoryRouter initialEntries={['/fish-head-settlement/session-833','/fish-head-settlement/session-978']}><HistoryBack/><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel,otherVessel]} bundleLoader={async id=>id===session.id?{session,entries:[headEntry('jin')]}:{session:secondSession,entries:[secondEntry]}} draftLoader={async source=>source.session.id===session.id?null:secondDraft} draftSaver={saver}/>}/></Routes></MemoryRouter>)
+    await screen.findByRole('table');fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await waitFor(()=>expect(saver).toHaveBeenCalledOnce())
+    fireEvent.click(screen.getByRole('button',{name:'返回上一张'}))
+    await screen.findByText('来戈')
+    expect(screen.getByLabelText('来戈单价')).not.toBeDisabled()
+    fireEvent.change(screen.getByLabelText('来戈单价'),{target:{value:'1.55'}})
+    await act(async()=>finish())
+    expect(screen.getByLabelText('来戈单价')).toHaveValue('1.55')
+    expect(screen.queryByText('金线')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await screen.findByText('结单草稿已保存（第 8 版）。')
+    expect(saver).toHaveBeenLastCalledWith(expect.objectContaining({sourceSessionId:secondSession.id,draftId:'stable-B',revision:7,receiptNo:'B-PAPER',totalAmountCents:13950}))
   })
 
   it('reads legacy dates and source vessel snapshots even when the master vessel is absent',async()=>{

@@ -78,6 +78,9 @@ finalized Edit mode. Once tracked, a local draft stays synchronized even when in
 returns to baseline. An unreadable local record blocks editing/autosave until explicit
 retry/discard; it is not overwritten. Save success removes only the exact submitted
 stored snapshot, preserving newer local input written by another page during the save.
+When that comparison finds a newer draft, editing/autosave blocks until explicit review
+or discard. Context generations suppress late save UI/ref updates after browser Back
+changes source; only the submitted source's unchanged cache can be cleared.
 
 ## Complete weighing
 
@@ -138,7 +141,7 @@ fixed size guard. This Windows host's Node 26 experimental Web Storage conflicts
 with jsdom; local browser tests use process-only NODE_OPTIONS=--no-experimental-webstorage.
 CI browser uses Node 20 and Rules uses Node 22; no permanent machine setting changed.
 
-Local validation: 1001/1001 app tests, 74/74 Rules tests; typecheck, lint and build
+Local validation: 1002/1002 app tests, 74/74 Rules tests; typecheck, lint and build
 passed. Compiled Rules: 253,695 / 253,952 bytes. Local browser fixtures exercised
 reload/recovery/finalization and vessel search at 320/375/390/430px without whole-page
 horizontal overflow or console errors. These are not production or physical iPhone checks.

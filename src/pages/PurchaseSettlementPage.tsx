@@ -63,6 +63,7 @@ export function PurchaseSettlementPage({
   const [loadedKey,setLoadedKey]=useState(''),[draftRevision,setDraftRevision]=useState(0)
   const [draftId,setDraftId]=useState<string|undefined>()
   const saveLock=useRef(false)
+  const contextGeneration=useRef(0)
   const copyRequest=useRef(0)
   const [copyError,setCopyError]=useState(''),[manualCopy,setManualCopy]=useState<string|null>(null)
   const [savedFields,setSavedFields]=useState('')
@@ -103,6 +104,7 @@ export function PurchaseSettlementPage({
   useEffect(()=>{
     if(!sessionId&&!requestedVesselId){setLoading(false);return}
     let cancelled=false
+    contextGeneration.current+=1;saveLock.current=false;setBusy(false)
     copyRequest.current+=1;setCopyError('');setManualCopy(null)
     setLoading(true);setLoadFailed(false);setReadError('');setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setSaveError('');setMessage('');setRecovery(null);setEditing(false)
     localDraftTracked.current=false;setLocalDraftBlocked(false)
@@ -129,7 +131,7 @@ export function PurchaseSettlementPage({
       if(source){try{const found=store.load(productType,source.session.id);localDraftTracked.current=Boolean(found);setRecovery(found);setLocalError('')}catch(problem){setLocalDraftBlocked(true);setLocalError(problem instanceof Error?problem.message:'无法读取本机草稿。')}}
       setLoadedKey(contextKey)
     })().catch(problem=>{if(!cancelled){setLoadFailed(true);setReadError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{if(!cancelled)setLoading(false)})
-    return()=>{cancelled=true}
+    return()=>{cancelled=true;contextGeneration.current+=1}
   },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,sessionId,contextKey,loadAttempt,store])
 
   const selectedVessel=vessels.find(item=>item.id===vesselId)
@@ -152,19 +154,25 @@ export function PurchaseSettlementPage({
       submittedLocalDraft=cached&&identity&&localDraftMatches(cached,identity)&&cached.receiptNo===receiptNo
         &&JSON.stringify(cached.priceInputs)===JSON.stringify(priceInputs)&&JSON.stringify(cached.lines)===JSON.stringify(lines)?cached:null
     }catch(problem){setLocalDraftBlocked(true);setLocalError(problem instanceof Error?problem.message:'无法读取本机草稿。');return}
+    const submittedGeneration=contextGeneration.current
     try{
       saveLock.current=true;setBusy(true);setSaveError('');setMessage('')
       const monthKey=monthKeyFromBusinessDate(businessDate)
       const saved=await (finalize?finalizer:draftSaver)({...makeSettlementDraft({productType,businessDate,dateSortKey:sortKeyFromBusinessDate(businessDate),monthKey,monthSortKey:monthSortKeyFromMonthKey(monthKey),
         vesselId:sourceSession.vesselId,vesselCodeSnapshot:sourceSession.vesselCodeSnapshot,receiptNo:receiptNo.trim(),lines:validatedLines,sourceEntryIds:entries.filter(item=>!item.voided&&item.productType===productType).map(item=>item.id),revision:draftRevision}),
         status:lifecycle.status,...(draftId?{draftId}:{}),sourceSessionId:sourceSession.id,sourceSessionRevision:sourceSession.revision})
+      if(contextGeneration.current!==submittedGeneration){
+        // The confirmed write belongs to the abandoned source, not the currently displayed invoice.
+        try{store.removeIfUnchanged(productType,sourceSession.id,submittedLocalDraft)}catch{/* Preserve its cache for review when that source is reopened. */}
+        return
+      }
       setDraftRevision(saved.revision);setDraftId(saved.draftId)
       localDraftTracked.current=false
       setLines(validatedLines);setSavedFields(JSON.stringify({receiptNo,priceInputs,lines:validatedLines}))
       setSavedDraft(saved);setEditing(false)
-      try{const cleared=store.removeIfUnchanged(productType,sourceSession.id,submittedLocalDraft);setRecovery(null);setLocalError(cleared?'':'服务器已保存；另一个页面的较新本机草稿已保留，请重新打开核对。')}catch(problem){setLocalError(problem instanceof Error?problem.message:'无法清除本机草稿。')}
+      try{const cleared=store.removeIfUnchanged(productType,sourceSession.id,submittedLocalDraft);setRecovery(null);setLocalDraftBlocked(!cleared);setLocalError(cleared?'':'服务器已保存；另一个页面的较新本机草稿已保留，请重试本机草稿后核对。')}catch(problem){setLocalDraftBlocked(true);setLocalError(problem instanceof Error?problem.message:'无法清除本机草稿。')}
       setMessage(`${finalize?'已完成结单':saved.status==='settlement_finalized'?'结单修改已保存':'结单草稿已保存'}（第 ${saved.revision} 版）。`)
-    }catch(problem){setSaveError(problem instanceof Error?problem.message:'无法保存结单，本机草稿已保留。')}finally{setBusy(false);saveLock.current=false}
+    }catch(problem){if(contextGeneration.current===submittedGeneration)setSaveError(problem instanceof Error?problem.message:'无法保存结单，本机草稿已保留。')}finally{if(contextGeneration.current===submittedGeneration){setBusy(false);saveLock.current=false}}
   }
   function restoreDraft(){
     if(!recovery||recoveryStale||!editable)return
