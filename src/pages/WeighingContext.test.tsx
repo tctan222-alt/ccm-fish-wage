@@ -78,6 +78,30 @@ it('rejects an impossible completed date without querying or discarding the orig
   expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled()
 })
 
+it.each(['vessel','product'] as const)('protects an unfinished date edit before a %s change',async(kind)=>{
+  const openSessionLoader=vi.fn(async()=>null)
+  mount({openSessionLoader});await ready()
+  const input=screen.getByLabelText('日期'),reads=openSessionLoader.mock.calls.length
+  fireEvent.change(input,{target:{value:'31/07/'}});fireEvent.blur(input)
+  const changeContext=()=>{
+    if(kind==='vessel')fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
+    else fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
+  }
+  changeContext()
+  fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'取消，保留资料'}))
+  expect(input).toHaveValue('31/07/')
+  expect(input).toHaveAttribute('aria-invalid','true')
+  expect(screen.getByLabelText('船号')).toHaveValue('v978')
+  expect(screen.getByRole('button',{name:'鱼头'})).toHaveAttribute('aria-pressed','true')
+  expect(openSessionLoader).toHaveBeenCalledTimes(reads)
+  changeContext();fireEvent.click(screen.getByRole('button',{name:'继续切换'}));await ready()
+  expect(input).toHaveValue('30/07/2026')
+  expect(input).toHaveAttribute('aria-invalid','false')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  if(kind==='vessel')expect(screen.getByLabelText('船号')).toHaveValue('v833')
+  else expect(screen.getByRole('button',{name:'鱼仔'})).toHaveAttribute('aria-pressed','true')
+})
+
 it('keeps the unconfirmed kg when correcting the fish species',async()=>{
   mount();await ready();typeWeight()
   fireEvent.click(within(screen.getByRole('group',{name:'鱼名'})).getByRole('button',{name:'来戈'}))

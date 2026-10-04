@@ -353,13 +353,14 @@ export function WeighingEntryPage({
     catch{setDateError('日期必须为有效的 DD/MM/YYYY 格式。');return}
     // The field is a text editor; only a finished, valid date may change session identity.
     setDateInput(date);setDateError('')
-    requestContext({vesselId,date:nextDate,productType})
+    requestContext({vesselId,date:nextDate,productType},'date')
   }
 
-  function requestContext(next:WeighingContext){
+  function requestContext(next:WeighingContext,source:'date'|'selection'='selection'){
     if(next.vesselId===vesselId&&next.date===date&&next.productType===productType)return
     try{if(weighingDraftKey(next.productType,next.date,next.vesselId)===contextKey)return}catch{/* Invalid/partial dates still need draft protection. */}
-    if(weight || remark || externalSlipNo.trim()!==(session?.externalSlipNo??'').trim()){
+    // A valid date submission carries its own edit; other selections would discard it.
+    if((source!=='date'&&dateInput!==date) || weight || remark || externalSlipNo.trim()!==(session?.externalSlipNo??'').trim()){
       setPendingContext({...next,vessel:vessels.find(item=>item.id===next.vesselId)??(next.vesselId===vesselId?vesselSelection.current:undefined)})
     }else applyContext(next)
   }
