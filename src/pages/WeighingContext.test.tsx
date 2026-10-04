@@ -81,6 +81,27 @@ it('retains kg when adjusting fish-meal quality and protects a total remark even
   expect(screen.getByLabelText('备注')).toHaveValue('')
 })
 
+it.each(['vessel','date','product'] as const)('protects a hidden fish-meal remark after switching to individual mode before a %s change',async(kind)=>{
+  mount();await ready();fireEvent.click(screen.getByRole('button',{name:'鱼仔'}));await ready()
+  fireEvent.click(screen.getByRole('button',{name:'总重量'}))
+  fireEvent.change(screen.getByLabelText('备注'),{target:{value:'未确认的48包'}})
+  fireEvent.click(screen.getByRole('button',{name:'逐篮'}))
+  expect(screen.queryByLabelText('备注')).not.toBeInTheDocument()
+  const request=()=>{
+    if(kind==='vessel')fireEvent.change(screen.getByLabelText('船号'),{target:{value:'v833'}})
+    if(kind==='date')fireEvent.change(screen.getByLabelText('日期'),{target:{value:'31/07/2026'}})
+    if(kind==='product')fireEvent.click(screen.getByRole('button',{name:'鱼头'}))
+  }
+  request();fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button',{name:'取消，保留资料'}))
+  fireEvent.click(screen.getByRole('button',{name:'总重量'}))
+  expect(screen.getByLabelText('备注')).toHaveValue('未确认的48包')
+  fireEvent.click(screen.getByRole('button',{name:'逐篮'}));request()
+  fireEvent.click(screen.getByRole('button',{name:'继续切换'}));await ready()
+  if(kind==='product'){fireEvent.click(screen.getByRole('button',{name:'鱼仔'}));await ready()}
+  fireEvent.click(screen.getByRole('button',{name:'总重量'}))
+  expect(screen.getByLabelText('备注')).toHaveValue('')
+})
+
 it('retains a paper slip typed while initial reference and session reads are pending',async()=>{
   let resolveVessels!:(value:typeof vessels)=>void
   const vesselLoader=()=>new Promise<typeof vessels>(resolve=>{resolveVessels=resolve})
