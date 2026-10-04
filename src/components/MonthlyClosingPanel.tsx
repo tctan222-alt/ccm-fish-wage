@@ -42,13 +42,15 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
   const [paymentDate,setPaymentDate]=useState(()=>malaysiaDateKey())
   const [reference,setReference]=useState('')
   const [note,setNote]=useState('')
+  const [paymentBaseline,setPaymentBaseline]=useState('')
   const [voidPayment,setVoidPayment]=useState<WagePaymentRecord|null>(null)
   const [voidReason,setVoidReason]=useState('')
   const [showReopen,setShowReopen]=useState(false)
   const [reopenReason,setReopenReason]=useState('')
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
-  useUnsavedChanges(!!paymentStatement || (!!voidPayment && !!voidReason) || (showReopen && !!reopenReason))
+  const paymentDirty=!!paymentStatement&&JSON.stringify([paymentAmount,paymentMethod,paymentDate,reference,note])!==paymentBaseline
+  useUnsavedChanges(paymentDirty || (!!voidPayment && !!voidReason) || (showReopen && !!reopenReason))
 
   const liveTotals=useMemo(()=>{
     const active=liveEntries.filter(entry=>entry.deleted!==true)
@@ -70,12 +72,14 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
   }
 
   function openPayment(statement:WageStatementRecord,full:boolean){
+    const amount=full?money(statement.wageCents-statement.paidCents):'',date=malaysiaDateKey()
     setPaymentStatement(statement)
-    setPaymentAmount(full?money(statement.wageCents-statement.paidCents):'')
+    setPaymentAmount(amount)
     setPaymentMethod('cash')
-    setPaymentDate(malaysiaDateKey())
+    setPaymentDate(date)
     setReference('')
     setNote('')
+    setPaymentBaseline(JSON.stringify([amount,'cash',date,'','']))
   }
 
   async function submitPayment(event:FormEvent){
