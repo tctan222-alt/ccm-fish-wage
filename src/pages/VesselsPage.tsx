@@ -1,4 +1,5 @@
 import { useEffect,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
 import { duplicateVesselCode,type Vessel,type VesselInput } from '../lib/purchasing'
@@ -29,6 +30,7 @@ export function VesselsPage({loader=loadVessels,supplierLoader=loadActiveSupplie
 function VesselDialog({item,existing,suppliers,save,saved,close}:{item:Vessel|null;existing:Vessel[];suppliers:BusinessPartner[];save:(value:VesselInput)=>Promise<Vessel>;saved:(item:Vessel)=>void;close:()=>void}){
   const [value,setValue]=useState<VesselInput>(item?{vesselCode:item.vesselCode,displayName:item.displayName,defaultSupplierId:item.defaultSupplierId,defaultSupplierNameSnapshot:item.defaultSupplierNameSnapshot,order:item.order??0,notes:item.notes}:{vesselCode:'',displayName:'',defaultSupplierId:'',defaultSupplierNameSnapshot:'',order:0,notes:''})
   const [ack,setAck]=useState(false);const [error,setError]=useState('');const [busy,setBusy]=useState(false)
+  useUnsavedForm(value)
   async function submit(event:FormEvent){event.preventDefault();if(!ack&&duplicateVesselCode(value.vesselCode,existing,item?.id)){setError('A vessel with this code exists. Confirm these are different vessels.');return}
     setBusy(true);try{saved(await save(value))}catch(problem){setError(problem instanceof Error?problem.message:'Vessel was not saved.')}finally{setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>{item?'Edit':'Add'} Vessel</h2>

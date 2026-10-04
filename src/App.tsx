@@ -6,6 +6,8 @@ import { auth } from './firebase'
 import { LoginPage } from './pages/LoginPage'
 import { BackButton } from './components/BackButton'
 import { HomeNavigation } from './components/HomeNavigation'
+import { DirtyStateProvider } from './components/DirtyStateProvider'
+import { BusinessFormGuard } from './components/BusinessFormGuard'
 
 const FishHeadWagePage = lazy(() => import('./pages/FishHeadWagePage').then(module => ({ default: module.FishHeadWagePage })))
 const WorkersPage = lazy(() => import('./pages/WorkersPage').then(module => ({ default: module.WorkersPage })))
@@ -58,6 +60,7 @@ function AuthenticatedApp() {
   if (!user) return <LoginPage />
 
   return <BrowserRouter>
+    <DirtyStateProvider><div className="authenticated-layout">
     <SignOutButton />
     <BackButton />
     <HomeNavigation />
@@ -96,9 +99,9 @@ function AuthenticatedApp() {
         <Route path="/vessels" element={<VesselsPage />} />
         <Route path="/purchase-categories" element={<PurchaseCategoriesPage />} />
         <Route path="/vessel-trips" element={<VesselTripsPage />} />
-        <Route path="/vessel-trips/new" element={<VesselTripPage />} />
-        <Route path="/vessel-trips/:tripId" element={<VesselTripPage />} />
-        <Route path="/vessel-wage-templates" element={<VesselWageTemplatesPage />} />
+        <Route path="/vessel-trips/new" element={<BusinessFormGuard><VesselTripPage /></BusinessFormGuard>} />
+        <Route path="/vessel-trips/:tripId" element={<BusinessFormGuard><VesselTripPage /></BusinessFormGuard>} />
+        <Route path="/vessel-wage-templates" element={<BusinessFormGuard><VesselWageTemplatesPage /></BusinessFormGuard>} />
         <Route path="/weighing" element={<WeighingSessionsPage />} />
         <Route path="/weighing/new" element={<WeighingEntryPage />} />
         <Route path="/weighing/:sessionId" element={<WeighingEntryPage />} />
@@ -107,6 +110,7 @@ function AuthenticatedApp() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>
+    </div></DirtyStateProvider>
   </BrowserRouter>
 }
 

@@ -1,4 +1,5 @@
 import { useCallback,useEffect,useMemo,useRef,useState,type FormEvent } from 'react'
+import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import { Link,useParams } from 'react-router-dom'
 import { auth } from '../firebase'
 import { DEFAULT_VESSELS,type Vessel } from '../lib/purchasing'
@@ -126,6 +127,7 @@ export function WeighingEntryPage({
   const [contextLoading,setContextLoading]=useState(true)
   const [checkedContext,setCheckedContext]=useState('')
   const [referencesReady,setReferencesReady]=useState(false)
+  useUnsavedChanges(!!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
   const vesselSelection=useRef<Vessel>(DEFAULT_VESSELS[0])
   const vesselSelectedByUser=useRef(false)
   const speciesSelection=useRef<FishSpeciesRecord>(DEFAULT_FISH_SPECIES[0])
@@ -582,6 +584,7 @@ export function WeighingEntryPage({
 
 function CustomSpeciesDialog({close,save}:{close:()=>void;save:(value:{displayName:string;save:boolean})=>Promise<void>}){
   const [displayName,setDisplayName]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false)
+  useUnsavedChanges(!!displayName)
   async function submit(event:FormEvent){event.preventDefault();setBusy(true);setError('');try{await save({displayName,save:true})}catch(problem){setError(problem instanceof Error?problem.message:'无法保存其他鱼名。')}finally{setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>自定义鱼名</h2><form className="master-form" onSubmit={submit}>
     <label>鱼名<input aria-label="自定义鱼名" value={displayName} maxLength={80} onChange={event=>setDisplayName(event.target.value)}/></label>
@@ -633,6 +636,7 @@ function EntryDialog({entry,species,locked,close,save,voidEntry}:{entry:Weighing
   const [speciesId,setSpeciesId]=useState(entry.fishSpeciesId??'')
   const [quality,setQuality]=useState<FishMealQuality>(entry.fishMealQuality??'bucket')
   const [reason,setReason]=useState('')
+  useUnsavedForm({ weight, speciesId, quality, reason })
   const [error,setError]=useState('')
   const [busy,setBusy]=useState(false)
   const actionLock=useRef(false)

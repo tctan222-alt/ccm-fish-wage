@@ -3,6 +3,8 @@ import { MemoryRouter,Route,Routes,useLocation } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { applyEntryCreated,DEFAULT_FISH_SPECIES,newWeighingSession,type FishSpeciesRecord,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore,type PendingWeighingOperation } from '../services/weighingOffline'
+import { BackButton } from '../components/BackButton'
+import { DirtyStateProvider } from '../components/DirtyStateProvider'
 import { WeighingEntryPage } from './WeighingEntryPage'
 
 const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesselCode,order)=>(
@@ -12,8 +14,8 @@ const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesse
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 
 function Location(){return <output aria-label="route">{useLocation().pathname}</output>}
-function setup(sync=remoteSync(),store=createMemoryWeighingStore()){
-  const view=render(<MemoryRouter initialEntries={['/weighing/new']}><Location/><WeighingEntryPage
+function setup(sync=remoteSync(),store=createMemoryWeighingStore(),guard=false){
+  const page=<WeighingEntryPage
     vesselLoader={async()=>vessels}
     speciesLoader={async()=>DEFAULT_FISH_SPECIES}
     openSessionLoader={async()=>null}
@@ -24,7 +26,8 @@ function setup(sync=remoteSync(),store=createMemoryWeighingStore()){
     today={()=> '2026-07-30'}
     now={()=> '2026-07-30T12:00:00.000+08:00'}
     idFactory={kind=>kind==='session'?'session-v978-20260730':`${kind}-1`}
-  /></MemoryRouter>)
+  />
+  const view=render(<MemoryRouter initialEntries={['/weighing/new']}><Location/>{guard?<DirtyStateProvider><BackButton/>{page}</DirtyStateProvider>:page}</MemoryRouter>)
   return {store,sync,...view}
 }
 
@@ -89,6 +92,24 @@ describe('iPhone 现场称重单页',()=>{
     await screen.findByText('已保存')
     expect(await store.getSession('session-v978-20260730')).toMatchObject({externalSlipNo:''})
     expect((await store.getEntries('session-v978-20260730'))[0]).not.toHaveProperty('receiptNoSnapshot')
+  })
+
+  it('保存已去除首尾空格的鱼头单号后不会继续提示未保存',async()=>{
+    const {store}=setup(remoteSync(),createMemoryWeighingStore(),true)
+    const slip=await screen.findByLabelText('鱼头单号')
+    await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
+    fireEvent.change(slip,{target:{value:' FH-001 '}})
+    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'80'}})
+    let unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(true)
+    await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    expect(await store.getSession('session-v978-20260730')).toMatchObject({externalSlipNo:'FH-001'})
+    await waitFor(()=>{
+      unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+      expect(unload.defaultPrevented).toBe(false)
+    })
   })
 
   it('切换船号后鱼头单号仍可输入，且会在下一篮保存到该草稿单',async()=>{

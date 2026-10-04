@@ -2,6 +2,8 @@ import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library
 import { Link,MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { FishHeadWagePage } from './FishHeadWagePage'
+import { DirtyStateProvider } from '../components/DirtyStateProvider'
+import { BackButton } from '../components/BackButton'
 
 const workers=[
   {id:'w1',name:'Ah Mei',active:true,order:1,workerDepartment:'fish_head_cutting' as const},
@@ -21,6 +23,18 @@ const setup=(batchSaver=vi.fn().mockResolvedValue(undefined),now=()=>1_000_000)=
   )
   return batchSaver
 }
+
+it('guards keypad-entered weight and the basket draft, clearing only after the worker total is saved',async()=>{
+  const confirm=vi.spyOn(window,'confirm').mockReturnValue(false),saver=vi.fn().mockResolvedValue(undefined)
+  render(<MemoryRouter initialEntries={['/fish-head-wages']}><DirtyStateProvider><BackButton/><FishHeadWagePage workerLoader={async()=>workers} batchSaver={saver}/></DirtyStateProvider></MemoryRouter>)
+  await chooseWorkerAndEnter74Kg()
+  fireEvent.click(screen.getByRole('button',{name:'返回'}));expect(confirm).toHaveBeenCalledOnce()
+  fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+  fireEvent.click(screen.getByRole('button',{name:'确认并保存工人合计'}))
+  await waitFor(()=>expect(saver).toHaveBeenCalledOnce())
+  await waitFor(()=>{const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(false)})
+  confirm.mockRestore()
+})
 
 async function chooseWorkerAndEnter74Kg(){
   fireEvent.click(await screen.findByRole('button',{name:'Ah Mei'}))

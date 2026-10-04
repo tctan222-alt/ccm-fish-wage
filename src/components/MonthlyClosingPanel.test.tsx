@@ -4,6 +4,8 @@ import { afterEach,describe,expect,it,vi } from 'vitest'
 import type { StoredWageEntry } from '../services/wages'
 import type { WageMonthClosingData } from '../services/monthClosing'
 import { MonthlyClosingPanel } from './MonthlyClosingPanel'
+import { BackButton } from './BackButton'
+import { DirtyStateProvider } from './DirtyStateProvider'
 
 afterEach(cleanup)
 
@@ -43,15 +45,15 @@ function renderPanel(data:WageMonthClosingData,overrides:Partial<Parameters<type
     onReopen:vi.fn(async()=>{}),
     ...overrides,
   }
-  render(<MemoryRouter><MonthlyClosingPanel {...props}/></MemoryRouter>)
+  render(<MemoryRouter><DirtyStateProvider><BackButton/><MonthlyClosingPanel {...props}/></DirtyStateProvider></MemoryRouter>)
   return props
 }
 
 describe('monthly closing panel',()=>{
   it('shows an open month from live records and confirms close totals',()=>{
     renderPanel({month:null,statements:[],payments:[]})
-    expect(screen.getByText('Open',{selector:'.month-status'})).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button',{name:'Close Month'}))
+    expect(screen.getByText('未结月 Open',{selector:'.month-status'})).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'结月 Close Month'}))
     const dialog=screen.getByRole('dialog')
     expect(dialog).toHaveTextContent('July 2026')
     expect(dialog).toHaveTextContent('Workers1')
@@ -62,14 +64,14 @@ describe('monthly closing panel',()=>{
 
   it('closes only after explicit confirmation',async()=>{
     const props=renderPanel({month:null,statements:[],payments:[]})
-    fireEvent.click(screen.getByRole('button',{name:'Close Month'}))
-    fireEvent.click(screen.getByRole('button',{name:'Confirm Close Month'}))
+    fireEvent.click(screen.getByRole('button',{name:'结月 Close Month'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认结月 Confirm Close Month'}))
     await waitFor(()=>expect(props.onClose).toHaveBeenCalledWith('2026-07'))
   })
 
   it('shows partial and paid statuses from closed statement snapshots',()=>{
     renderPanel(closedData)
-    expect(screen.getByText('Closed',{selector:'.month-status'})).toBeInTheDocument()
+    expect(screen.getByText('已结月 Closed',{selector:'.month-status'})).toBeInTheDocument()
     const ahMei=screen.getByRole('heading',{name:'Ah Mei'}).closest('section')!
     expect(ahMei).toHaveTextContent('Partial')
     expect(ahMei).toHaveTextContent('PaidRM5.00')
@@ -90,18 +92,71 @@ describe('monthly closing panel',()=>{
     })))
   })
 
+  it.each(['Mark Paid in Full','Add Partial Payment'])('keeps a newly opened %s form clean until edited',action=>{
+    renderPanel(closedData)
+    fireEvent.click(screen.getByRole('button',{name:action}))
+    expect(screen.getByRole('form',{name:'Payment for Ah Mei'})).toBeInTheDocument()
+    const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(false)
+  })
+
+  it.each([
+    ['Amount (RM)','9.00'],['Payment method','bank'],['Payment date','2026-07-20'],
+    ['Reference (optional)','REF-123'],['Note (optional)','Payment draft'],
+  ])('guards a changed %s and clears the warning when reverted',(label,value)=>{
+    renderPanel(closedData)
+    fireEvent.click(screen.getByRole('button',{name:'Mark Paid in Full'}))
+    const field=screen.getByLabelText(label),original=(field as HTMLInputElement).value
+    fireEvent.change(field,{target:{value}})
+    let unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(true)
+    fireEvent.change(field,{target:{value:original}})
+    unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(false)
+  })
+
+  it.each([true,false])('clears only a successfully saved payment draft (success=%s)',async succeeds=>{
+    const props=renderPanel(closedData,{onPayment:vi.fn(async()=>{if(!succeeds)throw new Error('Local save failed')})})
+    fireEvent.click(screen.getByRole('button',{name:'Add Partial Payment'}))
+    fireEvent.change(screen.getByLabelText('Amount (RM)'),{target:{value:'5.00'}})
+    let unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(true)
+    fireEvent.click(screen.getByRole('button',{name:'Save payment'}))
+    await waitFor(()=>expect(props.onPayment).toHaveBeenCalledWith(expect.objectContaining({amountCents:500})))
+    if(succeeds)await waitFor(()=>expect(screen.queryByRole('form',{name:'Payment for Ah Mei'})).not.toBeInTheDocument())
+    else{
+      expect(await screen.findByRole('alert')).toHaveTextContent('Local save failed')
+      expect(screen.getByLabelText('Amount (RM)')).toHaveValue('5.00')
+    }
+    unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(!succeeds)
+  })
+
+  it('establishes fresh defaults after cancelling and reopening a payment form',()=>{
+    renderPanel(closedData)
+    fireEvent.click(screen.getByRole('button',{name:'Add Partial Payment'}))
+    fireEvent.change(screen.getByLabelText('Amount (RM)'),{target:{value:'5.00'}})
+    fireEvent.change(screen.getByLabelText('Note (optional)'),{target:{value:'Cancelled draft'}})
+    fireEvent.click(screen.getByRole('button',{name:'取消 Cancel'}))
+    fireEvent.click(screen.getByRole('button',{name:'Mark Paid in Full'}))
+    expect(screen.getByLabelText('Amount (RM)')).toHaveValue('14.53')
+    expect(screen.getByLabelText('Note (optional)')).toHaveValue('')
+    const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+    expect(unload.defaultPrevented).toBe(false)
+  })
+
   it('blocks reopen controls until all payments are voided',()=>{
     const {rerender}=render(<MemoryRouter><MonthlyClosingPanel
       monthKey="2026-07" liveEntries={liveEntries} data={closedData}
       onClose={vi.fn()} onPayment={vi.fn()} onVoidPayment={vi.fn()} onReopen={vi.fn()}
     /></MemoryRouter>)
-    expect(screen.getByRole('button',{name:'Reopen Month'})).toBeDisabled()
+    expect(screen.getByRole('button',{name:'重新开月 Reopen Month'})).toBeDisabled()
 
     rerender(<MemoryRouter><MonthlyClosingPanel
       monthKey="2026-07" liveEntries={liveEntries}
       data={{...closedData,month:{...closedData.month!,paidCents:0}}}
       onClose={vi.fn()} onPayment={vi.fn()} onVoidPayment={vi.fn()} onReopen={vi.fn()}
     /></MemoryRouter>)
-    expect(screen.getByRole('button',{name:'Reopen Month'})).toBeEnabled()
+    expect(screen.getByRole('button',{name:'重新开月 Reopen Month'})).toBeEnabled()
   })
 })

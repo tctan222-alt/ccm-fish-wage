@@ -1,4 +1,5 @@
 import { useRef,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from './dirtyState'
 import { workerDepartmentFromWorker,validateWorker,type WorkerInput } from '../lib/masterData'
 import type { Worker } from '../types'
 
@@ -13,6 +14,7 @@ export function WorkerFormDialog({worker,save,onSaved,onClose,onDeactivate,onRea
   })
   const [error,setError]=useState('');const [saving,setSaving]=useState(false);const lock=useRef(false)
   const change=(key:keyof WorkerInput,next:string)=>setValue(current=>({...current,[key]:next}))
+  useUnsavedForm(value)
   async function submit(event:FormEvent){event.preventDefault();if(lock.current)return;const errors=validateWorker(value);if(errors.length){setError(errors[0]);return}
     lock.current=true;setSaving(true);setError('');try{onSaved(await save(value))}catch(problem){setError(problem instanceof Error?problem.message:'Worker was not saved.')}finally{lock.current=false;setSaving(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true" aria-labelledby="worker-form-title">

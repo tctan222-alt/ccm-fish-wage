@@ -1,4 +1,5 @@
 import { useMemo,useState,type FormEvent } from 'react'
+import { useUnsavedChanges } from './dirtyState'
 import { Link } from 'react-router-dom'
 import { malaysiaDateKey,money,rmStringToCents } from '../lib/wage'
 import { paymentStatus } from '../lib/monthClosing'
@@ -41,12 +42,15 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
   const [paymentDate,setPaymentDate]=useState(()=>malaysiaDateKey())
   const [reference,setReference]=useState('')
   const [note,setNote]=useState('')
+  const [paymentBaseline,setPaymentBaseline]=useState('')
   const [voidPayment,setVoidPayment]=useState<WagePaymentRecord|null>(null)
   const [voidReason,setVoidReason]=useState('')
   const [showReopen,setShowReopen]=useState(false)
   const [reopenReason,setReopenReason]=useState('')
   const [busy,setBusy]=useState(false)
   const [error,setError]=useState('')
+  const paymentDirty=!!paymentStatement&&JSON.stringify([paymentAmount,paymentMethod,paymentDate,reference,note])!==paymentBaseline
+  useUnsavedChanges(paymentDirty || (!!voidPayment && !!voidReason) || (showReopen && !!reopenReason))
 
   const liveTotals=useMemo(()=>{
     const active=liveEntries.filter(entry=>entry.deleted!==true)
@@ -63,17 +67,19 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
     setBusy(true)
     setError('')
     try{await action()}
-    catch(problem){setError(problem instanceof Error?problem.message:'The action could not be completed')}
+    catch(problem){setError(problem instanceof Error?`操作失败 Operation failed: ${problem.message}`:'操作未完成，请重试。 The action could not be completed. Please retry.')}
     finally{setBusy(false)}
   }
 
   function openPayment(statement:WageStatementRecord,full:boolean){
+    const amount=full?money(statement.wageCents-statement.paidCents):'',date=malaysiaDateKey()
     setPaymentStatement(statement)
-    setPaymentAmount(full?money(statement.wageCents-statement.paidCents):'')
+    setPaymentAmount(amount)
     setPaymentMethod('cash')
-    setPaymentDate(malaysiaDateKey())
+    setPaymentDate(date)
     setReference('')
     setNote('')
+    setPaymentBaseline(JSON.stringify([amount,'cash',date,'','']))
   }
 
   async function submitPayment(event:FormEvent){
@@ -86,44 +92,44 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
     })
   }
 
-  return <section className="month-closing" aria-label="Wage month closing">
+  return <section className="month-closing" aria-label="结月管理 Wage month closing">
     <div className="month-closing-heading">
       <div>
-        <p className="eyebrow">Month status</p>
-        <strong className={`month-status ${closed?'closed':'open'}`}>{closed?'Closed':'Open'}</strong>
+        <p className="eyebrow">结月管理 Month status</p>
+        <strong className={`month-status ${closed?'closed':'open'}`}>{closed?'已结月 Closed':'未结月 Open'}</strong>
       </div>
       {closed&&<div className="close-meta">
-        <span>Version {data.month!.closeVersion}</span>
-        <small>Closed {timestampLabel(data.month!.closedAt)}</small>
+        <span>版本 Version {data.month!.closeVersion}</span>
+        <small>结月时间 Closed {timestampLabel(data.month!.closedAt)}</small>
       </div>}
     </div>
 
     {error&&<p className="error" role="alert">{error}</p>}
 
     {!closed&&<>
-      <p className="notice">This month uses live wage records until it is closed.</p>
-      <button className="close-month-action" type="button" disabled={busy||liveEntries.length===0} onClick={()=>setConfirmClose(true)}>Close Month</button>
-      {liveEntries.length===0&&<p className="notice">A month with no wage records cannot be closed.</p>}
+      <p className="notice">本月未结月，汇总使用当前工钱记录。 This month uses live wage records until it is closed.</p>
+      <button className="close-month-action" type="button" disabled={busy||liveEntries.length===0} onClick={()=>setConfirmClose(true)}>结月 Close Month</button>
+      {liveEntries.length===0&&<p className="notice">本月没有工钱记录，不能结月。 A month with no wage records cannot be closed.</p>}
       {confirmClose&&<div className="confirm-panel" role="dialog" aria-label="Confirm Close Month">
-        <h2>Close {monthLabel(monthKey)}?</h2>
+        <h2>确认结月 Close {monthLabel(monthKey)}?</h2>
         <div className="confirm-totals">
-          <div><span>Workers</span><strong>{liveTotals.workers}</strong></div>
-          <div><span>Baskets</span><strong>{liveTotals.baskets}</strong></div>
-          <div><span>Total kg</span><strong>{liveTotals.weight}kg</strong></div>
-          <div><span>Total wage</span><strong>RM{money(liveTotals.wageCents)}</strong></div>
+          <div><span>工人数 Workers</span><strong>{liveTotals.workers}</strong></div>
+          <div><span>总篮数 Baskets</span><strong>{liveTotals.baskets}</strong></div>
+          <div><span>总重量 Total kg</span><strong>{liveTotals.weight}kg</strong></div>
+          <div><span>总工钱 Total wage</span><strong>RM{money(liveTotals.wageCents)}</strong></div>
         </div>
-        <p>Closing creates permanent versioned worker snapshots and prevents new entries or voids for this month.</p>
-        <button type="button" disabled={busy} onClick={()=>void perform(async()=>{await onClose(monthKey);setConfirmClose(false)})}>Confirm Close Month</button>
-        <button className="secondary-action" type="button" disabled={busy} onClick={()=>setConfirmClose(false)}>Cancel</button>
+        <p>结月会保存永久版本快照，并锁定本月新增及作废操作。 Closing creates permanent versioned worker snapshots and prevents new entries or voids for this month.</p>
+        <button type="button" disabled={busy} onClick={()=>void perform(async()=>{await onClose(monthKey);setConfirmClose(false)})}>确认结月 Confirm Close Month</button>
+        <button className="secondary-action" type="button" disabled={busy} onClick={()=>setConfirmClose(false)}>取消 Cancel</button>
       </div>}
     </>}
 
     {closed&&<>
       <div className="closed-totals">
-        <div><span>Workers</span><strong>{data.month!.workerCount}</strong></div>
-        <div><span>Baskets</span><strong>{data.month!.basketCount}</strong></div>
-        <div><span>Total kg</span><strong>{data.month!.totalWeightKg}kg</strong></div>
-        <div><span>Gross wage</span><strong>RM{money(data.month!.totalWageCents)}</strong></div>
+        <div><span>工人数 Workers</span><strong>{data.month!.workerCount}</strong></div>
+        <div><span>总篮数 Baskets</span><strong>{data.month!.basketCount}</strong></div>
+        <div><span>总重量 Total kg</span><strong>{data.month!.totalWeightKg}kg</strong></div>
+        <div><span>总工钱 Gross wage</span><strong>RM{money(data.month!.totalWageCents)}</strong></div>
         {showPaymentTracking&&<><div><span>Paid total</span><strong>RM{money(data.month!.paidCents)}</strong></div>
         <div><span>Outstanding</span><strong>RM{money(data.month!.totalWageCents-data.month!.paidCents)}</strong></div></>}
       </div>
@@ -138,7 +144,7 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
               <strong className={`payment-status ${status}`}>{status[0].toUpperCase()+status.slice(1)}</strong>
             </div>
             <div className="statement-totals">
-              <div><span>Gross wage</span><strong>RM{money(statement.wageCents)}</strong></div>
+              <div><span>总工钱 Gross wage</span><strong>RM{money(statement.wageCents)}</strong></div>
               <div><span>Paid</span><strong>RM{money(statement.paidCents)}</strong></div>
               <div><span>Balance</span><strong>RM{money(balance)}</strong></div>
             </div>
@@ -161,7 +167,7 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
         <label>Reference (optional)<input maxLength={100} value={reference} onChange={event=>setReference(event.target.value)}/></label>
         <label>Note (optional)<input maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
         <button type="submit" disabled={busy}>Save payment</button>
-        <button className="secondary-action" type="button" onClick={()=>setPaymentStatement(null)}>Cancel</button>
+        <button className="secondary-action" type="button" onClick={()=>setPaymentStatement(null)}>取消 Cancel</button>
       </form>}
 
       <details className="payment-history">
@@ -179,22 +185,22 @@ export function MonthlyClosingPanel({monthKey,liveEntries,data,onClose,onPayment
         void perform(async()=>{await onVoidPayment(monthKey,voidPayment.id,voidReason);setVoidPayment(null);setVoidReason('')})
       }}>
         <h2>Void RM{money(voidPayment.amountCents)} payment?</h2>
-        <label>Reason<input required minLength={3} maxLength={100} value={voidReason} onChange={event=>setVoidReason(event.target.value)}/></label>
+        <label>原因 Reason<input required minLength={3} maxLength={100} value={voidReason} onChange={event=>setVoidReason(event.target.value)}/></label>
         <button type="submit" disabled={busy}>Confirm void</button>
-        <button className="secondary-action" type="button" onClick={()=>setVoidPayment(null)}>Cancel</button>
+        <button className="secondary-action" type="button" onClick={()=>setVoidPayment(null)}>取消 Cancel</button>
       </form>}
 
       </>}
-      <button className="reopen-action" type="button" disabled={busy||data.month!.paidCents>0} onClick={()=>setShowReopen(true)}>Reopen Month</button>
+      <button className="reopen-action" type="button" disabled={busy||data.month!.paidCents>0} onClick={()=>setShowReopen(true)}>重新开月 Reopen Month</button>
       {data.month!.paidCents>0&&<p className="warning">{showPaymentTracking?'Void all valid payments before reopening this month.':'历史记录限制重新开月，请联系管理员核对。 Legacy records prevent reopening; contact the administrator.'}</p>}
       {showReopen&&<form className="action-form" aria-label="Reopen month" onSubmit={event=>{
         event.preventDefault()
         void perform(async()=>{await onReopen(monthKey,reopenReason);setShowReopen(false);setReopenReason('')})
       }}>
-        <h2>Reopen {monthLabel(monthKey)}?</h2>
-        <label>Reason<input required minLength={3} maxLength={100} value={reopenReason} onChange={event=>setReopenReason(event.target.value)}/></label>
-        <button type="submit" disabled={busy}>Confirm Reopen Month</button>
-        <button className="secondary-action" type="button" onClick={()=>setShowReopen(false)}>Cancel</button>
+        <h2>重新开月 Reopen {monthLabel(monthKey)}?</h2>
+        <label>原因 Reason<input required minLength={3} maxLength={100} value={reopenReason} onChange={event=>setReopenReason(event.target.value)}/></label>
+        <button type="submit" disabled={busy}>确认重新开月 Confirm Reopen Month</button>
+        <button className="secondary-action" type="button" onClick={()=>setShowReopen(false)}>取消 Cancel</button>
       </form>}
     </>}
   </section>

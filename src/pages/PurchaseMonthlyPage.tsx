@@ -1,4 +1,5 @@
 import { useEffect,useMemo,useState,type FormEvent } from 'react'
+import { useUnsavedForm } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
 import { supplierMonthlySummary,type PaymentMethod,type PurchaseReceipt } from '../lib/purchasing'
@@ -42,6 +43,7 @@ function PaymentDialog({receipt,save,close}:{receipt:PurchaseReceipt|null;save:(
   const balance=receipt?receipt.totalAmountCents-receipt.paidCents:0
   const [amount,setAmount]=useState(receipt?(balance/100).toFixed(2):'');const [method,setMethod]=useState<PaymentMethod>('bank')
   const [paymentDate,setPaymentDate]=useState(today());const [reference,setReference]=useState('');const [note,setNote]=useState('');const [error,setError]=useState('');const [busy,setBusy]=useState(false)
+  useUnsavedForm({ amount, method, paymentDate, reference, note })
   async function submit(e:FormEvent){e.preventDefault();const amountCents=receipt?Math.round(Number(amount)*100):undefined
     if(receipt&&(!amountCents||amountCents>balance)){setError('Enter a payment within the receipt balance.');return}
     setBusy(true);try{await save({amountCents,method,paymentDate,reference,note})}catch(problem){setError(problem instanceof Error?problem.message:'Payment was not saved.')}finally{setBusy(false)}}

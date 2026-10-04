@@ -1,4 +1,5 @@
 import { useEffect,useMemo,useRef,useState,type FormEvent } from 'react'
+import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import { Link,useNavigate,useParams } from 'react-router-dom'
 import { BusinessPartnerFormDialog } from '../components/BusinessPartnerFormDialog'
 import type { BusinessPartner,BusinessPartnerInput } from '../lib/masterData'
@@ -37,9 +38,12 @@ export function PurchaseReceiptPage({receiptLoader=loadPurchaseReceipt,receiptsL
   const [lineInputs,setLineInputs]=useState<NewLine[]>([newLine()]);const [quick,setQuick]=useState<''|'supplier'|'vessel'|'category'>('')
   const [quickCategoryLine,setQuickCategoryLine]=useState(0)
   const [error,setError]=useState('');const [busy,setBusy]=useState(false);const [confirming,setConfirming]=useState(false);const lock=useRef(false)
+  const [savedFields,setSavedFields]=useState(() => JSON.stringify({value,lineInputs}))
+  useUnsavedChanges(value.status === 'draft' && JSON.stringify({value,lineInputs}) !== savedFields)
   useEffect(()=>{void Promise.all([isNew?Promise.resolve(emptyReceipt()):receiptLoader(receiptId!),receiptsLoader(),supplierLoader(),vesselLoader(),categoryLoader(),isNew?Promise.resolve([]):paymentLoader(receiptId!)])
     .then(([receipt,receipts,supplierRows,vesselRows,categoryRows,paymentRows])=>{setValue(receipt);setAllReceipts(receipts);setSuppliers(supplierRows);setVessels(vesselRows);setCategories(categoryRows);setPayments(paymentRows)
-      if(receipt.lines.length)setLineInputs(receipt.lines.map(line=>({categoryId:line.categoryId,basketCount:String(line.basketCount||''),kg:(line.weightGrams/1000).toFixed(3).replace(/\.?0+$/,''),price:(line.unitPriceCentsPerKg/100).toFixed(2),notes:line.notes})))})
+      const loadedLines=receipt.lines.length?receipt.lines.map(line=>({categoryId:line.categoryId,basketCount:String(line.basketCount||''),kg:(line.weightGrams/1000).toFixed(3).replace(/\.?0+$/,''),price:(line.unitPriceCentsPerKg/100).toFixed(2),notes:line.notes})):[newLine()]
+      setLineInputs(loadedLines);setSavedFields(JSON.stringify({value:receipt,lineInputs:loadedLines}))})
     .catch(()=>setError('Receipt data could not be loaded.'))},[isNew,receiptId,receiptLoader,receiptsLoader,supplierLoader,vesselLoader,categoryLoader,paymentLoader])
   const activeCategories=activePurchaseCategories(categories),activeVesselRows=activeVessels(vessels)
   const parsedLineRows=useMemo(()=>lineInputs.map((row,index)=>{
@@ -61,7 +65,7 @@ export function PurchaseReceiptPage({receiptLoader=loadPurchaseReceipt,receiptsL
     const duplicate=duplicateExternalSlip(value.externalSlipNo,allReceipts,value.id)
     if(duplicate&&!value.duplicateAcknowledged){setError('External slip number already exists. Confirm duplicate before saving.');return}
     lock.current=true;setBusy(true);setError('')
-    try{const saved=await draftSaver({...value,...totals,lines:parsedLines});if(confirmAfter){const confirmed=await confirmer(saved);setValue(confirmed);setConfirming(false)}else{setValue(saved)}
+    try{const saved=await draftSaver({...value,...totals,lines:parsedLines});setSavedFields(JSON.stringify({value:saved,lineInputs}));if(confirmAfter){const confirmed=await confirmer(saved);setValue(confirmed);setConfirming(false)}else{setValue(saved)}
       if(isNew&&!confirmAfter)navigate(`/purchases/${saved.id}`,{replace:true})}
     catch(problem){setError(problem instanceof Error?problem.message:'Receipt was not saved.')}finally{lock.current=false;setBusy(false)}
   }
@@ -104,11 +108,13 @@ export function PurchaseReceiptPage({receiptLoader=loadPurchaseReceipt,receiptsL
 }
 function QuickVessel({suppliers,existing,create,saved,close}:{suppliers:BusinessPartner[];existing:Vessel[];create:(input:VesselInput)=>Promise<Vessel>;saved:(item:Vessel)=>void;close:()=>void}){
   const [value,setValue]=useState<VesselInput>({vesselCode:'',displayName:'',defaultSupplierId:'',defaultSupplierNameSnapshot:'',notes:''});const [error,setError]=useState('');const [duplicateAcknowledged,setDuplicateAcknowledged]=useState(false);const [busy,setBusy]=useState(false);const lock=useRef(false)
+  useUnsavedForm(value)
   async function submit(e:FormEvent){e.preventDefault();if(!duplicateAcknowledged&&duplicateVesselCode(value.vesselCode,existing)){setError('A vessel with this code exists. Confirm these are different vessels.');return}if(lock.current)return;lock.current=true;setBusy(true);try{saved(await create(value))}catch(problem){setError(problem instanceof Error?problem.message:'Vessel was not saved.')}finally{lock.current=false;setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog"><h2>Add Vessel</h2><form className="master-form" onSubmit={submit}><label>Vessel code<input value={value.vesselCode} onChange={e=>{setValue({...value,vesselCode:e.target.value});setDuplicateAcknowledged(false)}}/></label><label>Display name<input value={value.displayName} onChange={e=>setValue({...value,displayName:e.target.value})}/></label><label>Default supplier<select value={value.defaultSupplierId} onChange={e=>{const supplier=suppliers.find(row=>row.id===e.target.value);setValue({...value,defaultSupplierId:e.target.value,defaultSupplierNameSnapshot:supplier?.displayName??''})}}><option value="">None</option>{suppliers.map(row=><option key={row.id} value={row.id}>{row.displayName}</option>)}</select></label>{error&&<p className="error">{error}</p>}{error.includes('Confirm')&&<button type="button" className="warning-action" onClick={()=>{setDuplicateAcknowledged(true);setError('')}}>Confirm duplicate code</button>}<button className="primary-action" disabled={busy}>{busy?'Saving…':'Save Vessel'}</button><button type="button" disabled={busy} onClick={close}>Cancel</button></form></section></div>
 }
 function QuickCategory({order,create,saved,close}:{order:number;create:(input:PurchaseCategoryInput)=>Promise<PurchaseCategory>;saved:(item:PurchaseCategory)=>void;close:()=>void}){
   const [value,setValue]=useState<PurchaseCategoryInput>({categoryCode:'',displayName:'',order,notes:''});const [error,setError]=useState('');const [busy,setBusy]=useState(false);const lock=useRef(false)
+  useUnsavedForm(value)
   async function submit(e:FormEvent){e.preventDefault();if(lock.current)return;lock.current=true;setBusy(true);try{saved(await create(value))}catch(problem){setError(problem instanceof Error?problem.message:'Category was not saved.')}finally{lock.current=false;setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog"><h2>Add Category</h2><form className="master-form" onSubmit={submit}><label>Category code<input value={value.categoryCode} onChange={e=>setValue({...value,categoryCode:e.target.value})}/></label><label>Display name<input value={value.displayName} onChange={e=>setValue({...value,displayName:e.target.value})}/></label>{error&&<p className="error">{error}</p>}<button className="primary-action" disabled={busy}>{busy?'Saving…':'Save Category'}</button><button type="button" disabled={busy} onClick={close}>Cancel</button></form></section></div>
 }
