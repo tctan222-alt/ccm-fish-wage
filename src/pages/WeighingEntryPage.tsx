@@ -127,7 +127,7 @@ export function WeighingEntryPage({
   const [contextLoading,setContextLoading]=useState(true)
   const [checkedContext,setCheckedContext]=useState('')
   const [referencesReady,setReferencesReady]=useState(false)
-  useUnsavedChanges(!!weight || !!remark || externalSlipNo !== (session?.externalSlipNo ?? ''))
+  useUnsavedChanges(!!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
   const vesselSelection=useRef<Vessel>(DEFAULT_VESSELS[0])
   const vesselSelectedByUser=useRef(false)
   const speciesSelection=useRef<FishSpeciesRecord>(DEFAULT_FISH_SPECIES[0])

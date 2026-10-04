@@ -18,3 +18,27 @@ it('opts native business forms in without marking surrounding filters dirty, and
   fireEvent.click(screen.getByText('Save and reset'))
   await waitFor(()=>{unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(false)})
 })
+
+function RetainingForm({succeeds}:{succeeds:boolean}){
+  const[amount,setAmount]=useState(''),[method,setMethod]=useState('cash')
+  return <form onSubmit={async event=>{event.preventDefault();await Promise.resolve();if(succeeds)setAmount('')}}><select aria-label="method" value={method} onChange={e=>setMethod(e.target.value)}><option value="cash">Cash</option><option value="bank">Bank</option></select><input aria-label="amount" value={amount} onChange={e=>setAmount(e.target.value)}/><button>Save</button></form>
+}
+it.each([true,false])('clears only a successful submitted form reset, retaining context (success=%s)',async succeeds=>{
+  render(<MemoryRouter><DirtyStateProvider><BackButton/><BusinessFormGuard><RetainingForm succeeds={succeeds}/></BusinessFormGuard></DirtyStateProvider></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('method'),{target:{value:'bank'}});fireEvent.change(screen.getByLabelText('amount'),{target:{value:'10'}})
+  fireEvent.click(screen.getByText('Save'))
+  await waitFor(()=>expect(screen.getByLabelText('amount')).toHaveValue(succeeds?'':'10'))
+  await waitFor(()=>{const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload);expect(unload.defaultPrevented).toBe(!succeeds)})
+  expect(screen.getByLabelText('method')).toHaveValue('bank')
+})
+
+it('does not treat a user clearing an unsuccessful submission as a saved form',async()=>{
+  render(<MemoryRouter><DirtyStateProvider><BackButton/><BusinessFormGuard><RetainingForm succeeds={false}/></BusinessFormGuard></DirtyStateProvider></MemoryRouter>)
+  fireEvent.change(screen.getByLabelText('method'),{target:{value:'bank'}})
+  fireEvent.change(screen.getByLabelText('amount'),{target:{value:'10'}})
+  fireEvent.click(screen.getByText('Save'))
+  await waitFor(()=>expect(screen.getByLabelText('amount')).toHaveValue('10'))
+  fireEvent.change(screen.getByLabelText('amount'),{target:{value:''}})
+  const unload=new Event('beforeunload',{cancelable:true});fireEvent(window,unload)
+  expect(unload.defaultPrevented).toBe(true)
+})
