@@ -117,9 +117,9 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
       {items.length===0&&<p className="notice">{cursor?'当前已查询部分暂无记录，请载入更多继续查询较早月份。':'这个日期范围没有'+productName+'结单。'}</p>}
       <div className="settlement-session-list">{items.map(item=><article key={item.id} className="settlement-session-card" aria-label={`现场单 ${item.sessionCode}`}>
         <div className="settlement-session-heading"><strong>{fishHeadSettlementDate(item.weighingDate)}</strong><span>{FISH_HEAD_SETTLEMENT_STATUS_NAMES[item.status]}</span></div>
-        <h3>船号 Vessel {item.vesselCodeSnapshot}</h3><p>{productName} · {item.sessionCode}</p>
+        <h3>船号 Vessel {item.vesselCodeSnapshot}</h3><p>{productName} · 系统现场单号：{item.sessionCode}</p>
         <div className="settlement-session-totals"><strong>{item.basketCount} 篮</strong><strong>{formatWeightKg(item.weightGrams)} kg</strong><strong>{item.totalAmountCents===null?'RM —':`RM ${money(item.totalAmountCents)}`}</strong></div>
-        <p>结单 / 单号 Reference：{item.referenceNumber||'—'}</p>
+        <p>{item.processedReceiptId?'采购单号 Receipt No.':`${productName}纸单号 Paper Slip No.`}：{item.referenceNumber||'—'}</p>
         {item.totalAmountCents===null&&<small>未结价或旧草稿待核对；打开明细查看。 Amount pending verification.</small>}
         <Link className="settlement-session-action" to={item.status==='weighing'?`/weighing/${encodeURIComponent(item.id)}`:`/${productType==='fish_head'?'fish-head':'fish-meal'}-settlement/${encodeURIComponent(item.id)}`}>{item.status==='weighing'?'继续称重':'查看结单'}</Link>
       </article>)}</div>

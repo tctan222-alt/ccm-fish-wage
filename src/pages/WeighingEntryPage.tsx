@@ -5,7 +5,7 @@ import { auth } from '../firebase'
 import { DEFAULT_VESSELS,type Vessel } from '../lib/purchasing'
 import { DecimalKeypad } from '../components/DecimalKeypad'
 import { FishHeadLiveSummary } from '../components/FishHeadLiveSummary'
-import { malaysiaBusinessDate } from '../lib/businessDate'
+import { businessDateFromLegacy,malaysiaBusinessDate } from '../lib/businessDate'
 import {
   FISH_MEAL_QUALITIES,
   DEFAULT_FISH_SPECIES,
@@ -73,6 +73,8 @@ interface Props {
   speciesInitializer?:(items:FishSpeciesRecord[])=>Promise<FishSpeciesRecord[]>
 }
 
+interface WeighingContext { vesselId:string; date:string; productType:WeighingProductType; vessel?:Vessel }
+
 function visibleVessels(items:Vessel[]){
   const byCode=new Map(items.map(item=>[item.vesselCode,item]))
   const defaults:Vessel[]=DEFAULT_VESSELS.map(item=>({...item}))
@@ -104,6 +106,9 @@ export function WeighingEntryPage({
   const [species,setSpecies]=useState<FishSpeciesRecord[]>([])
   const [vesselId,setVesselId]=useState(sessionId?'':DEFAULT_VESSELS[0].id)
   const [date,setDate]=useState(today())
+  const acceptedDate=useRef(date)
+  const [dateInput,setDateInput]=useState(date)
+  const [dateError,setDateError]=useState('')
   const [externalSlipNo,setExternalSlipNo]=useState('')
   const [session,setSession]=useState<WeighingSession|null>(null)
   const [entries,setEntries]=useState<WeighingEntry[]>([])
@@ -127,7 +132,8 @@ export function WeighingEntryPage({
   const [contextLoading,setContextLoading]=useState(true)
   const [checkedContext,setCheckedContext]=useState('')
   const [referencesReady,setReferencesReady]=useState(false)
-  useUnsavedChanges(!!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
+  const [pendingContext,setPendingContext]=useState<WeighingContext|null>(null)
+  useUnsavedChanges(dateInput!==date || !!weight || !!remark || externalSlipNo.trim() !== (session?.externalSlipNo ?? '').trim())
   const vesselSelection=useRef<Vessel>(DEFAULT_VESSELS[0])
   const vesselSelectedByUser=useRef(false)
   const speciesSelection=useRef<FishSpeciesRecord>(DEFAULT_FISH_SPECIES[0])
@@ -137,6 +143,8 @@ export function WeighingEntryPage({
   const saveLock=useRef(false)
   const entryMutationLock=useRef(false)
   const contextRequest=useRef(0)
+  const slipEdited=useRef(false)
+  const slipEditVersion=useRef(0)
 
   const store=offlineStore
   const activeSpecies=useMemo(()=>activeFishSpecies(species),[species])
@@ -153,8 +161,9 @@ export function WeighingEntryPage({
   let contextKey=''
   try{contextKey=sessionId?`session:${sessionId}`:weighingDraftKey(productType,date,vesselId)}catch{/* A partially typed date cannot be saved. */}
   const contextPending=contextLoading||checkedContext!==contextKey||Boolean(sessionId&&session?.id!==sessionId)
-  const savePending=!contextKey||contextPending||!referencesReady
+  const savePending=dateInput!==date||!contextKey||contextPending||!referencesReady
 
+  useEffect(()=>{setDateInput(date);setDateError('')},[date])
   useEffect(()=>{if(fixedProductType)setProductType(fixedProductType)},[fixedProductType])
   useEffect(()=>{if(!busy&&refocusAfterSave.current){refocusAfterSave.current=false;weightRef.current?.focus()}},[busy])
 
@@ -241,7 +250,7 @@ export function WeighingEntryPage({
         }
         if(cancelled)return
         setSession(bundle.session);setEntries(bundle.entries);setVesselId(bundle.session.vesselId)
-        setDate(bundle.session.weighingDate);setExternalSlipNo(bundle.session.externalSlipNo)
+        acceptedDate.current=bundle.session.weighingDate;setDate(bundle.session.weighingDate);setExternalSlipNo(current=>slipEdited.current?current:bundle.session.externalSlipNo)
         if(bundle.session.productType)setProductType(bundle.session.productType)
       }).catch(()=>{if(!cancelled)setError('无法载入现场称重单。')}).finally(()=>{if(!cancelled){setContextLoading(false);setCheckedContext(`session:${sessionId}`)}})
     }
@@ -259,7 +268,7 @@ export function WeighingEntryPage({
       try{
         if(!contextKey){setError('请填写有效日期后再确认重量。');return}
         const key=contextKey
-        setSession(null);setEntries([]);setPending(0);setExternalSlipNo('');setSyncError('');setSyncing(false);setMessage('')
+        setSession(null);setEntries([]);setPending(0);setExternalSlipNo(current=>slipEdited.current?current:'');setSyncError('');setSyncing(false);setMessage('')
         localId=await store.getMeta(key)
         if(!isCurrent())return
         if(localId){
@@ -269,7 +278,7 @@ export function WeighingEntryPage({
             localEntries=await store.getEntries(local.id)
             pendingCount=(await store.getPending()).filter(item=>item.sessionId===local!.id).length
             if(!isCurrent())return
-            setSession(local);setEntries(localEntries);setExternalSlipNo(local.externalSlipNo);setPending(pendingCount)
+            setSession(local);setEntries(localEntries);setExternalSlipNo(current=>slipEdited.current?current:local!.externalSlipNo);setPending(pendingCount)
           }
         }
         const open=localId?await bundleLoader(localId):await openSessionLoader(vesselId,date,productType)
@@ -281,7 +290,7 @@ export function WeighingEntryPage({
           const merged=serverLocked&&pendingCount>0
             ?[...new Map([...remote.entries,...localEntries].map(entry=>[entry.id,entry])).values()]
             :remote.entries
-          if(useRemote){setSession(remote.session);setEntries(merged);setExternalSlipNo(remote.session.externalSlipNo)}
+          if(useRemote){setSession(remote.session);setEntries(merged);setExternalSlipNo(current=>slipEdited.current?current:remote.session.externalSlipNo)}
           await store.putSession(useRemote?remote.session:local!)
           for(const entry of merged)await store.putEntry(entry)
           await store.putMeta(key,remote.session.id)
@@ -335,20 +344,58 @@ export function WeighingEntryPage({
   },[syncNow])
 
   function switchProduct(next:WeighingProductType){
-    setContextLoading(true);setProductType(next);setEntryMode('individual');setWeight('');setRemark('');setError('')
+    requestContext({vesselId,date,productType:next})
+  }
+
+  function commitDate(){
+    if(dateInput===date)return
+    let nextDate:string
+    try{nextDate=businessDateFromLegacy(dateInput)}
+    catch{setDateError('日期必须为有效的 DD/MM/YYYY 格式。');return}
+    // The field is a text editor; only a finished, valid date may change session identity.
+    setDateInput(date);setDateError('')
+    requestContext({vesselId,date:nextDate,productType},'date')
+  }
+
+  function requestContext(next:WeighingContext,source:'date'|'selection'='selection'){
+    // A later selector handler may still close over the date from before this blur.
+    if(source==='selection')next={...next,date:acceptedDate.current}
+    if(next.vesselId===vesselId&&next.date===acceptedDate.current&&next.productType===productType)return
+    try{if(weighingDraftKey(next.productType,next.date,next.vesselId)===weighingDraftKey(productType,acceptedDate.current,vesselId))return}catch{/* Invalid/partial dates still need draft protection. */}
+    // A valid date submission carries its own edit; other selections would discard it.
+    if((source!=='date'&&dateInput!==acceptedDate.current) || weight || remark || externalSlipNo.trim()!==(session?.externalSlipNo??'').trim()){
+      // Date blur and the next selector event can be batched into the same interaction.
+      setPendingContext(current=>({...next,date:source==='date'?next.date:current?.date??next.date,
+        vessel:vessels.find(item=>item.id===next.vesselId)??(next.vesselId===vesselId?vesselSelection.current:undefined)}))
+    }else applyContext(next)
+  }
+
+  function applyContext(next:WeighingContext){
+    const nextVessel=vessels.find(item=>item.id===next.vesselId||item.vesselCode===next.vessel?.vesselCode)
+    const nextVesselId=nextVessel?.id??next.vesselId
+    // Invalidate old reads/sync UI callbacks, without touching committed baskets or the queue.
+    contextRequest.current+=1
+    if(nextVesselId!==vesselId){
+      vesselSelectedByUser.current=true
+      vesselSelection.current=nextVessel??next.vessel??vesselSelection.current
+    }
+    slipEdited.current=false;slipEditVersion.current+=1
+    setPendingContext(null);setContextLoading(true);setCheckedContext('')
+    setSession(null);setEntries([]);setPending(0);setExternalSlipNo('');setWeight('');setRemark('');setError('')
+    if(next.productType!==productType)setEntryMode('individual')
+    acceptedDate.current=next.date
+    setVesselId(nextVesselId);setDate(next.date);setDateInput(next.date);setDateError('');setProductType(next.productType)
     queueMicrotask(()=>weightRef.current?.focus())
   }
 
   function selectSpecies(item:FishSpeciesRecord){
     if(!item.active){setError('这个鱼名已停用，请到主资料重新启用，或输入其他鱼名。');return}
     speciesSelection.current=item
-    setSpeciesId(item.id);setWeight('');setError('');queueMicrotask(()=>weightRef.current?.focus())
+    setSpeciesId(item.id);setError('');queueMicrotask(()=>weightRef.current?.focus())
   }
 
-  async function selectVessel(nextId:string){
-    vesselSelectedByUser.current=true
-    vesselSelection.current=vessels.find(item=>item.id===nextId)??vesselSelection.current
-    setContextLoading(true);setVesselId(nextId);setWeight('');setError('')
+  function selectVessel(nextId:string){
+    requestContext({vesselId:nextId,date,productType})
   }
 
   async function confirmEntry(event?:FormEvent){
@@ -368,6 +415,7 @@ export function WeighingEntryPage({
 
   async function saveEntry(request:number){
     if(!store||!selectedVessel)return
+    const savedSlipVersion=slipEditVersion.current
     let vesselForEntry=selectedVessel
     if(vesselForEntry.id===vesselForEntry.vesselCode&&!vesselForEntry.createdBy){
       try{
@@ -417,6 +465,7 @@ export function WeighingEntryPage({
         createdAtClient:recordedAtClient,payload:{session:base,entry}},
       meta:{[weighingDraftKey(productType,date,vesselForEntry.id)]:base.id,lastVesselId:vesselForEntry.id}})
     setSession(next);setEntries(current=>[{...entry,syncStatus:'syncing'},...current]);setPending(current=>current+1)
+    if(slipEditVersion.current===savedSlipVersion)slipEdited.current=false
     setWeight('');if(entryMode==='total')setRemark('')
     refocusAfterSave.current=true
     setMessage('已保存');window.dispatchEvent(new Event('ccm:form-saved'));navigator.vibrate?.(40)
@@ -502,9 +551,13 @@ export function WeighingEntryPage({
     <section className="weighing-setup">
         <label className="vessel-choice">船号<select aria-label="船号" value={vesselId} disabled={Boolean(sessionId)||busy} onChange={event=>void selectVessel(event.target.value)}>
         <option value="">请选择船号</option>{vesselId&&!selectedVessel&&<option value={vesselId} disabled>{vesselSelection.current.vesselCode}（不可用）</option>}{vessels.map(item=><option key={item.id} value={item.id}>{item.vesselCode}</option>)}</select></label>
-        <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={date} disabled={Boolean(sessionId)||busy} onChange={event=>{setContextLoading(true);setDate(event.target.value)}}/><small>{formatMalaysiaDate(date)}</small></label>
-      <label className="slip-field">{productType==='fish_head'?'鱼头单号（可之后补填）':'鱼仔单号（可之后补填）'}
-        <input aria-label={productType==='fish_head'?'鱼头单号':'鱼仔单号'} value={externalSlipNo} maxLength={100} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
+        <label>日期<input aria-label="日期" placeholder="DD/MM/YYYY" value={dateInput} disabled={Boolean(sessionId)||busy}
+          aria-invalid={Boolean(dateError)} aria-describedby={dateError?'weighing-date-error':undefined}
+          onChange={event=>{setDateInput(event.target.value);setDateError('')}} onBlur={commitDate}
+          onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();commitDate()}}}/><small>{formatMalaysiaDate(date)}</small>
+          {dateError&&<small id="weighing-date-error" className="error" role="alert">{dateError}</small>}</label>
+      <label className="slip-field">{productType==='fish_head'?'鱼头纸单号（可之后补填）':'鱼仔纸单号（可之后补填）'}
+        <input aria-label={productType==='fish_head'?'鱼头纸单号':'鱼仔纸单号'} value={externalSlipNo} maxLength={100} onChange={event=>{vesselSelectedByUser.current=true;slipEdited.current=true;slipEditVersion.current+=1;setExternalSlipNo(event.target.value)}}/></label>
     </section>
 
     {species.length===0&&<p className="notice">正在显示 CCM 默认鱼名，可先选择鱼名和输入重量。</p>}
@@ -528,7 +581,7 @@ export function WeighingEntryPage({
         </div>
       </>}
       <p className="current-selection">已选择：<strong>{productType==='fish_head'?displayedSpecies.find(item=>item.id===speciesId)?.displayName:FISH_MEAL_QUALITIES.find(item=>item.id===quality)?.name}</strong></p>
-      <p className="session-code">{productType==='fish_head'?'鱼头单号':'鱼仔单号'}：<strong>{session?.sessionCode??'保存首笔重量后建立'}</strong></p>
+      <p className="session-code">系统现场单号：<strong>{session?.sessionCode??'保存首笔重量后建立'}</strong></p>
       <form className="weighing-input-bar" onSubmit={confirmEntry}>
         <label><span>重量（kg）</span><input ref={weightRef} aria-label="重量（kg）" inputMode="decimal" enterKeyHint="done"
           disabled={locked||busy} value={weight} onChange={event=>changeWeight(event.target.value)}
@@ -536,10 +589,10 @@ export function WeighingEntryPage({
       </form>
       <DecimalKeypad value={weight} onChange={changeWeight} onConfirm={()=>void confirmEntry()} disabled={busy||locked}
         confirmDisabled={savePending||!store||!selectedVessel?.active}/>
-      {savePending&&!locked&&<p className="notice" role="status">正在核对现场单…可先输入重量，核对完成后再确认。</p>}
+      {savePending&&!locked&&<p className="notice" role="status">{dateInput!==date?'请完成日期输入，离开日期栏或按 Enter 确认；已输入的重量仍保留。':'正在核对现场单…可先输入重量，核对完成后再确认。'}</p>}
       {!savePending&&!selectedVessel&&<p className="notice">请选择可用船号；已输入的重量仍保留。</p>}
       {productType==='fish_meal'&&entryMode==='total'&&<label className="total-remark">备注
-        <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>setRemark(event.target.value)}/></label>}
+        <input aria-label="备注" value={remark} maxLength={100} placeholder="例如：总共48包" onChange={event=>{vesselSelectedByUser.current=true;setRemark(event.target.value)}}/></label>}
       {error&&<p className="error" role="alert">{error} <button type="button" onClick={()=>{setError('');setReferenceAttempt(current=>current+1)}}>重试</button></p>}
       {syncError&&<p className="error" role="alert">{syncError}</p>}
       {message&&<p className="weighing-message" role="status">{message}</p>}
@@ -579,7 +632,26 @@ export function WeighingEntryPage({
     {editing&&session&&<EntryDialog entry={editing} species={activeSpecies} locked={locked} close={()=>setEditing(null)}
       save={after=>updateEntry(editing,after)} voidEntry={reason=>queueVoid(editing,reason)}/>}
     {showCustomSpecies ? <CustomSpeciesDialog close={()=>setShowCustomSpecies(false)} save={addCustomSpecies}/> : null}
+    {pendingContext&&<ContextSwitchDialog close={()=>setPendingContext(null)} confirm={()=>applyContext(pendingContext)}/>}
   </main>
+}
+
+function ContextSwitchDialog({close,confirm}:{close:()=>void;confirm:()=>void}){
+  const cancelRef=useRef<HTMLButtonElement>(null),continueRef=useRef<HTMLButtonElement>(null)
+  useEffect(()=>{
+    const previous=document.activeElement
+    cancelRef.current?.focus()
+    return()=>{if(previous instanceof HTMLElement&&previous.isConnected)previous.focus()}
+  },[])
+  return <div className="dialog-backdrop"><section className="form-dialog weighing-context-dialog" role="alertdialog" aria-modal="true" aria-labelledby="context-switch-title" aria-describedby="context-switch-warning"
+    onKeyDown={event=>{
+      if(event.key==='Escape'){event.preventDefault();close()}
+      if(event.key==='Tab'){event.preventDefault();(document.activeElement===cancelRef.current?continueRef:cancelRef).current?.focus()}
+    }}>
+    <h2 id="context-switch-title">切换现场单</h2><p id="context-switch-warning">目前有尚未确认的重量/资料，切换会清除。确定继续吗？</p>
+    <button ref={continueRef} type="button" onClick={confirm}>继续切换</button>
+    <button ref={cancelRef} type="button" className="primary-action" onClick={close}>取消，保留资料</button>
+  </section></div>
 }
 
 function CustomSpeciesDialog({close,save}:{close:()=>void;save:(value:{displayName:string;save:boolean})=>Promise<void>}){
@@ -621,9 +693,9 @@ function CategorySummary({entries}:{entries:WeighingEntry[]}){
 function CompleteDialog({session,pending,close,confirm}:{session:WeighingSession;pending:number;close:()=>void;confirm:()=>void}){
   return <div className="dialog-backdrop"><section className="form-dialog complete-dialog" role="dialog" aria-modal="true">
     <h2>确认完成称重</h2><p>{session.vesselCodeSnapshot} · {formatMalaysiaDate(session.weighingDate)}</p>
-    <dl><div><dt>鱼头</dt><dd>{session.fishHeadBasketCount} 篮 · {formatWeightKg(session.fishHeadWeightGrams)} kg</dd></div>
-      <div><dt>桶鱼仔</dt><dd>{session.fishMealBucketBasketCount} 篮 · {formatWeightKg(session.fishMealBucketWeightGrams)} kg</dd></div>
-      <div><dt>包鱼仔</dt><dd>{session.fishMealBagBasketCount} 篮 · {formatWeightKg(session.fishMealBagWeightGrams)} kg</dd></div>
+    <dl>{session.productType!=='fish_meal'&&<div><dt>鱼头</dt><dd>{session.fishHeadBasketCount} 篮 · {formatWeightKg(session.fishHeadWeightGrams)} kg</dd></div>}
+      {session.productType!=='fish_head'&&<><div><dt>桶鱼仔</dt><dd>{session.fishMealBucketBasketCount} 篮 · {formatWeightKg(session.fishMealBucketWeightGrams)} kg</dd></div>
+      <div><dt>包鱼仔</dt><dd>{session.fishMealBagBasketCount} 篮 · {formatWeightKg(session.fishMealBagWeightGrams)} kg</dd></div></>}
       <div><dt>总重量</dt><dd>{formatWeightKg(session.totalWeightGrams)} kg</dd></div></dl>
     <p>{pending>0?`尚未同步 ${pending} 笔；系统会先同步记录，再完成现场单。`:'全部记录已同步。'}</p>
     <button className="primary-action" onClick={confirm}>确认完成</button><button onClick={close}>取消</button>

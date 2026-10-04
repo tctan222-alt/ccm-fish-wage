@@ -52,6 +52,8 @@ export function PurchaseSettlementPage({
   const [loadedKey,setLoadedKey]=useState(''),[draftRevision,setDraftRevision]=useState(0)
   const [draftId,setDraftId]=useState<string|undefined>()
   const saveLock=useRef(false)
+  const copyRequest=useRef(0)
+  const [copyError,setCopyError]=useState(''),[manualCopy,setManualCopy]=useState<string|null>(null)
   const [savedFields,setSavedFields]=useState('')
   const requestedVesselId=sessionId?'':vesselId,requestedDate=sessionId?'':businessDate
   const contextKey=sessionId?`${productType}:${sessionId}`:`${productType}:${vesselId}:${businessDate}`
@@ -64,6 +66,7 @@ export function PurchaseSettlementPage({
   useEffect(()=>{
     if(!sessionId&&!requestedVesselId){setLoading(false);return}
     let cancelled=false
+    copyRequest.current+=1;setCopyError('');setManualCopy(null)
     setLoading(true);setLoadFailed(false);setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setMessage('')
     void (async()=>{
       const source=sessionId?await bundleLoader(sessionId):(await sourceLoader(requestedVesselId,requestedDate,productType)).bundle
@@ -115,17 +118,26 @@ export function PurchaseSettlementPage({
   async function copyTable(){
     const header=fishHead?'鱼名\t总重量\t篮数\t预设价\t单价 RM/kg\t金额':'品质\t总重量\t篮数/总重记录\t预设价\t单价 RM/kg\t金额'
     const rows=lines.map(line=>[line.nameSnapshot,`${formatWeightKg(line.totalWeightGrams)} kg`,fishHead?`${line.basketCount}篮`:mealCountText(line),priceText(line.defaultUnitPriceCentsPerKg)||'-',priceText(line.unitPriceCentsPerKg),formatSettlementMoney(line.amountCents)].join('\t'))
-    try{await navigator.clipboard?.writeText([header,...rows,`总额\t${formatSettlementMoney(total)}`].join('\n'));setMessage('表格已复制，可以贴到 Excel。')}catch{setError('无法复制表格，请手动选择复制。')}
+    const text=[header,...rows,`总额\t${formatSettlementMoney(total)}`].join('\n'),request=++copyRequest.current
+    setMessage('');setCopyError('');setManualCopy(null)
+    if(typeof navigator.clipboard?.writeText!=='function'){
+      setCopyError('浏览器不支持自动复制，请长按下方文字手动复制。');setManualCopy(text);return
+    }
+    try{await navigator.clipboard.writeText(text);if(request===copyRequest.current)setMessage('表格已复制，可以贴到 Excel。')}
+    catch{if(request===copyRequest.current){setCopyError('无法自动复制表格，请长按下方文字手动复制。');setManualCopy(text)}}
   }
-  return <main className="purchase-settlement-page"><header><p className="eyebrow">CCM Fishery</p><h1>{fishHead?'鱼头结单':'鱼仔结单'}</h1><Link className="page-link" to={fishHead?'/fish-head-purchase':'/fish-meal-purchase'}>← 返回现场录入</Link></header>
+  return <main className="purchase-settlement-page"><header><p className="eyebrow">CCM Fishery</p><h1>{fishHead?'鱼头结单':'鱼仔结单'}</h1><Link className="page-link" to={fishHead?'/fish-head-settlement':'/fish-meal-settlement'}>← 返回结单列表</Link> <Link className="page-link" to={fishHead?'/fish-head-purchase':'/fish-meal-purchase'}>现场录入</Link></header>
     <section className="settlement-context"><label>船号<select aria-label="船号" value={vesselId} disabled={Boolean(sessionId)||busy} onChange={event=>setVesselId(event.target.value)}>{vessels.map(item=><option value={item.id} key={item.id}>{item.vesselCode}</option>)}{sourceSession&&!selectedVessel&&<option value={sourceSession.vesselId}>{sourceSession.vesselCodeSnapshot}</option>}</select></label>
       <label>日期<input aria-label="日期" type="date" value={dateInputValue(businessDate)} disabled={Boolean(sessionId)||busy} onChange={event=>{if(event.target.value)setBusinessDate(event.target.value.split('-').reverse().join('/'))}}/><small>{businessDate}</small></label>
-      <label className="settlement-receipt-no">单号（可之后补填）<input aria-label="单号" value={receiptNo} disabled={!editable||busy} onChange={event=>setReceiptNo(event.target.value)} placeholder="可留空"/></label></section>
+      <label className="settlement-receipt-no">{fishHead?'鱼头纸单号':'鱼仔纸单号'}（可之后补填）<input aria-label={fishHead?'鱼头纸单号':'鱼仔纸单号'} value={receiptNo} disabled={!editable||busy} onChange={event=>setReceiptNo(event.target.value)} placeholder="可留空"/></label></section>
     {error&&<p className="error" role="alert">{error}</p>}{error&&!loading&&<button type="button" disabled={busy} onClick={()=>setLoadAttempt(current=>current+1)}>重新载入结单</button>}{message&&<p className="notice" role="status">{message}</p>}
     {loading?<p className="notice">正在载入结单资料…</p>:loadFailed?null:<section className="settlement-table-section"><p className="settlement-meta">船号：{sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
+      {sourceSession&&<p>系统现场单号：{sourceSession.sessionCode}</p>}
       {ready&&sourceSession&&<p className="notice">{editable?'首次完成称重后 7 天内可修改；重开不会延长期限。':'本单已锁定或超过 7 天修改期，只能查看。'}</p>}
       {ready&&sourceSession?.status==='completed'&&editable&&<Link className="page-link" to={`/weighing/${sourceSession.id}/review`}>修改称重（7 天内）</Link>}
       {lines.length===0?<p className="notice">当前没有称重资料，不能结单。</p>:<><div className="settlement-table-scroll"><table className="settlement-table"><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>单价 RM/kg</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td>{formatWeightKg(line.totalWeightGrams)} kg</td><td>{fishHead?`${line.basketCount}篮`:mealCountText(line)}</td><td>{priceText(line.defaultUnitPriceCentsPerKg)?`RM ${priceText(line.defaultUnitPriceCentsPerKg)}`:'-'}</td><td><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" disabled={!editable||busy} value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td>{formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>总额</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div><div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button><button className="primary-action" type="button" disabled={busy||!editable} onClick={()=>void saveDraft()}>保存结单草稿</button></div></>}
+      {copyError&&<p className="error" role="alert">{copyError}</p>}
+      {manualCopy!==null&&<label className="settlement-manual-copy">手动复制表格<textarea aria-label="手动复制表格" readOnly rows={Math.min(12,lines.length+3)} value={manualCopy} onFocus={event=>event.currentTarget.select()}/></label>}
     </section>}
   </main>
 }

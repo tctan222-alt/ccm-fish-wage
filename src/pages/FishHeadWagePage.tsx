@@ -30,6 +30,7 @@ export function FishHeadWagePage({
   today=()=>malaysiaBusinessDate(new Date(now())),
 }:PageProps){
   const [workers,setWorkers]=useState<Worker[]|null>(null)
+  const [workerError,setWorkerError]=useState(''),[workerAttempt,setWorkerAttempt]=useState(0)
   const [worker,setWorker]=useState<Worker|null>(null)
   const [rate,setRate]=useState<number|null>(12)
   const [custom,setCustom]=useState('')
@@ -48,10 +49,13 @@ export function FishHeadWagePage({
   const last=useRef<{workerId:string;weight:number;rate:number;at:number}|null>(null)
 
   useEffect(()=>{
+    let current=true
+    setWorkers(null);setWorkerError('')
     workerLoader()
-      .then(items=>setWorkers(items.filter(item=>item.active&&workerDepartmentFromWorker(item)==='fish_head_cutting')))
-      .catch(()=>{setWorkers([]);setError('无法载入工人，请稍后再试。')})
-  },[workerLoader])
+      .then(items=>{if(current)setWorkers(items.filter(item=>item.active&&workerDepartmentFromWorker(item)==='fish_head_cutting'))})
+      .catch(()=>{if(current)setWorkerError('无法载入工人资料，请检查网络及权限后重试。')})
+    return()=>{current=false}
+  },[workerLoader,workerAttempt])
 
   const selectedRate=rate??parseRateCents(custom)
   const weightOk=validWeight(weight)
@@ -209,7 +213,7 @@ export function FishHeadWagePage({
 
     <section>
       <h2>1. 工人</h2>
-      {workers===null?<p>正在载入工人…</p>:workers.length===0?
+      {workerError?<div><p className="error" role="alert">{workerError}</p><button type="button" onClick={()=>setWorkerAttempt(value=>value+1)}>重试载入工人 Retry</button></div>:workers===null?<p role="status">正在载入工人…</p>:workers.length===0?
         <p className="notice">没有启用中的工人。请先新增或重新启用工人。</p>:
         <div className="workers">
           {workers.map(item=><button

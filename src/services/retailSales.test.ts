@@ -49,6 +49,11 @@ import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, lo
 const input: RetailSaleInput = { businessDate: '06/09/2026', vendorName: '阿明', vesselId: 'v833', vesselCodeSnapshot: '833', lines: [makeRetailLine(seed[0], '2', '6.15')] }
 beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-08T12:00:00Z')); state.records.clear(); state.records.set('vessels/v833', { active: true, vesselCode: '833' }); state.versions.clear(); state.retries = 0; state.writes.mockClear(); state.collectionReads = 0; state.beforeCollectionRead = null; state.serverReads.mockClear(); state.serverError = false; state.failPath = ''; state.uid = 'u1'; state.nextId = 0; state.beforeCommit = null; sessionStorage.clear() })
 
+it('classifies a confirmed missing invoice separately from read failures without writing anything',async()=>{
+  await expect(loadRetailSale('missing')).rejects.toMatchObject({code:'retail/not-found',message:'找不到此现金结算单。 Cash invoice not found.'})
+  expect(state.writes).not.toHaveBeenCalled()
+})
+
 it('stores independent same-day vessel snapshots and audits a vessel change without changing invoice identity', async () => {
   state.records.set('vessels/v978', { active: true, vesselCode: '978' })
   const first = await saveRetailSale('vessel-first', input)

@@ -22,9 +22,36 @@ function renderPage(productType:'fish_head'|'fish_meal',entries:WeighingEntry[],
   return {saver,sourceLoader,...render(<MemoryRouter><PurchaseSettlementPage productType={productType} vesselLoader={async()=>[vessel]} sourceLoader={sourceLoader} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-04T00:00:00Z')}/></MemoryRouter>)}
 }
 
-afterEach(()=>cleanup())
+const clipboardDescriptor=Object.getOwnPropertyDescriptor(navigator,'clipboard')
+afterEach(()=>{cleanup();if(clipboardDescriptor)Object.defineProperty(navigator,'clipboard',clipboardDescriptor);else Reflect.deleteProperty(navigator,'clipboard')})
 
 describe('purchase settlement MVP pages',()=>{
+  const tsv='鱼名\t总重量\t篮数\t预设价\t单价 RM/kg\t金额\n金线\t160.5 kg\t1篮\t2.10\t2.10\tRM 337.05\n总额\tRM 337.05'
+  it('claims copied only after the Clipboard API actually writes the original Excel TSV',async()=>{
+    const writeText=vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText}})
+    renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('table')
+    fireEvent.click(screen.getByRole('button',{name:'复制表格'}))
+    expect(await screen.findByText('表格已复制，可以贴到 Excel。')).toBeInTheDocument()
+    expect(writeText).toHaveBeenCalledWith(tsv)
+    expect(screen.queryByLabelText('手动复制表格')).not.toBeInTheDocument()
+  })
+  it.each(['unsupported','rejected'])('provides exact selectable TSV instead of false success when clipboard is %s',async(mode)=>{
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:mode==='unsupported'?undefined:{writeText:vi.fn().mockRejectedValue(new Error('denied'))}})
+    renderPage('fish_head',[headEntry('jin')]);await screen.findByRole('table')
+    fireEvent.click(screen.getByRole('button',{name:'复制表格'}))
+    const fallback=await screen.findByLabelText('手动复制表格')
+    expect(fallback).toHaveValue(tsv);expect(fallback).toHaveAttribute('readonly')
+    expect(screen.queryByText('表格已复制，可以贴到 Excel。')).not.toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent(mode==='unsupported'?'浏览器不支持自动复制':'无法自动复制表格')
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
+  })
+  it.each(['fish_head','fish_meal'] as const)('links the %s detail back to its own settlement list and distinguishes paper and system numbers',async(productType)=>{
+    renderPage(productType,[]);await waitFor(()=>expect(screen.queryByText('正在载入结单资料…')).not.toBeInTheDocument())
+    expect(screen.getByRole('link',{name:'← 返回结单列表'})).toHaveAttribute('href',productType==='fish_head'?'/fish-head-settlement':'/fish-meal-settlement')
+    expect(screen.getByLabelText(productType==='fish_head'?'鱼头纸单号':'鱼仔纸单号')).toBeInTheDocument()
+    expect(await screen.findByText(/系统现场单号：/)).toHaveTextContent(productType==='fish_head'?'FH-978-20260803-01':'FM-978-20260803-01')
+  })
   it('shows a stable fish-head Excel table, default price, blank unmatched price, and recalculates edited cents',async()=>{
     const unmatched=headEntry('other','没有预设价','unknown',50)
     const result=renderPage('fish_head',[headEntry('jin'),unmatched])
@@ -107,7 +134,7 @@ describe('purchase settlement MVP pages',()=>{
     render(<MemoryRouter><PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[vessel]} sourceLoader={async()=>({session,bundle:{session,entries:[headEntry('jin')]}})} draftLoader={async()=>null} draftSaver={saver} today={()=>'03/08/2026'} now={()=>new Date('2026-08-10T02:00:00.001Z')}/></MemoryRouter>)
     expect(await screen.findByRole('table')).toBeInTheDocument()
     expect(screen.getByLabelText('金线单价')).toBeDisabled()
-    expect(screen.getByLabelText('单号')).toBeDisabled()
+    expect(screen.getByLabelText('鱼头纸单号')).toBeDisabled()
     expect(screen.getByRole('button',{name:'保存结单草稿'})).toBeDisabled()
     expect(screen.queryByRole('link',{name:'修改称重（7 天内）'})).not.toBeInTheDocument()
     expect(saver).not.toHaveBeenCalled()

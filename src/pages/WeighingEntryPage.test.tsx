@@ -81,9 +81,9 @@ describe('iPhone 现场称重单页',()=>{
     expect((await store.getEntries('session-v978-20260730'))).toEqual([expect.not.objectContaining({receiptNoSnapshot:expect.any(String)})])
   })
 
-  it('鱼头单号可以留空；有船号、鱼名和合法重量时仍会保存，并且不伪造正式单号快照',async()=>{
+  it('鱼头纸单号可以留空；有船号、鱼名和合法重量时仍会保存，并且不伪造正式单号快照',async()=>{
     const {store}=setup()
-    const slip=await screen.findByLabelText('鱼头单号')
+    const slip=await screen.findByLabelText('鱼头纸单号')
     expect(slip).toHaveValue('')
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'80.5'}})
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
@@ -94,9 +94,9 @@ describe('iPhone 现场称重单页',()=>{
     expect((await store.getEntries('session-v978-20260730'))[0]).not.toHaveProperty('receiptNoSnapshot')
   })
 
-  it('保存已去除首尾空格的鱼头单号后不会继续提示未保存',async()=>{
+  it('保存已去除首尾空格的鱼头纸单号后不会继续提示未保存',async()=>{
     const {store}=setup(remoteSync(),createMemoryWeighingStore(),true)
-    const slip=await screen.findByLabelText('鱼头单号')
+    const slip=await screen.findByLabelText('鱼头纸单号')
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:' FH-001 '}})
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'80'}})
@@ -112,13 +112,13 @@ describe('iPhone 现场称重单页',()=>{
     })
   })
 
-  it('切换船号后鱼头单号仍可输入，且会在下一篮保存到该草稿单',async()=>{
+  it('切换船号后鱼头纸单号仍可输入，且会在下一篮保存到该草稿单',async()=>{
     const {store}=setup()
     await screen.findByLabelText('重量（kg）')
     await waitFor(()=>expect(screen.getByRole('option',{name:'833'})).toHaveValue('v833'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v833')
-    const slip=screen.getByLabelText('鱼头单号')
+    const slip=screen.getByLabelText('鱼头纸单号')
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FH-833-A'}})
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
@@ -263,13 +263,13 @@ describe('iPhone 现场称重单页',()=>{
     expect(screen.getAllByText('1 篮').length).toBeGreaterThan(0)
   })
 
-  it('鱼仔单号可以留空；未选桶鱼仔或包鱼仔时阻止保存，选择后会保存而不写正式单号快照',async()=>{
+  it('鱼仔纸单号可以留空；未选桶鱼仔或包鱼仔时阻止保存，选择后会保存而不写正式单号快照',async()=>{
     const store=createMemoryWeighingStore()
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
       vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
       offlineStore={store} remoteSync={remoteSync()} today={()=> '2026-07-30'} now={()=> '2026-07-30T12:00:00.000+08:00'}
       idFactory={kind=>kind==='session'?'meal-session-optional-slip':`${kind}-optional-slip`}/></MemoryRouter>)
-    const slip=await screen.findByLabelText('鱼仔单号')
+    const slip=await screen.findByLabelText('鱼仔纸单号')
     expect(slip).toHaveValue('')
     fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'10'}})
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
@@ -285,7 +285,7 @@ describe('iPhone 现场称重单页',()=>{
     expect((await store.getEntries('meal-session-optional-slip'))[0]).not.toHaveProperty('receiptNoSnapshot')
   })
 
-  it('切换船号后鱼仔单号、品质和重量键盘仍可继续使用',async()=>{
+  it('切换船号后鱼仔纸单号、品质和重量键盘仍可继续使用',async()=>{
     const store=createMemoryWeighingStore()
     render(<MemoryRouter><WeighingEntryPage fixedProductType="fish_meal" pageTitle="鱼仔购入"
       vesselLoader={async()=>vessels} speciesLoader={async()=>DEFAULT_FISH_SPECIES} openSessionLoader={async()=>null} closedSessionLoader={async()=>null}
@@ -295,7 +295,7 @@ describe('iPhone 现场称重单页',()=>{
     await waitFor(()=>expect(screen.getByRole('option',{name:'833'})).toHaveValue('v833'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v833')
-    const slip=screen.getByLabelText('鱼仔单号')
+    const slip=screen.getByLabelText('鱼仔纸单号')
     await waitFor(()=>expect(slip).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FM-833-A'}})
     fireEvent.click(screen.getByRole('button',{name:'桶鱼仔'}))

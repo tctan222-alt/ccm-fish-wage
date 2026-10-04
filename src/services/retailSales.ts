@@ -259,7 +259,7 @@ export async function updateRetailSale(id: string, input: RetailSaleInput, expec
 
 export async function loadRetailSale(id: string): Promise<RetailSale> {
   const snapshot = await getDoc(doc(db, 'retailSales', id))
-  if (!snapshot.exists()) throw new Error('找不到此现金结算单。 Cash invoice not found.')
+  if (!snapshot.exists()) throw retailError('retail/not-found', '找不到此现金结算单。 Cash invoice not found.')
   return saleFromDocument(snapshot.id, snapshot.data())
 }
 

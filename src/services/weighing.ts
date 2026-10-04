@@ -348,7 +348,7 @@ export async function updateWeighingSessionDetails(input:{
   reason:string
 }){
   const code=input.sessionCode.trim(),reason=input.reason.trim(),notes=input.notes.trim()
-  if(code.length<5||code.length>80)throw new Error('现场单号必须为 5 至 80 个字符。')
+  if(code.length<5||code.length>80)throw new Error('系统现场单号必须为 5 至 80 个字符。')
   if(reason.length<3||reason.length>100)throw new Error('修改原因必须为 3 至 100 个字符。')
   if(notes.length>500)throw new Error('备注不得超过 500 个字符。')
   const user=requireUser(),sessionRef=doc(db,'weighingSessions',input.sessionId),actionRef=doc(collection(sessionRef,'actions')),timestamp=serverTimestamp()
@@ -360,7 +360,7 @@ export async function updateWeighingSessionDetails(input:{
     if(current.status==='processed')throw new Error('已结单的现场单必须先建立调整单，不能直接修改。')
     if(current.status==='voided')throw new Error('已作废的现场单不能修改。')
     if(!canModifyWeighing(current))throw new Error('已超过首次完成称重后的 7 天修改期。')
-    if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('单号前缀必须与产品类型一致。')
+    if(!code.startsWith(current.productType==='fish_head'?'FH-':'FM-'))throw new Error('系统现场单号前缀必须与产品类型一致。')
     if(!vesselSnapshot.exists()||vesselSnapshot.data().active!==true)throw new Error('船号已停用或不存在。')
     const weighingDate=businessDateFromLegacy(input.weighingDate),monthKey=monthKeyFromBusinessDate(weighingDate)
     const next={...current,sessionCode:code,weighingDate,monthKey,dateSortKey:sortKeyFromBusinessDate(weighingDate),monthSortKey:monthSortKeyFromMonthKey(monthKey),

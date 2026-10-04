@@ -277,9 +277,18 @@ export function RetailHistoryPage() {
 
 export function RetailReceiptPage() {
   const { saleId = '' } = useParams(), [sale, setSale] = useState<RetailSale | null>(null), [error, setError] = useState('')
-  useEffect(() => { let current = true; setSale(null); setError(''); void loadRetailSale(saleId).then(item => { if (current) setSale(item) }).catch(problem => { if (current) setError(message(problem)) }); return () => { current = false } }, [saleId])
+  const [attempt, setAttempt] = useState(0), [notFound, setNotFound] = useState(false)
+  useEffect(() => {
+    let current = true; setSale(null); setError(''); setNotFound(false)
+    void loadRetailSale(saleId).then(item => { if (current) setSale(item) }).catch(problem => {
+      if (!current) return
+      if (problem?.code === 'retail/not-found') setNotFound(true)
+      else setError(message(problem))
+    })
+    return () => { current = false }
+  }, [saleId, attempt])
   const now = useEditClock(sale ? [sale] : [])
-  return <main className="retail-page"><RetailHeader title="门市现金结算单" />{error ? <p className="error" role="alert">{error}</p> : !sale ? <p role="status">正在载入结算单… Loading invoice…</p> : <><RetailReceipt sale={sale} /><RetailEditEntry sale={sale} now={now} /><RetailReceiptActions sale={sale} /></>}</main>
+  return <main className="retail-page"><RetailHeader title="门市现金结算单" />{error ? <><p className="error" role="alert">{error}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>重新载入 Reload</button></> : notFound ? <p className="notice" role="status">找不到此现金结算单。 Cash invoice not found.</p> : !sale ? <p role="status">正在载入结算单… Loading invoice…</p> : <><RetailReceipt sale={sale} /><RetailEditEntry sale={sale} now={now} /><RetailReceiptActions sale={sale} /></>}</main>
 }
 
 type EditableRetailLine = { key: number; sourceIndex: number; fishId: string; chineseName: string; malayName: string; weight: string; price: string }
