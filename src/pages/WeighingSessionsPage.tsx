@@ -29,16 +29,16 @@ export function WeighingSessionsPage({loader=loadWeighingSessions}:{loader?:()=>
         <option value="">全部</option>{vessels.map(([id,code])=><option key={id} value={id}>{code}</option>)}</select></label>
       <label>状态<select aria-label="状态" value={status} onChange={event=>setStatus(event.target.value)}>
         <option value="all">全部</option>{Object.entries(STATUS_NAMES).map(([key,name])=><option key={key} value={key}>{name}</option>)}</select></label>
-      <label className="weighing-search">单号搜索<input aria-label="手写单号或现场单号" value={search}
-        placeholder="手写单号或现场单号" onChange={event=>setSearch(event.target.value)}/></label>
+      <label className="weighing-search">纸单号 / 系统现场单号搜索<input aria-label="纸单号或系统现场单号" value={search}
+        placeholder="纸单号或系统现场单号" onChange={event=>setSearch(event.target.value)}/></label>
     </section>
     <section className="master-summary weighing-list-summary"><div><span>现场单</span><strong>{visible.length}</strong></div>
       <div><span>总重量</span><strong>{formatWeightKg(visible.reduce((sum,item)=>sum+item.totalWeightGrams,0))} kg</strong></div></section>
     {error&&<p className="error" role="alert">{error}</p>}
     {items===null?<p className="notice">正在载入现场称重单…</p>:<div className="weighing-session-list">
       {visible.map(item=><Link className="weighing-session-card" key={item.id} to={`/weighing/${item.id}/review`}>
-        <div><small>{formatMalaysiaDate(item.weighingDate)} · {item.externalSlipNo||'没有手写单号'}</small>
-          <strong>{item.sessionCode}</strong><span>{item.vesselNameSnapshot||item.vesselCodeSnapshot}</span>
+        <div><small>{formatMalaysiaDate(item.weighingDate)} · {item.productType==='fish_head'?'鱼头纸单号':item.productType==='fish_meal'?'鱼仔纸单号':'纸单号'}：{item.externalSlipNo||'未填'}</small>
+          <small>系统现场单号</small><strong>{item.sessionCode}</strong><span>{item.vesselNameSnapshot||item.vesselCodeSnapshot}</span>
           <span>鱼头 {item.fishHeadBasketCount} 篮 · {formatWeightKg(item.fishHeadWeightGrams)} kg</span>
           <span>鱼仔 {formatWeightKg(item.fishMealTotalWeightGrams)} kg</span></div>
         <div><span className={`record-status ${item.status}`}>{STATUS_NAMES[item.status]}</span>

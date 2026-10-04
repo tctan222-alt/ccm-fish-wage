@@ -348,7 +348,7 @@ export async function updateWeighingSessionDetails(input:{
   reason:string
 }){
   const code=input.sessionCode.trim(),reason=input.reason.trim(),notes=input.notes.trim()
-  if(code.length<5||code.length>80)throw new Error('现场单号必须为 5 至 80 个字符。')
+  if(code.length<5||code.length>80)throw new Error('系统现场单号必须为 5 至 80 个字符。')
   if(reason.length<3||reason.length>100)throw new Error('修改原因必须为 3 至 100 个字符。')
   if(notes.length>500)throw new Error('备注不得超过 500 个字符。')
   const user=requireUser(),sessionRef=doc(db,'weighingSessions',input.sessionId),actionRef=doc(collection(sessionRef,'actions')),timestamp=serverTimestamp()

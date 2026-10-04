@@ -43,6 +43,38 @@ async function chooseWorkerAndEnter74Kg(){
 }
 
 describe('fish head worker session flow',()=>{
+  it('distinguishes a failed worker read from a successful empty list and retries without leaving',async()=>{
+    const workerLoader=vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(workers)
+    render(<MemoryRouter><FishHeadWagePage workerLoader={workerLoader}/></MemoryRouter>)
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法载入工人资料')
+    expect(screen.queryByText('没有启用中的工人。请先新增或重新启用工人。')).not.toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'新增／管理工人'})).toHaveAttribute('href','/workers')
+    fireEvent.click(screen.getByRole('button',{name:'重试载入工人 Retry'}))
+    expect(await screen.findByRole('button',{name:'Ah Mei'})).toBeInTheDocument()
+    expect(workerLoader).toHaveBeenCalledTimes(2)
+    cleanup()
+    render(<MemoryRouter><FishHeadWagePage workerLoader={async()=>[]}/></MemoryRouter>)
+    expect(await screen.findByText('没有启用中的工人。请先新增或重新启用工人。')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'重试载入工人 Retry'})).not.toBeInTheDocument()
+  })
+
+  it('preserves entered kg, rate, worker selection and unsaved baskets when retrying only workers',async()=>{
+    const initialLoader=async()=>workers,batchSaver=vi.fn()
+    const page=(loader:()=>Promise<typeof workers>)=><MemoryRouter><FishHeadWagePage workerLoader={loader} batchSaver={batchSaver}/></MemoryRouter>
+    const view=render(page(initialLoader));await chooseWorkerAndEnter74Kg()
+    fireEvent.click(screen.getByRole('button',{name:'RM0.15'}))
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    fireEvent.click(screen.getByRole('button',{name:'8'}))
+    const retryLoader=vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(workers)
+    view.rerender(page(retryLoader));await screen.findByRole('alert')
+    fireEvent.click(screen.getByRole('button',{name:'重试载入工人 Retry'}))
+    expect(await screen.findByRole('button',{name:'Ah Mei'})).toHaveAttribute('aria-pressed','true')
+    expect(screen.getByRole('button',{name:'RM0.15'})).toHaveAttribute('aria-pressed','true')
+    expect(screen.getByRole('group',{name:'当前篮重'})).toHaveTextContent('8 kg')
+    expect(screen.getByText('74kg × RM0.15')).toBeInTheDocument()
+    expect(batchSaver).not.toHaveBeenCalled()
+  })
   it('keeps the wage page limited to wage entry and wage summaries',async()=>{
     setup()
     expect(await screen.findByRole('link',{name:'每日明细'})).toBeInTheDocument()

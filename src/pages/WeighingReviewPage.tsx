@@ -81,7 +81,7 @@ export function WeighingReviewPage({
   }
   return <main className="weighing-review-page"><header><p className="eyebrow">CCM Fishery</p><h1>称重复核</h1>
     <Link className="page-link" to="/weighing">← 现场称重单</Link></header>
-    <section className="weighing-review-heading"><div><small>现场单号</small><strong>{session.sessionCode}</strong></div>
+    <section className="weighing-review-heading"><div><small>系统现场单号</small><strong>{session.sessionCode}</strong></div>
       <div><small>船号与日期</small><strong>{session.vesselCodeSnapshot} · {formatMalaysiaDate(session.weighingDate)}</strong></div>
       <div><small>状态</small><strong>{statusName(session.status)}</strong></div>
       <div><small>总重量</small><strong>{formatWeightKg(session.totalWeightGrams)} kg</strong></div></section>
@@ -140,10 +140,10 @@ function SessionEditDialog({session,vessels,busy,close,save}:{session:WeighingSe
   function submit(event:FormEvent){event.preventDefault();if(vessel)void save({sessionCode,weighingDate,vessel,externalSlipNo,notes,reason})}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true" aria-label="后台修改本单"><h2>后台修改本单</h2>
     <p>这是受控后台动作，不等同于现场页面切换船号；所有修改都会保留审计记录。</p><form className="master-form" onSubmit={submit}>
-      <label>现场单号<input aria-label="现场单号" value={sessionCode} maxLength={80} onChange={event=>setSessionCode(event.target.value)}/></label>
+      <label>系统现场单号<input aria-label="系统现场单号" value={sessionCode} maxLength={80} onChange={event=>setSessionCode(event.target.value)}/></label>
       <label>日期<input aria-label="日期" value={weighingDate} onChange={event=>setWeighingDate(event.target.value)}/></label>
       <label>船号<select aria-label="后台船号" value={vesselId} onChange={event=>setVesselId(event.target.value)}>{vessels.map(item=><option value={item.id} key={item.id}>{item.vesselCode}</option>)}</select></label>
-      <label>手写单号<input aria-label="手写单号" value={externalSlipNo} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
+      <label>{session.productType==='fish_head'?'鱼头纸单号':session.productType==='fish_meal'?'鱼仔纸单号':'纸单号'}<input aria-label={session.productType==='fish_head'?'鱼头纸单号':session.productType==='fish_meal'?'鱼仔纸单号':'纸单号'} value={externalSlipNo} onChange={event=>setExternalSlipNo(event.target.value)}/></label>
       <label>备注<textarea aria-label="后台备注" value={notes} onChange={event=>setNotes(event.target.value)}/></label>
       <label>修改原因<input aria-label="修改原因" value={reason} minLength={3} maxLength={100} onChange={event=>setReason(event.target.value)}/></label>
       <button className="primary-action" disabled={busy||!vessel}>保存后台修正</button><button type="button" disabled={busy} onClick={close}>取消</button>
