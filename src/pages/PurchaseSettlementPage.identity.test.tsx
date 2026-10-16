@@ -2,6 +2,8 @@ import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
 import { MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
+
+vi.mock('../services/weighing',async importOriginal=>({...await importOriginal<typeof import('../services/weighing')>(),loadFishSpecies:async()=>[]}))
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice } from '../lib/purchaseSettlement'
 import { newWeighingSession,buildWeighingEntry } from '../lib/weighing'
 
@@ -30,7 +32,7 @@ describe('settlement source identity on the page',()=>{
     expect(screen.getByLabelText('船号')).toHaveValue(context.vesselId)
     expect(screen.getByText('80 kg')).toBeInTheDocument()
     expect(screen.getAllByText('RM 232.00').length).toBeGreaterThan(0)
-    expect(screen.getByRole('cell',{name:'RM 2.75'})).toBeInTheDocument()
+    expect(screen.getByRole('cell',{name:/^RM 2\.75 基础价 RM 2\.75/})).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
     await waitFor(()=>expect(draftSaver).toHaveBeenCalledTimes(1))
     expect(draftSaver.mock.calls[0][0]).toMatchObject({draftId:saved.draftId,sourceSessionId:'same-source',sourceSessionRevision:3,revision:4,

@@ -3,6 +3,8 @@ import { useUnsavedForm } from '../components/dirtyState'
 import { Link } from 'react-router-dom'
 import type { FishSpeciesRecord } from '../lib/weighing'
 import { initializeDefaultFishSpecies,loadFishSpecies,saveFishSpecies } from '../services/weighing'
+import { fishHeadMasterPriceInputToCents,fishHeadMasterPriceInputValue } from '../lib/fishHeadMasterPrice'
+import './fishSpecies.css'
 
 export function FishSpeciesPage({loader=loadFishSpecies,initializer=initializeDefaultFishSpecies,saver=saveFishSpecies}:{
   loader?:()=>Promise<FishSpeciesRecord[]>
@@ -19,16 +21,18 @@ export function FishSpeciesPage({loader=loadFishSpecies,initializer=initializeDe
     setBusy(true);try{const saved=await saver({...item,active:!item.active});setItems(current=>current?.map(row=>row.id===saved.id?saved:row)??[])}
     catch(problem){setError(problem instanceof Error?problem.message:'鱼名状态修改失败。')}finally{setBusy(false)}
   }
-  return <main><header><p className="eyebrow">CCM Fishery</p><h1>鱼名管理</h1><Link className="page-link" to="/master-data">← 主资料中心</Link></header>
+  return <main className="fish-species-master"><header><p className="eyebrow">CCM Fishery</p><h1>鱼头鱼名与基础默认价 Fish Head Master</h1><Link className="page-link" to="/master-data">← 主资料中心</Link></header>
+    <p className="notice">基础默认价 Base default price (RM/kg)，不含船号加价。修改只影响之后的默认建议价，不改写已保存结单。</p>
     {error&&<p className="error" role="alert">{error}</p>}
     {items===null?<p className="notice">正在载入鱼名…</p>:items.length===0?<section>
       <h2>尚未建立鱼名</h2><p>建立前不会自动写入生产资料。请由管理员明确确认。</p>
       <button className="primary-action" disabled={busy} onClick={()=>void initialize()}>建立 CCM 默认鱼名</button>
-    </section>:<div className="master-card-list">{items.sort((a,b)=>a.order-b.order).map(item=><article className="master-card" key={item.id}>
+    </section>:<div className="master-card-list">{[...items].sort((a,b)=>a.order-b.order).map(item=><article className="master-card" id={`species-${item.id}`} key={item.id}>
       <div className="master-card-heading"><div><small>{item.speciesCode}</small><h2>{item.displayName}</h2></div>
         <span className={`record-status ${item.active?'active':'inactive'}`}>{item.active?'启用':'停用'}</span></div>
       <p>顺序：{item.order}{item.notes&&` · ${item.notes}`}</p>
-      <div className="master-actions"><button onClick={()=>setEditing(item)}>修改</button>
+      <p>基础默认价 Base default：{fishHeadMasterPriceInputValue(item)?`RM${fishHeadMasterPriceInputValue(item)}/kg`:'未设默认价 Not set'}</p>
+      <div className="master-actions"><button onClick={()=>setEditing(item)}>修改鱼名 / 基础价 Edit</button>
         <button disabled={busy} className={item.active?'deactivate-action':'activate-action'} onClick={()=>void toggle(item)}>{item.active?'停用':'重新启用'}</button></div>
     </article>)}</div>}
     {editing&&<FishSpeciesDialog item={editing} close={()=>setEditing(null)} save={async next=>{const saved=await saver(next)
@@ -38,14 +42,17 @@ export function FishSpeciesPage({loader=loadFishSpecies,initializer=initializeDe
 
 function FishSpeciesDialog({item,close,save}:{item:FishSpeciesRecord;close:()=>void;save:(item:FishSpeciesRecord)=>Promise<void>}){
   const [name,setName]=useState(item.displayName),[order,setOrder]=useState(String(item.order)),[notes,setNotes]=useState(item.notes)
-  useUnsavedForm({ name, order, notes })
+  const [basePrice,setBasePrice]=useState(()=>fishHeadMasterPriceInputValue(item))
+  useUnsavedForm({ name, order, notes, basePrice })
   const [error,setError]=useState(''),[busy,setBusy]=useState(false)
   async function submit(event:FormEvent){event.preventDefault();setBusy(true)
-    try{await save({...item,displayName:name,order:Number(order),notes})}
+    try{await save({...item,displayName:name,order:Number(order),notes,basePriceCentsPerKg:fishHeadMasterPriceInputToCents(basePrice)})}
     catch(problem){setError(problem instanceof Error?problem.message:'鱼名保存失败。');setBusy(false)}}
   return <div className="dialog-backdrop"><section className="form-dialog" role="dialog" aria-modal="true"><h2>修改鱼名</h2>
     <form className="master-form" onSubmit={submit}><label>内部代码<input value={item.speciesCode} disabled/></label>
       <label>中文鱼名<input value={name} onChange={event=>setName(event.target.value)}/></label>
+      <label>基础默认价 Base default (RM/kg)<input inputMode="decimal" type="text" value={basePrice} placeholder="未设默认价 Not set" onChange={event=>setBasePrice(event.target.value)}/></label>
+      <p className="notice">留空表示未设默认价。此处不包含 978 / 5202 船号的 RM0.05/kg 加价，也不会改写历史结单价格。</p>
       <label>显示顺序<input type="number" min="1" value={order} onChange={event=>setOrder(event.target.value)}/></label>
       <label>备注<textarea value={notes} onChange={event=>setNotes(event.target.value)}/></label>
       {error&&<p className="error" role="alert">{error}</p>}<button className="primary-action" disabled={busy}>保存</button>

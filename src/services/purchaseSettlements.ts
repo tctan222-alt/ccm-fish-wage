@@ -1,7 +1,7 @@
 import { collection,doc,getDoc,getDocFromServer,getDocs,query,where,runTransaction,serverTimestamp } from 'firebase/firestore'
 import { auth,db,firebaseConfigured } from '../firebase'
 import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
-import { asSettlementSourceEntry,assertValidPurchaseSettlementDraft,draftIdForSettlement,draftIdForSourceSession,type PurchaseSettlementDraft,type PurchaseSettlementLine } from '../lib/purchaseSettlement'
+import { asSettlementSourceEntry,assertFishHeadSettlementPrices,assertValidPurchaseSettlementDraft,draftIdForSettlement,draftIdForSourceSession,type PurchaseSettlementDraft,type PurchaseSettlementLine } from '../lib/purchaseSettlement'
 import { loadStableWeighingBundle,loadWeighingSessions,type WeighingBundle } from './weighing'
 import { type WeighingProductType,type WeighingSession } from '../lib/weighing'
 import { canEditSettlement } from '../lib/settlementLifecycle'
@@ -87,7 +87,7 @@ function proveLegacyDraft(draft:PurchaseSettlementDraft,bundle:WeighingBundle,pr
 }
 
 /** Resolves identity only; reading never binds or migrates a legacy document. */
-export async function loadPurchaseSettlementDraftForSource(bundle:WeighingBundle,productType:WeighingProductType):Promise<PurchaseSettlementDraft|null>{
+export async function loadPurchaseSettlementDraftForSource(bundle:WeighingBundle,productType:WeighingProductType,onLegacyRead?:()=>void):Promise<PurchaseSettlementDraft|null>{
   requireUser()
   const sessionId=bundle.session.id,canonicalId=draftIdForSourceSession(productType,sessionId)
   if(bundle.session.productType&&bundle.session.productType!==productType)throw new Error('结单类型与来源称重单不一致。')
@@ -106,6 +106,7 @@ export async function loadPurchaseSettlementDraftForSource(bundle:WeighingBundle
   }
   const canonical=await getDoc(doc(db,DRAFT_COLLECTION,canonicalId))
   if(canonical.exists())throw new Error(`来源结单无法安全读取，请核查（${canonicalId}）。`)
+  onLegacyRead?.()
   const snapshots=await Promise.all(legacyDraftIds(bundle,productType).map(id=>getDoc(doc(db,DRAFT_COLLECTION,id))))
   const legacy=snapshots.filter(item=>item.exists()).map(item=>draftFrom(item.id,item.data()))
   legacy.forEach(draft=>{
@@ -144,6 +145,7 @@ export async function finalizePurchaseSettlement(value:PurchaseSettlementDraft):
 
 async function writeSettlement(value:PurchaseSettlementDraft,finalize:boolean):Promise<PurchaseSettlementDraft>{
   assertValidPurchaseSettlementDraft(value)
+  if(finalize||value.status==='settlement_finalized')assertFishHeadSettlementPrices(value)
   const user=requireUser()
   if(!value.sourceSessionId)throw new Error('缺少来源称重单，请重新载入。')
   const sourceSessionId=value.sourceSessionId,canonicalId=draftIdForSourceSession(value.productType,sourceSessionId)
@@ -191,6 +193,7 @@ async function writeSettlement(value:PurchaseSettlementDraft,finalize:boolean):P
     const persisted={...value};delete persisted.draftId
     delete persisted.finalizedAt;delete persisted.finalizedBy
     const wasFinalized=existing.exists()&&existing.data().status==='settlement_finalized'
+    if(wasFinalized)assertFishHeadSettlementPrices(value)
     if(!wasFinalized&&!finalize&&value.status==='settlement_finalized')throw new Error('结单状态已变更，请重新载入。')
     const next={...persisted,businessDate:date,dateSortKey,monthKey,monthSortKey,status:wasFinalized||finalize?'settlement_finalized' as const:'settlement_draft' as const,
       ...(wasFinalized?{finalizedAt:existing.data().finalizedAt,finalizedBy:existing.data().finalizedBy}:finalize?{finalizedAt:now,finalizedBy:user.uid}:{}),

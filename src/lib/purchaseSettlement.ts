@@ -1,6 +1,7 @@
-import { lineAmountCents } from './purchasing'
-import { getDefaultFishHeadPriceCents,getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
-import type { FishMealQuality,WeighingEntry,WeighingEntryMode,WeighingProductType } from './weighing'
+import { lineAmountCents,MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG } from './purchasing'
+import { fishHeadNoLoanVesselCodes,fishHeadNoLoanPremiumCents,getDefaultFishHeadPriceCents,getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
+import type { FishSpeciesRecord,FishMealQuality,WeighingEntry,WeighingEntryMode,WeighingProductType } from './weighing'
+import { fishHeadMasterBasePriceCents } from './fishHeadMasterPrice'
 import type { SettlementStatus } from './settlementLifecycle'
 
 export interface SettlementSourceEntry {
@@ -25,6 +26,8 @@ export interface PurchaseSettlementLine {
   basketCount:number
   totalWeightEntryCount:number
   defaultUnitPriceCentsPerKg:number|null
+  baseUnitPriceCentsPerKg?:number|null
+  vesselPremiumCentsPerKg?:number
   unitPriceCentsPerKg:number|null
   priceWasEdited:boolean
   amountCents:number
@@ -64,14 +67,20 @@ export interface PurchaseSettlementDraft {
 }
 
 /** Recalculate current weights while retaining the saved price snapshots. */
+export function settlementLineIdentity(line:PurchaseSettlementLine):string {
+  return line.lineType==='fish_head'?`head:${line.fishSpeciesCodeSnapshot??line.fishSpeciesId??line.nameSnapshot}`:`meal:${line.qualityCodeSnapshot}`
+}
+
 export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:PurchaseSettlementLine[]):PurchaseSettlementLine[]{
-  const identity=(line:PurchaseSettlementLine)=>line.lineType==='fish_head'
-    ?`head:${line.fishSpeciesCodeSnapshot??line.fishSpeciesId??line.nameSnapshot}`:`meal:${line.qualityCodeSnapshot}`
   return current.map(line=>{
-    const previous=saved.find(item=>identity(item)===identity(line))
+    const previous=saved.find(item=>settlementLineIdentity(item)===settlementLineIdentity(line))
     if(!previous)return line
     const next={...line,defaultUnitPriceCentsPerKg:previous.defaultUnitPriceCentsPerKg,
       unitPriceCentsPerKg:previous.unitPriceCentsPerKg,priceWasEdited:previous.priceWasEdited}
+    if(previous.baseUnitPriceCentsPerKg===undefined)delete next.baseUnitPriceCentsPerKg
+    else next.baseUnitPriceCentsPerKg=previous.baseUnitPriceCentsPerKg
+    if(previous.vesselPremiumCentsPerKg===undefined)delete next.vesselPremiumCentsPerKg
+    else next.vesselPremiumCentsPerKg=previous.vesselPremiumCentsPerKg
     return {...next,amountCents:calculateSettlementLineAmount(next)}
   })
 }
@@ -93,7 +102,7 @@ export function calculateSettlementLineAmount(line:Pick<PurchaseSettlementLine,'
 
 function sourceOrder(entry:SettlementSourceEntry){return entry.sequenceNo??Number.MAX_SAFE_INTEGER}
 
-export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],productType:WeighingProductType,vesselCode:string):PurchaseSettlementLine[] {
+export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],productType:WeighingProductType,vesselCode:string,masterSpecies:readonly FishSpeciesRecord[]=[]):PurchaseSettlementLine[] {
   const groups=new Map<string,{first:number;entries:SettlementSourceEntry[]}>()
   entries.filter(item=>!item.voided&&item.productType===productType).forEach(entry=>{
     const key=productType==='fish_head'?`fish_head:${entry.fishSpeciesCodeSnapshot??entry.displayNameSnapshot}`:`fish_meal:${entry.fishMealQuality}`
@@ -104,13 +113,16 @@ export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],pro
     const first=group.entries[0]
     const isHead=productType==='fish_head'
     const name=first.displayNameSnapshot
+    const master=masterSpecies.find(item=>item.id===first.fishSpeciesId)??masterSpecies.find(item=>item.speciesCode===first.fishSpeciesCodeSnapshot)
+    const base=master?fishHeadMasterBasePriceCents(master):null
     const defaultPrice=isHead
-      ?getDefaultFishHeadPriceCents(name,vesselCode)
+      ?master?(base===null?null:base+fishHeadVesselPremiumCents(vesselCode)):getDefaultFishHeadPriceCents(name,vesselCode)
       :getDefaultFishMealPriceCents(first.fishMealQuality??'bucket',vesselCode)
     const line:PurchaseSettlementLine={
       lineType:productType,nameSnapshot:name,totalWeightGrams:group.entries.reduce((sum,item)=>sum+item.weightGrams,0),
       basketCount:group.entries.reduce((sum,item)=>sum+(item.entryMode==='individual'?1:0),0),
       totalWeightEntryCount:group.entries.length,defaultUnitPriceCentsPerKg:defaultPrice,
+      ...(isHead?{baseUnitPriceCentsPerKg:master?base:defaultPrice===null?null:defaultPrice-fishHeadVesselPremiumCents(vesselCode),vesselPremiumCentsPerKg:fishHeadVesselPremiumCents(vesselCode)}:{}),
       unitPriceCentsPerKg:defaultPrice,priceWasEdited:false,amountCents:0,sourceEntryIds:group.entries.map(item=>item.id),
       ...(isHead?{fishSpeciesId:first.fishSpeciesId??undefined,fishSpeciesCodeSnapshot:first.fishSpeciesCodeSnapshot??undefined,
         fishSpeciesNameSnapshot:first.fishSpeciesNameSnapshot??undefined}:{qualityCodeSnapshot:first.fishMealQuality??undefined,qualityNameSnapshot:name}),
@@ -119,8 +131,19 @@ export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],pro
   })
 }
 
+export function fishHeadVesselPremiumCents(vesselCode:string):number {
+  return fishHeadNoLoanVesselCodes.includes(vesselCode.trim() as (typeof fishHeadNoLoanVesselCodes)[number])?fishHeadNoLoanPremiumCents:0
+}
+
+export function assertFishHeadSettlementPrices(draft:Pick<PurchaseSettlementDraft,'productType'|'lines'>):void {
+  if(draft.productType!=='fish_head')return
+  const missing=draft.lines.filter(line=>line.totalWeightGrams>0&&(line.unitPriceCentsPerKg===null||!Number.isSafeInteger(line.unitPriceCentsPerKg)||line.unitPriceCentsPerKg<=0)).map(line=>line.nameSnapshot)
+  if(missing.length)throw new Error(`以下鱼种尚未填写价格：${missing.join('、')}。请填完后再完成结单。`)
+}
+
 export function updateSettlementLinePrice(line:PurchaseSettlementLine,input:string):PurchaseSettlementLine {
   const price=parseSettlementPrice(input)
+  if(line.lineType==='fish_head'&&price!==null&&(price<=0||price>MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG))throw new Error('单价须大于 RM0，并且不超过 RM100,000.00/kg。')
   return {...line,unitPriceCentsPerKg:price,priceWasEdited:true,amountCents:price===null?0:lineAmountCents(line.totalWeightGrams,price)}
 }
 

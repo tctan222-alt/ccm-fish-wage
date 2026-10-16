@@ -4,6 +4,8 @@ import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import { buildWeighingEntry,newWeighingSession } from '../lib/weighing'
 
+vi.mock('../services/weighing',async importOriginal=>({...await importOriginal<typeof import('../services/weighing')>(),loadFishSpecies:async()=>[]}))
+
 afterEach(()=>{cleanup();window.localStorage.clear()})
 
 describe('settlement stable read error and retry',()=>{

@@ -306,6 +306,57 @@ async function changeWeighing(ref:DocumentReference,type:string,patch:DocumentDa
 beforeAll(async () => { environment = await initializeTestEnvironment({ projectId: 'demo-ccm-rules', firestore: { rules: await readFile('firestore.rules', 'utf8') } }) })
 afterAll(async () => { if (environment) await environment.cleanup() })
 
+describe('Firestore Rules: fish-head Master base prices', () => {
+  const species = (speciesCode:string):DocumentData => ({
+    speciesCode,displayName:'鱼头价格测试',active:true,order:1,notes:'',
+    createdBy:'u1',createdAt:serverTimestamp(),updatedBy:'u1',updatedAt:serverTimestamp(),inactiveBy:null,inactiveAt:null,
+  })
+
+  it('keeps legacy unpriced records valid and allows blank-to-price and existing-price edits with trusted metadata',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','price_editable')
+    await assertSucceeds(setDoc(ref,species(ref.id)))
+    const original=(await getDoc(ref)).data()!
+    await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:null,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:250,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:260,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    const saved=(await getDoc(ref)).data()!
+    expect(saved).toMatchObject({basePriceCentsPerKg:260,createdBy:original.createdBy,createdAt:original.createdAt,updatedBy:'u1'})
+    expect(saved.updatedAt.toMillis()).toBeGreaterThanOrEqual(original.updatedAt.toMillis())
+    await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:9999995,updatedBy:'u1',updatedAt:serverTimestamp()}))
+  })
+
+  it('rejects invalid prices and reserves the five-cent premium within the existing calculation limit',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','price_invalid')
+    await assertSucceeds(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:null}))
+    for(const value of [-1,0,250.5,9999996,10000000,'250',true,[],{},NaN,Infinity]) {
+      await assertFails(updateDoc(ref,{basePriceCentsPerKg:value,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    }
+    expect((await getDoc(ref)).data()!.basePriceCentsPerKg).toBeNull()
+  })
+
+  it('still rejects every missing required legacy field after removing its redundant hasAll list',async()=>{
+    const db=environment.authenticatedContext('u1').firestore()
+    for(const field of Object.keys(species('placeholder'))) {
+      const id=`price_missing_${field.toLowerCase()}`,value=species(id)
+      delete value[field]
+      await assertFails(setDoc(doc(db,'fishSpecies',id),value))
+    }
+  })
+
+  it('preserves Master identity, authenticated updates and deny-delete restrictions when changing a price',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','price_protected')
+    await assertSucceeds(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:250}))
+    for(const patch of [{speciesCode:'renamed'},{createdBy:'other'},{createdAt:serverTimestamp()},{updatedBy:'other'},{unexpectedField:1}]) {
+      await assertFails(updateDoc(ref,{basePriceCentsPerKg:260,updatedBy:'u1',updatedAt:serverTimestamp(),...patch}))
+    }
+    const anonymous=doc(environment.unauthenticatedContext().firestore(),'fishSpecies',ref.id)
+    await assertFails(getDoc(anonymous))
+    await assertFails(updateDoc(anonymous,{basePriceCentsPerKg:260,updatedAt:serverTimestamp()}))
+    await assertFails(deleteDoc(ref))
+    expect((await getDoc(ref)).data()!.basePriceCentsPerKg).toBe(250)
+  })
+})
+
 describe('Firestore Rules: source-authoritative purchase settlement identity', () => {
   function draft(sourceSessionId:string,overrides:DocumentData={}):DocumentData {
     const line={lineType:'fish_head',nameSnapshot:'金线',totalWeightGrams:100_000,basketCount:1,totalWeightEntryCount:0,

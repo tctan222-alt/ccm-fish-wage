@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   buildPurchaseSettlementLines,
   assertValidPurchaseSettlementDraft,
+  assertFishHeadSettlementPrices,
   calculateSettlementLineAmount,
   makeSettlementDraft,
   reconcileSettlementLines,
@@ -11,6 +12,7 @@ import {
   type SettlementSourceEntry,
 } from './purchaseSettlement'
 import { getDefaultFishHeadPriceCents, getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
+import type { FishSpeciesRecord } from './weighing'
 
 const entry=(overrides:Partial<SettlementSourceEntry>={}):SettlementSourceEntry=>({
   id:'entry-1',productType:'fish_head',fishSpeciesId:'jin_xian',fishSpeciesCodeSnapshot:'jin_xian',
@@ -19,6 +21,38 @@ const entry=(overrides:Partial<SettlementSourceEntry>={}):SettlementSourceEntry=
 })
 
 describe('purchase settlement pricing',()=>{
+  const master:FishSpeciesRecord={id:'jin_xian',speciesCode:'jin_xian',displayName:'金线',active:true,order:0,notes:'',basePriceCentsPerKg:250}
+  it.each([['978',255],['5202',255],['833',250],['2072',250],['1785',250],['9633',250],['2031',250],['4818',250]] as const)('uses editable Master base plus only the existing premium for %s', (vessel,expected)=>{
+    const line=buildPurchaseSettlementLines([entry()],'fish_head',vessel,[master])[0]
+    expect(line).toMatchObject({baseUnitPriceCentsPerKg:250,vesselPremiumCentsPerKg:expected-250,defaultUnitPriceCentsPerKg:expected,unitPriceCentsPerKg:expected})
+    expect(master.basePriceCentsPerKg).toBe(250)
+  })
+  it('retains a weighted line with an explicitly blank Master price and permits a temporary price',()=>{
+    const blank={...master,basePriceCentsPerKg:null}
+    const line=buildPurchaseSettlementLines([entry()],'fish_head','978',[blank])[0]
+    expect(line).toMatchObject({totalWeightGrams:160500,defaultUnitPriceCentsPerKg:null,unitPriceCentsPerKg:null,amountCents:0})
+    expect(()=>assertFishHeadSettlementPrices({productType:'fish_head',lines:[line]})).toThrow('以下鱼种尚未填写价格：金线')
+    const edited=updateSettlementLinePrice(line,'2.70')
+    expect(edited).toMatchObject({unitPriceCentsPerKg:270,defaultUnitPriceCentsPerKg:null,amountCents:43335,priceWasEdited:true})
+    expect(()=>assertFishHeadSettlementPrices({productType:'fish_head',lines:[edited]})).not.toThrow()
+    expect(blank.basePriceCentsPerKg).toBeNull()
+  })
+  it('does not apply changed Master defaults or a new vessel premium to saved price snapshots',()=>{
+    const old=buildPurchaseSettlementLines([entry()],'fish_head','833',[master]).map(line=>updateSettlementLinePrice(line,'2.70'))
+    const current=buildPurchaseSettlementLines([entry({weightGrams:10000})],'fish_head','978',[{...master,basePriceCentsPerKg:260}])
+    expect(current[0].unitPriceCentsPerKg).toBe(265)
+    expect(reconcileSettlementLines(current,old)[0]).toMatchObject({baseUnitPriceCentsPerKg:250,vesselPremiumCentsPerKg:0,defaultUnitPriceCentsPerKg:250,unitPriceCentsPerKg:270,amountCents:2700})
+    const legacy={...old[0]};delete legacy.baseUnitPriceCentsPerKg;delete legacy.vesselPremiumCentsPerKg
+    const retained=reconcileSettlementLines(current,[legacy])[0]
+    expect(retained.baseUnitPriceCentsPerKg).toBeUndefined()
+    expect(retained.vesselPremiumCentsPerKg).toBeUndefined()
+    expect(retained.unitPriceCentsPerKg).toBe(270)
+  })
+  it('does not infer a different Master record from a fish name and leaves Fish Meal prices unchanged',()=>{
+    const different={...master,id:'different',speciesCode:'different',basePriceCentsPerKg:999}
+    expect(buildPurchaseSettlementLines([entry()],'fish_head','978',[different])[0].unitPriceCentsPerKg).toBe(210)
+    expect(()=>assertFishHeadSettlementPrices({productType:'fish_meal',lines:[]})).not.toThrow()
+  })
   it('uses the immutable source session rather than vessel/date for a draft identity',()=>{
     expect(draftIdForSourceSession('fish_head','source-A')).toBe('fish_head_session_source-A')
     expect(draftIdForSourceSession('fish_head','source-A')).not.toBe(draftIdForSourceSession('fish_head','source-B'))
@@ -65,6 +99,7 @@ describe('purchase settlement pricing',()=>{
     expect(parseSettlementPrice('.8')).toBe(80)
     expect(parseSettlementPrice('')).toBeNull()
     expect(()=>parseSettlementPrice('-1')).toThrow()
+    expect(parseSettlementPrice('0')).toBe(0)
     expect(()=>parseSettlementPrice('1.2.3')).toThrow()
     expect(()=>parseSettlementPrice('1.234')).toThrow()
     expect(()=>parseSettlementPrice('abc')).toThrow()
@@ -90,10 +125,18 @@ describe('purchase settlement pricing',()=>{
 
   it('recalculates half-up amount in cents when a user edits the unit price',()=>{
     const line=buildPurchaseSettlementLines([entry()],'fish_head','833')[0]
+    expect(()=>updateSettlementLinePrice(line,'0')).toThrow('大于 RM0')
+    expect(()=>updateSettlementLinePrice(line,'100000.01')).toThrow('不超过')
     expect(calculateSettlementLineAmount(line)).toBe(32903)
     const edited=updateSettlementLinePrice(line,'1.20')
     expect(edited).toMatchObject({unitPriceCentsPerKg:120,priceWasEdited:true,amountCents:19260})
     expect(calculateSettlementLineAmount({...line,totalWeightGrams:1,unitPriceCentsPerKg:500})).toBe(1)
+  })
+
+  it('retains the existing Fish Meal price and amount validation behavior',()=>{
+    const meal=buildPurchaseSettlementLines([entry({productType:'fish_meal',fishMealQuality:'bag'})],'fish_meal','978')[0]
+    expect(updateSettlementLinePrice(meal,'0.80')).toMatchObject({unitPriceCentsPerKg:80,amountCents:12840})
+    expect(()=>updateSettlementLinePrice(meal,'0.00')).toThrow('Unit price must be')
   })
 
   it('builds a stable draft without changing source entry facts',()=>{
