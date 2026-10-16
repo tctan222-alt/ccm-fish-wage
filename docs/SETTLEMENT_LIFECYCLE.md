@@ -148,3 +148,49 @@ horizontal overflow or console errors. These are not production or physical iPho
 
 No production deploy/writes/import/migration, Rules/index deployment, Functions,
 Blaze or firebase init. Reviewed CI-green merge → sync clean main → STOP.
+
+## Fish-head price management and bounded loading — October 2026
+
+Owner reported a real iPhone stall for Fish Head Settlement, vessel **978**, date
+**05/10/2026**, at **正在载入结单资料…**. A deterministic page regression reproduced
+the same permanent spinner when a source Promise never settled. The old finally
+only ran after that Promise settled; source, draft/legacy and auxiliary vessel
+reads had no deadline. No production network trace was captured, so the exact
+stalled server call on that phone is not asserted.
+
+Each required remote stage now has a 15-second read deadline, a Chinese stage
+label and a source-specific Retry. Legacy lookup reports its own stage. Vessel
+retry is independent. Timeout/error exits loading; cancelling an attempt or
+changing source ignores late responses and late stage callbacks. No artificial
+delay, write, draft creation or change of date/vessel occurs on Retry. Local
+restore/discard and revision comparison stay explicit; unreadable local data
+blocks editing rather than being overwritten. Tests cover never-settling and
+rejected reads, successful/empty results, retry, navigation/Back and stale replies.
+
+Fish-head suggestions resolve existing `fishSpecies` by source species ID/code.
+`basePriceCentsPerKg` is optional/null integer cents. Missing field retains the
+existing static price list; explicit null means unset. There is no seed or import.
+978/5202 add 5 cents only when a base exists; other head vessels add none. Fish
+Meal pricing and Retail Master are separate and unchanged.
+
+New head lines store base/premium/default price snapshots. Saved snapshots and
+actual prices survive Master changes, source corrections and local recovery.
+Legacy lines without a breakdown show their saved default snapshot without
+inventing a historical base/premium split. Changing actual RM/kg recalculates via
+the existing integer-gram/integer-cent half-up helper and never writes Master.
+Drafts may retain null prices; Finalize and edits to finalized head settlements
+reject weighted lines without a valid actual price, naming the fish. The service
+enforces this before writes, not just the UI. No change to the existing Rules
+boundary that leaves per-line financial calculation to domain validation.
+
+The original server `finalizedAt` remains the strict 90-day edit anchor; revision
+and the existing atomic full before/after actions contain price and total changes.
+Head mobile rows expose actual price and amount without a sideways table scroll;
+Fish Meal keeps its current table. Price inputs use decimal keyboard hints.
+
+Master Rules add only the optional base field and its positive integer bound.
+Same-function redundant required-key listing is removed while every required
+field remains directly validated; emulator tests individually reject missing
+fields. Guard remains 253,952 bytes. A future authorized release must publish
+the changed Rules before Hosting, after required indexes are READY. No production
+deployment, data correction or migration is part of this development task.

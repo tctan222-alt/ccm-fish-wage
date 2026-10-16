@@ -3,17 +3,22 @@ import { useUnsavedChanges } from '../components/dirtyState'
 import { Link,useParams,useSearchParams } from 'react-router-dom'
 import { auth } from '../firebase'
 import { businessDateFromLegacy,formatAuditTimestamp,legacyIsoDateFromBusinessDate,malaysiaBusinessDate,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
-import { buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,reconcileSettlementLines,updateSettlementLinePrice,totalSettlementAmountCents,type PurchaseSettlementDraft,type PurchaseSettlementLine,asSettlementSourceEntry } from '../lib/purchaseSettlement'
-import { canModifyWeighing,formatWeightKg,type WeighingEntry,type WeighingProductType,type WeighingSession } from '../lib/weighing'
+import { assertFishHeadSettlementPrices,buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,reconcileSettlementLines,updateSettlementLinePrice,totalSettlementAmountCents,type PurchaseSettlementDraft,type PurchaseSettlementLine,asSettlementSourceEntry } from '../lib/purchaseSettlement'
+import { canModifyWeighing,formatWeightKg,type FishSpeciesRecord,type WeighingEntry,type WeighingProductType,type WeighingSession } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
 import { loadVessels } from '../services/purchaseMasterData'
 import { finalizePurchaseSettlement,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
-import { loadStableWeighingBundle,type WeighingBundle } from '../services/weighing'
+import { loadFishSpecies,loadStableWeighingBundle,type WeighingBundle } from '../services/weighing'
+import { readSettlementWithDeadline,settlementReadLabels,type SettlementReadStage } from '../lib/settlementRead'
 import { canEditSettlement,settlementEditDeadline,settlementFinalizedTime } from '../lib/settlementLifecycle'
 import { createSettlementLocalDraftStore,localDraftMatches,type SettlementLocalDraft,type SettlementLocalDraftStore } from '../services/settlementLocalDrafts'
 
 function lineKey(line:PurchaseSettlementLine){return line.sourceEntryIds.join('|')}
 function priceText(value:number|null){return value===null?'':(value/100).toFixed(2)}
+function SettlementDefaultPrice({line,fishHead}:{line:PurchaseSettlementLine;fishHead:boolean}){
+  if(line.defaultUnitPriceCentsPerKg===null)return fishHead?<><span>未设默认价</span><Link to={`/fish-species${line.fishSpeciesId?'#species-'+encodeURIComponent(line.fishSpeciesId):''}`}>编辑 Master 默认价</Link></>:'-'
+  return <><span>RM {priceText(line.defaultUnitPriceCentsPerKg)}</span>{fishHead&&(line.baseUnitPriceCentsPerKg!==undefined&&line.vesselPremiumCentsPerKg!==undefined?<small>基础价 RM {priceText(line.baseUnitPriceCentsPerKg)} · 船号加价 RM {priceText(line.vesselPremiumCentsPerKg)}（默认快照）</small>:<small>已保存的默认价快照</small>)}</>
+}
 function dateInputValue(value:string){try{return legacyIsoDateFromBusinessDate(value)}catch{return ''}}
 const systemNow=()=>new Date()
 function mealCountText(line:PurchaseSettlementLine){
@@ -34,18 +39,20 @@ export function PurchaseSettlementPage({
   finalizer=finalizePurchaseSettlement,
   localDraftStore,
   bundleLoader=loadStableWeighingBundle,
+  fishSpeciesLoader=loadFishSpecies,
   today=malaysiaBusinessDate,
   now=systemNow,
 }: {
   productType:WeighingProductType
   vesselLoader?:()=>Promise<Vessel[]>
   sourceLoader?:(vesselId:string,businessDate:string,productType:WeighingProductType)=>Promise<PurchaseSettlementSource>
-  draftLoader?:(source:WeighingBundle,productType:WeighingProductType)=>Promise<PurchaseSettlementDraft|null>
+  draftLoader?:(source:WeighingBundle,productType:WeighingProductType,onLegacyRead?:()=>void)=>Promise<PurchaseSettlementDraft|null>
   legacyDraftLoader?:(productType:WeighingProductType,dateSortKey:number,vesselId:string)=>Promise<PurchaseSettlementDraft|null>
   draftSaver?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>
   finalizer?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>
   localDraftStore?:SettlementLocalDraftStore
   bundleLoader?:(sessionId:string)=>Promise<WeighingBundle>
+  fishSpeciesLoader?:()=>Promise<FishSpeciesRecord[]>
   today?:()=>string
   now?:()=>Date
 }){
@@ -56,6 +63,9 @@ export function PurchaseSettlementPage({
   const [entries,setEntries]=useState<WeighingEntry[]>([]),[lines,setLines]=useState<PurchaseSettlementLine[]>([])
   const [receiptNo,setReceiptNo]=useState(''),[priceInputs,setPriceInputs]=useState<Record<string,string>>({}),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const [loading,setLoading]=useState(true)
+  const [readStage,setReadStage]=useState<SettlementReadStage>('source')
+  const [vesselLoading,setVesselLoading]=useState(true)
+  const [masterSpecies,setMasterSpecies]=useState<FishSpeciesRecord[]>([])
   const [vesselError,setVesselError]=useState(''),[vesselAttempt,setVesselAttempt]=useState(0)
   const [readError,setReadError]=useState(''),[saveError,setSaveError]=useState(''),[localError,setLocalError]=useState('')
   const [loadFailed,setLoadFailed]=useState(false),[loadAttempt,setLoadAttempt]=useState(0)
@@ -99,27 +109,45 @@ export function PurchaseSettlementPage({
     }catch(problem){setLocalError(problem instanceof Error?problem.message:'无法保存本机草稿。')}
   },[dirty,ready,sourceSession,recovery,localDraftBlocked,store,productType,draftRevision,businessDate,receiptNo,priceInputs,lines])
 
-  useEffect(()=>{let cancelled=false;setVesselError('');void vesselLoader().then(items=>{if(cancelled)return;setVessels(items);if(!sessionId)setVesselId(current=>current||items.find(item=>item.active)?.id||'')}).catch(()=>{if(!cancelled)setVesselError('无法载入船号资料，仍可查看指定的历史结单。')});return()=>{cancelled=true}},[vesselLoader,sessionId,vesselAttempt])
+  useEffect(()=>{
+    const controller=new AbortController()
+    setVesselError('');setVesselLoading(true)
+    void readSettlementWithDeadline(vesselLoader,controller.signal,()=> 'vessels').then(items=>{
+      if(controller.signal.aborted)return
+      setVessels(items);if(!sessionId)setVesselId(current=>current||items.find(item=>item.active)?.id||'')
+    }).catch(problem=>{if(!controller.signal.aborted)setVesselError(`${problem instanceof Error?problem.message:'无法载入船号资料。'} 仍可查看指定的历史结单。`)}).finally(()=>{if(!controller.signal.aborted)setVesselLoading(false)})
+    return()=>controller.abort()
+  },[vesselLoader,sessionId,vesselAttempt])
 
   useEffect(()=>{
     if(!sessionId&&!requestedVesselId){setLoading(false);return}
     let cancelled=false
+    let finished=false,stage:SettlementReadStage='source'
+    const controller=new AbortController()
+    const progress=(next:SettlementReadStage)=>{if(!cancelled&&!finished){stage=next;setReadStage(next)}}
+    const read=<T,>(operation:()=>Promise<T>)=>readSettlementWithDeadline(operation,controller.signal,()=>stage)
     contextGeneration.current+=1;saveLock.current=false;setBusy(false)
     copyRequest.current+=1;setCopyError('');setManualCopy(null)
     setLoading(true);setLoadFailed(false);setReadError('');setLoadedKey('');setLines([]);setEntries([]);setSourceSession(null);setDraftId(undefined);setError('');setSaveError('');setMessage('');setRecovery(null);setEditing(false)
     localDraftTracked.current=false;setLocalDraftBlocked(false)
+    progress('source')
     void (async()=>{
-      const source=sessionId?await bundleLoader(sessionId):(await sourceLoader(requestedVesselId,requestedDate,productType)).bundle
+      const source=await read(async()=>sessionId?bundleLoader(sessionId):(await sourceLoader(requestedVesselId,requestedDate,productType)).bundle)
+      if(cancelled)return
       if(sessionId&&source?.session.id!==sessionId)throw new Error('来源现场单与当前路径不一致，请重新载入。')
       if(source?.session.productType&&source.session.productType!==productType)throw new Error('结单类型与来源称重单不一致。')
       const date=source?businessDateFromLegacy(source.session.weighingDate):requestedDate
       const sourceVesselId=source?.session.vesselId??requestedVesselId
       if(!sessionId&&source&&(date!==requestedDate||sourceVesselId!==requestedVesselId))throw new Error('称重资料日期或船号已变更，请重新选择或从结单列表打开。')
-      const draft=source?await draftLoader(source,productType):await legacyDraftLoader(productType,sortKeyFromBusinessDate(date),sourceVesselId)
+      progress(source?'settlement':'legacy')
+      const draft=await read(()=>source?draftLoader(source,productType,()=>progress('legacy')):legacyDraftLoader(productType,sortKeyFromBusinessDate(date),sourceVesselId))
       if(cancelled)return
       if(draft?.sourceSessionId&&source&&draft.sourceSessionId!==source.session.id)throw new Error('结单关联了另一张称重单，请核查来源。')
       const sourceEntries=source?.entries??[]
-      const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'')
+      let species:FishSpeciesRecord[]=[]
+      if(fishHead&&sourceEntries.length){progress('master');species=await read(fishSpeciesLoader);if(cancelled)return}
+      setMasterSpecies(species)
+      const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'',species)
       const nextLines=draft?.status==='settlement_finalized'?draft.lines:source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
       setSavedDraft(draft)
       setSourceSession(source?.session??null);setEntries(sourceEntries);setReceiptNo(draft?.receiptNo??source?.session.externalSlipNo??'');setDraftRevision(draft?.revision??0)
@@ -128,13 +156,14 @@ export function PurchaseSettlementPage({
       setLines(nextLines);setPriceInputs(nextPrices)
       setSavedFields(JSON.stringify({receiptNo:draft?.receiptNo??source?.session.externalSlipNo??'',priceInputs:nextPrices,lines:nextLines}))
       if(sessionId){setVesselId(draft?.status==='settlement_finalized'?draft.vesselId:sourceVesselId);setBusinessDate(draft?.status==='settlement_finalized'?draft.businessDate:date)}
-      if(source){try{const found=store.load(productType,source.session.id);localDraftTracked.current=Boolean(found);setRecovery(found);setLocalError('')}catch(problem){setLocalDraftBlocked(true);setLocalError(problem instanceof Error?problem.message:'无法读取本机草稿。')}}
+      if(source){progress('local');try{const found=store.load(productType,source.session.id);localDraftTracked.current=Boolean(found);setRecovery(found);setLocalError('')}catch(problem){setLocalDraftBlocked(true);setLocalError(problem instanceof Error?problem.message:'无法读取本机草稿。')}}
       setLoadedKey(contextKey)
-    })().catch(problem=>{if(!cancelled){setLoadFailed(true);setReadError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{if(!cancelled)setLoading(false)})
-    return()=>{cancelled=true;contextGeneration.current+=1}
-  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,sessionId,contextKey,loadAttempt,store])
+    })().catch(problem=>{if(!cancelled){setLoadFailed(true);setReadError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{finished=true;if(!cancelled)setLoading(false)})
+    return()=>{cancelled=true;controller.abort();contextGeneration.current+=1}
+  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,fishSpeciesLoader,fishHead,sessionId,contextKey,loadAttempt,store])
 
   const selectedVessel=vessels.find(item=>item.id===vesselId)
+  const waitingForVessel=!sessionId&&!vesselId&&vesselLoading
   const total=useMemo(()=>totalSettlementAmountCents(lines),[lines])
   const sourceEntryCount=entries.filter(item=>!item.voided&&item.productType===productType).length
   function changePrice(line:PurchaseSettlementLine,value:string){
@@ -146,7 +175,7 @@ export function PurchaseSettlementPage({
     if(saveLock.current)return
     if(!formEditable||!canEditSettlement(lifecycle,now())||!sourceSession||lines.length===0){setError('当前结单只读，不能保存修改。');return}
     let validatedLines:PurchaseSettlementLine[]
-    try{validatedLines=lines.map(line=>({...updateSettlementLinePrice(line,priceInputs[lineKey(line)]??''),priceWasEdited:line.priceWasEdited}));setError('')}
+    try{validatedLines=lines.map(line=>({...updateSettlementLinePrice(line,priceInputs[lineKey(line)]??''),priceWasEdited:line.priceWasEdited}));if(finalize||lifecycle.status==='settlement_finalized')assertFishHeadSettlementPrices({productType,lines:validatedLines});setError('')}
     catch(problem){setError(problem instanceof Error?problem.message:'单价格式不正确。');return}
     let submittedLocalDraft:SettlementLocalDraft|null
     try{
@@ -203,7 +232,7 @@ export function PurchaseSettlementPage({
   function beginEdit(){
     if(!editable||recovery||localDraftBlocked)return
     // A source weight correction is reviewed explicitly, never changes finalized view on read.
-    const current=buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry),productType,sourceSession?.vesselCodeSnapshot??'')
+    const current=buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry),productType,sourceSession?.vesselCodeSnapshot??'',masterSpecies)
     const next=reconcileSettlementLines(current,lines)
     setLines(next);setPriceInputs(Object.fromEntries(next.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])));setEditing(true)
   }
@@ -235,14 +264,15 @@ export function PurchaseSettlementPage({
       <p>{recoveryStale?'请记录并核对本机内容，放弃旧草稿后在最新资料上逐项重新输入；不会自动覆盖服务器。':'恢复只带回本机输入，不会写入服务器。'}</p>
       <button type="button" disabled={recoveryStale||!editable} onClick={restoreDraft}>恢复草稿</button> <button type="button" onClick={discardDraft}>放弃草稿</button>
     </section>}
-    {loading?<p className="notice">正在载入结单资料…</p>:loadFailed?null:<section className="settlement-table-section"><p className="settlement-meta">船号：{savedDraft?.status==='settlement_finalized'?savedDraft.vesselCodeSnapshot:sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
+    {loading||waitingForVessel?<p className="notice" role="status">正在载入结单资料…<br/>{settlementReadLabels[waitingForVessel?'vessels':readStage]}…</p>:loadFailed?null:<section className="settlement-table-section"><p className="settlement-meta">船号：{savedDraft?.status==='settlement_finalized'?savedDraft.vesselCodeSnapshot:sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
       {sourceSession&&<p>系统现场单号：{sourceSession.sessionCode}</p>}
-      {lines.some(line=>line.unitPriceCentsPerKg===null)&&<p className="notice">尚有未定价项目：{lines.filter(line=>line.unitPriceCentsPerKg===null).map(line=>line.nameSnapshot).join('、')}。未定价行不猜价，金额按既有规则显示为 0；完成前请核对。</p>}
+      {lines.some(line=>line.unitPriceCentsPerKg===null)&&<p className="notice">尚有未定价项目：{lines.filter(line=>line.unitPriceCentsPerKg===null).map(line=>line.nameSnapshot).join('、')}。{fishHead?'请填写本单实际价；未定价金额不计入暂计总额，填完后才能完成结单。':'未定价行不猜价，金额按既有规则显示为 0；完成前请核对。'}</p>}
       {ready&&sourceSession&&<p className="notice">{sourceSession.status==='processed'?'来源已转旧版采购单 Legacy processed，本页只读。':sourceSession.status==='voided'?'来源已作废，本页只读。':lifecycle.status==='settlement_draft'?'结单草稿 Draft；完成结单后 90 天内可修改。':editable?'已完成结单 Finalized；修改不会延长期限。':'已锁定 Locked；超过 90 天或来源不兼容，只能查看。'}</p>}
       {finalizedTime&&deadline&&<p>首次完成：{formatAuditTimestamp(finalizedTime)} / 修改截止：{formatAuditTimestamp(deadline)}（到达截止时刻即只读）</p>}
       {savedDraft?.status==='settlement_finalized'&&sourceSession&&savedDraft.sourceSessionRevision!==sourceSession.revision&&<p className="notice">称重来源版本已更新，请进入修改后核对重量；当前展示已保存的正式结单。</p>}
       {ready&&sourceSession?.status==='completed'&&canModifyWeighing(sourceSession,now())&&<Link className="page-link" to={`/weighing/${sourceSession.id}/review`}>修改称重（7 天内）</Link>}
-      {lines.length===0?<p className="notice">当前没有称重资料，不能结单。</p>:<><div className="settlement-table-scroll"><table className="settlement-table"><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>单价 RM/kg</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td>{formatWeightKg(line.totalWeightGrams)} kg</td><td>{fishHead?`${line.basketCount}篮`:mealCountText(line)}</td><td>{priceText(line.defaultUnitPriceCentsPerKg)?`RM ${priceText(line.defaultUnitPriceCentsPerKg)}`:'-'}</td><td><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" disabled={!formEditable||busy} value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td>{formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>总额</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div><div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button>
+      {!sourceSession&&<p className="notice">找不到 {(selectedVessel?.vesselCode??vesselId)||'所选船号'} / {businessDate} 的已完成称重单。</p>}
+      {lines.length===0?<p className="notice">当前没有称重资料，不能结单。</p>:<><div className="settlement-table-scroll"><table className={`settlement-table${fishHead?' settlement-table-fish-head':''}`}><caption>{fishHead?'鱼头结单检查表':'鱼仔结单检查表'}</caption><thead><tr><th>{fishHead?'鱼名':'品质'}</th><th>总重量</th><th>{fishHead?'篮数':'篮数/总重记录'}</th><th>预设价</th><th>{fishHead?'本单实际 RM/kg':'单价 RM/kg'}</th><th>金额</th></tr></thead><tbody>{lines.map(line=><tr key={lineKey(line)}><th scope="row">{line.nameSnapshot}</th><td data-label="总重量">{formatWeightKg(line.totalWeightGrams)} kg</td><td data-label={fishHead?'篮数':'篮数/总重记录'}>{fishHead?`${line.basketCount}篮`:mealCountText(line)}</td><td data-label="默认建议价" className="settlement-default-price"><SettlementDefaultPrice line={line} fishHead={fishHead}/></td><td data-label={fishHead?'本单实际 RM/kg':'单价 RM/kg'}><input aria-label={`${line.nameSnapshot}单价`} type="text" inputMode="decimal" disabled={!formEditable||busy} value={priceInputs[lineKey(line)]??''} onChange={event=>changePrice(line,event.target.value)}/></td><td data-label="金额">{fishHead&&line.unitPriceCentsPerKg===null?'未定价':formatSettlementMoney(line.amountCents)}</td></tr>)}</tbody><tfoot><tr><th colSpan={5}>{fishHead&&lines.some(line=>line.unitPriceCentsPerKg===null)?'暂计总额':'总额'}</th><td>{formatSettlementMoney(total)}</td></tr></tfoot></table></div>{fishHead&&<p className="settlement-price-help">本单实际价仅用于这张结单，不会修改 Master 基础默认价。</p>}<div className="settlement-actions"><button type="button" onClick={()=>void copyTable()}>复制表格</button>
         {lifecycle.status==='settlement_finalized'&&!editing?<button type="button" disabled={!editable||Boolean(recovery)||localDraftBlocked||busy} onClick={beginEdit}>修改结单 Edit</button>:<button className="primary-action" type="button" disabled={busy||!formEditable} onClick={()=>void saveDraft()}>{lifecycle.status==='settlement_finalized'?'保存修改':'保存结单草稿'}</button>}
         {lifecycle.status==='settlement_draft'&&<button type="button" disabled={busy||!formEditable||sourceSession?.status!=='completed'} onClick={()=>void saveDraft(true)}>{busy?'保存中…':'完成结单 Finalize'}</button>}
         {dirty&&!recovery&&<button type="button" disabled={busy} onClick={discardCurrentDraft}>放弃当前未保存草稿</button>}

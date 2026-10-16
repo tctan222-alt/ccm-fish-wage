@@ -1,5 +1,20 @@
 # ERP Master Backlog
 
+## Owner follow-up: Fish Head pricing and loading recovery (2026-10-16)
+
+Implemented from reviewed main `d10ff3ecb6c1e58a8f430731ed04c56d254af4c1`:
+editable base default cents in the existing Fish Head species Master, unchanged
+978/5202 premium, per-settlement actual-price override, missing-price Finalize
+guard, original 90-day audited edits, and bounded staged loading with safe Retry.
+The reported real-iPhone stall was vessel 978 / 05/10/2026; a never-settling read
+reproduced its permanent-spinner symptom. Recovery is regression-tested; the
+phone's exact network call was not captured. See `SETTLEMENT_LIFECYCLE.md` for
+storage, snapshot, retry and release boundaries.
+
+No production deployment, import, migration or test records. Master Rules require
+a future reviewed Rules + Hosting release after prerequisite indexes are READY.
+Physical iPhone acceptance remains separate from local viewport checks.
+
 ## Owner follow-up: settlement lifecycle, recovery and vessel history (2026-10-04)
 
 Implemented on the focused settlement branch from main `3001a3540bebc608c44b22a3e7ee6ccb0146d828`:

@@ -21,6 +21,7 @@ import { assertPurchaseReceiptLineLimits,calculateReceiptTotals,makeReceiptCode,
 import type { BusinessPartner } from '../lib/masterData'
 import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import type { PendingWeighingOperation } from './weighingOffline'
+import { MAX_FISH_HEAD_BASE_PRICE_CENTS } from '../lib/fishHeadMasterPrice'
 
 export interface WeighingBundle {
   session:WeighingSession
@@ -150,14 +151,20 @@ export async function saveFishSpecies(value:FishSpeciesRecord){
   const user=requireUser(),ref=doc(db,'fishSpecies',value.id),snapshot=await getDoc(ref),timestamp=serverTimestamp()
   if(!/^[a-z0-9_]{1,40}$/.test(value.speciesCode))throw new Error('鱼名代码格式不正确。')
   if(!value.displayName.trim())throw new Error('请输入中文鱼名。')
+  if(value.basePriceCentsPerKg!==undefined&&value.basePriceCentsPerKg!==null
+    &&(!Number.isSafeInteger(value.basePriceCentsPerKg)||value.basePriceCentsPerKg<=0||value.basePriceCentsPerKg>MAX_FISH_HEAD_BASE_PRICE_CENTS))
+    throw new Error('基础默认价必须为有效的正整数分。')
   if(snapshot.exists()&&snapshot.data().speciesCode!==value.speciesCode)throw new Error('鱼名代码建立后不可修改。')
   const original=snapshot.data()
+  const basePrice=value.basePriceCentsPerKg===undefined?original?.basePriceCentsPerKg:value.basePriceCentsPerKg
   await writeBatch(db).set(ref,{
     speciesCode:value.speciesCode,displayName:value.displayName.trim(),active:value.active,order:value.order,notes:value.notes.trim(),
     createdBy:original?.createdBy??user.uid,createdAt:original?.createdAt??timestamp,updatedBy:user.uid,updatedAt:timestamp,
     inactiveBy:value.active?null:(original?.inactiveBy??user.uid),inactiveAt:value.active?null:(original?.inactiveAt??timestamp),
+    ...(basePrice===undefined?{}:{basePriceCentsPerKg:basePrice}),
   }).commit()
-  return value
+  return {...value,displayName:value.displayName.trim(),notes:value.notes.trim(),updatedBy:user.uid,updatedAt:timestamp,
+    ...(basePrice===undefined?{}:{basePriceCentsPerKg:basePrice})}
 }
 
 export async function loadWeighingSessions(){

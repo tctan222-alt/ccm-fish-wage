@@ -1,6 +1,7 @@
-import { lineAmountCents } from './purchasing'
-import { getDefaultFishHeadPriceCents,getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
-import type { FishMealQuality,WeighingEntry,WeighingEntryMode,WeighingProductType } from './weighing'
+import { lineAmountCents,MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG } from './purchasing'
+import { fishHeadNoLoanVesselCodes,fishHeadNoLoanPremiumCents,getDefaultFishHeadPriceCents,getDefaultFishMealPriceCents } from '../features/purchases/pricing/defaultPurchasePrices'
+import type { FishSpeciesRecord,FishMealQuality,WeighingEntry,WeighingEntryMode,WeighingProductType } from './weighing'
+import { fishHeadMasterBasePriceCents } from './fishHeadMasterPrice'
 import type { SettlementStatus } from './settlementLifecycle'
 
 export interface SettlementSourceEntry {
@@ -25,6 +26,8 @@ export interface PurchaseSettlementLine {
   basketCount:number
   totalWeightEntryCount:number
   defaultUnitPriceCentsPerKg:number|null
+  baseUnitPriceCentsPerKg?:number|null
+  vesselPremiumCentsPerKg?:number
   unitPriceCentsPerKg:number|null
   priceWasEdited:boolean
   amountCents:number
@@ -72,6 +75,10 @@ export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:
     if(!previous)return line
     const next={...line,defaultUnitPriceCentsPerKg:previous.defaultUnitPriceCentsPerKg,
       unitPriceCentsPerKg:previous.unitPriceCentsPerKg,priceWasEdited:previous.priceWasEdited}
+    if(previous.baseUnitPriceCentsPerKg===undefined)delete next.baseUnitPriceCentsPerKg
+    else next.baseUnitPriceCentsPerKg=previous.baseUnitPriceCentsPerKg
+    if(previous.vesselPremiumCentsPerKg===undefined)delete next.vesselPremiumCentsPerKg
+    else next.vesselPremiumCentsPerKg=previous.vesselPremiumCentsPerKg
     return {...next,amountCents:calculateSettlementLineAmount(next)}
   })
 }
@@ -79,11 +86,11 @@ export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:
 export function parseSettlementPrice(value:string):number|null {
   const clean=value.trim()
   if(clean==='')return null
-  if(!/^(?:\d+|\d+\.\d{1,2}|\.\d{1,2})$/.test(clean))throw new Error('单价必须是最多两位小数的非负金额。')
+  if(!/^(?:\d+|\d+\.\d{1,2}|\.\d{1,2})$/.test(clean))throw new Error('单价必须是最多两位小数的正数金额。')
   const normalized=clean.startsWith('.')?`0${clean}`:clean
   const [whole,fraction='']=normalized.split('.')
   const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'))
-  if(!Number.isSafeInteger(cents)||cents<0)throw new Error('单价格式不正确。')
+  if(!Number.isSafeInteger(cents)||cents<=0||cents>MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG)throw new Error('单价须大于 RM0，并且不超过 RM100,000.00/kg。')
   return cents
 }
 
@@ -93,7 +100,7 @@ export function calculateSettlementLineAmount(line:Pick<PurchaseSettlementLine,'
 
 function sourceOrder(entry:SettlementSourceEntry){return entry.sequenceNo??Number.MAX_SAFE_INTEGER}
 
-export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],productType:WeighingProductType,vesselCode:string):PurchaseSettlementLine[] {
+export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],productType:WeighingProductType,vesselCode:string,masterSpecies:readonly FishSpeciesRecord[]=[]):PurchaseSettlementLine[] {
   const groups=new Map<string,{first:number;entries:SettlementSourceEntry[]}>()
   entries.filter(item=>!item.voided&&item.productType===productType).forEach(entry=>{
     const key=productType==='fish_head'?`fish_head:${entry.fishSpeciesCodeSnapshot??entry.displayNameSnapshot}`:`fish_meal:${entry.fishMealQuality}`
@@ -104,19 +111,32 @@ export function buildPurchaseSettlementLines(entries:SettlementSourceEntry[],pro
     const first=group.entries[0]
     const isHead=productType==='fish_head'
     const name=first.displayNameSnapshot
+    const master=masterSpecies.find(item=>item.id===first.fishSpeciesId)??masterSpecies.find(item=>item.speciesCode===first.fishSpeciesCodeSnapshot)
+    const base=master?fishHeadMasterBasePriceCents(master):null
     const defaultPrice=isHead
-      ?getDefaultFishHeadPriceCents(name,vesselCode)
+      ?master?(base===null?null:base+fishHeadVesselPremiumCents(vesselCode)):getDefaultFishHeadPriceCents(name,vesselCode)
       :getDefaultFishMealPriceCents(first.fishMealQuality??'bucket',vesselCode)
     const line:PurchaseSettlementLine={
       lineType:productType,nameSnapshot:name,totalWeightGrams:group.entries.reduce((sum,item)=>sum+item.weightGrams,0),
       basketCount:group.entries.reduce((sum,item)=>sum+(item.entryMode==='individual'?1:0),0),
       totalWeightEntryCount:group.entries.length,defaultUnitPriceCentsPerKg:defaultPrice,
+      ...(isHead?{baseUnitPriceCentsPerKg:master?base:defaultPrice===null?null:defaultPrice-fishHeadVesselPremiumCents(vesselCode),vesselPremiumCentsPerKg:fishHeadVesselPremiumCents(vesselCode)}:{}),
       unitPriceCentsPerKg:defaultPrice,priceWasEdited:false,amountCents:0,sourceEntryIds:group.entries.map(item=>item.id),
       ...(isHead?{fishSpeciesId:first.fishSpeciesId??undefined,fishSpeciesCodeSnapshot:first.fishSpeciesCodeSnapshot??undefined,
         fishSpeciesNameSnapshot:first.fishSpeciesNameSnapshot??undefined}:{qualityCodeSnapshot:first.fishMealQuality??undefined,qualityNameSnapshot:name}),
     }
     return {...line,amountCents:calculateSettlementLineAmount(line)}
   })
+}
+
+export function fishHeadVesselPremiumCents(vesselCode:string):number {
+  return fishHeadNoLoanVesselCodes.includes(vesselCode.trim() as (typeof fishHeadNoLoanVesselCodes)[number])?fishHeadNoLoanPremiumCents:0
+}
+
+export function assertFishHeadSettlementPrices(draft:Pick<PurchaseSettlementDraft,'productType'|'lines'>):void {
+  if(draft.productType!=='fish_head')return
+  const missing=draft.lines.filter(line=>line.totalWeightGrams>0&&(line.unitPriceCentsPerKg===null||!Number.isSafeInteger(line.unitPriceCentsPerKg)||line.unitPriceCentsPerKg<=0)).map(line=>line.nameSnapshot)
+  if(missing.length)throw new Error(`以下鱼种尚未填写价格：${missing.join('、')}。请填完后再完成结单。`)
 }
 
 export function updateSettlementLinePrice(line:PurchaseSettlementLine,input:string):PurchaseSettlementLine {

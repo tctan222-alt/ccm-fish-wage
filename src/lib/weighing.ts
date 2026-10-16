@@ -21,6 +21,8 @@ export interface FishSpeciesRecord {
   active:boolean
   order:number
   notes:string
+  /** Base RM/kg in integer cents. Missing retains the legacy list; null is unset. */
+  basePriceCentsPerKg?:number|null
   createdBy?:string
   createdAt?:unknown
   updatedBy?:string

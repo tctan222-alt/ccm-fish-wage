@@ -1,0 +1,5 @@
+.fish-species-master .master-card:target{outline:3px solid #2b6cb0;scroll-margin-top:16px}
+.fish-species-master .form-dialog{width:100%;max-width:min(560px,calc(100vw - 24px));max-height:calc(100dvh - 24px);overflow-y:auto}
+.fish-species-master .master-form,.fish-species-master .master-form label{min-width:0}
+.fish-species-master .master-form input{min-width:0;font-size:16px}
+.fish-species-master .notice{overflow-wrap:anywhere}

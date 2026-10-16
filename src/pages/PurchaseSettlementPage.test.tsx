@@ -8,6 +8,8 @@ import type { Vessel } from '../lib/purchasing'
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice } from '../lib/purchaseSettlement'
 import { createSettlementLocalDraftStore } from '../services/settlementLocalDrafts'
 
+vi.mock('../services/weighing',async importOriginal=>({...await importOriginal<typeof import('../services/weighing')>(),loadFishSpecies:async()=>[]}))
+
 const vessel:Vessel={id:'v978',vesselCode:'978',displayName:'978',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:0,notes:''}
 const otherVessel:Vessel={id:'v833',vesselCode:'833',displayName:'833',defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order:1,notes:''}
 const session:WeighingSession={id:'session-978',sessionCode:'FH-978-20260803-01',productType:'fish_head',weighingDate:'03/08/2026',monthKey:'08/2026',dateSortKey:20260803,monthSortKey:202608,
@@ -352,7 +354,7 @@ describe('purchase settlement MVP pages',()=>{
     await screen.findByRole('table')
     expect(screen.getByLabelText('船号')).toHaveValue('v978')
     expect(screen.getByLabelText('日期')).toHaveValue('2026-08-03')
-    expect(loader).toHaveBeenCalledWith(expect.objectContaining({session:legacy,entries:[expect.objectContaining({id:'jin'})]}),'fish_head')
+    expect(loader).toHaveBeenCalledWith(expect.objectContaining({session:legacy,entries:[expect.objectContaining({id:'jin'})]}),'fish_head',expect.any(Function))
   })
 
   it('refreshes saved settlement weights while preserving edited prices and revision',async()=>{

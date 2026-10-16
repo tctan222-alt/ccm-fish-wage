@@ -62,7 +62,7 @@ function renderListWithDetail(items:WeighingSession[],initialPath='/fish-head-se
   render(<MemoryRouter initialEntries={[initialPath]}><LocationProbe/><Routes>
     <Route path="/fish-head-settlement" element={<FishHeadSettlementListPage pageLoader={fixtureLoader(items)} vesselLoader={async()=>[vessel]} today={()=>"03/10/2026"}/>}/>
     <Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head"
-      vesselLoader={async()=>[vessel]} bundleLoader={bundleLoader} sourceLoader={sourceLoader}
+      vesselLoader={async()=>[vessel]} bundleLoader={bundleLoader} sourceLoader={sourceLoader} fishSpeciesLoader={async()=>[]}
       draftLoader={draftLoader} draftSaver={draftSaver} today={()=>'03/10/2026'}
       now={()=>new Date('2026-10-04T00:00:00Z')}/>}/>
     <Route path="/weighing/:sessionId" element={<p>Existing weighing session</p>}/>

@@ -1,5 +1,5 @@
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest'
-import { buildPurchaseSettlementLines,draftIdForSourceSession,makeSettlementDraft,reconcileSettlementLines,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
+import { buildPurchaseSettlementLines,draftIdForSourceSession,makeSettlementDraft,reconcileSettlementLines,updateSettlementLinePrice,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
 import { loadStableWeighingBundle,loadWeighingBundle,type WeighingBundle } from './weighing'
 
 const state=vi.hoisted(()=>({records:new Map<string,Record<string,unknown>>(),writes:vi.fn(),failPath:'',uid:'u1' as string|null,retries:0,beforeCommit:null as (()=>void)|null,transactionErrorCode:'',afterServerRead:null as ((path:string)=>void)|null}))
@@ -76,6 +76,33 @@ beforeEach(()=>{
 afterEach(()=>vi.useRealTimers())
 
 describe('atomic settlement finalization',()=>{
+  it('allows an unpriced draft but rejects finalization before any write, then finalizes the entered price with audit',async()=>{
+    const unpriced=input();unpriced.lines=unpriced.lines.map(line=>({...line,defaultUnitPriceCentsPerKg:null,unitPriceCentsPerKg:null,amountCents:0}));unpriced.totalAmountCents=0
+    const saved=await savePurchaseSettlementDraft(unpriced)
+    state.writes.mockClear()
+    await expect(finalizePurchaseSettlement(saved)).rejects.toThrow('以下鱼种尚未填写价格：金线')
+    expect(state.writes).not.toHaveBeenCalled()
+    const lines=saved.lines.map(line=>updateSettlementLinePrice(line,'2.70'))
+    const complete=await finalizePurchaseSettlement({...saved,lines,totalAmountCents:2700})
+    expect(complete).toMatchObject({status:'settlement_finalized',revision:2,totalAmountCents:2700})
+    expect(state.records.get(`${draftPath}/actions/2`)).toMatchObject({performedBy:'u1',performedAt:new Date(),revision:2,beforeSnapshot:{totalAmountCents:0,lines:[{unitPriceCentsPerKg:null}]},afterSnapshot:{totalAmountCents:2700,lines:[{unitPriceCentsPerKg:270}]}})
+    expect(state.writes.mock.calls.every(([path])=>!path.startsWith('fishSpecies/'))).toBe(true)
+  })
+  it('edits a finalized price before 90 days with the same first timestamp and rejects the exact boundary',async()=>{
+    const finalized=await finalizePurchaseSettlement(input())
+    const first=finalized.finalizedAt as Date
+    const master={basePriceCentsPerKg:250};state.records.set('fishSpecies/jin_xian',master)
+    vi.setSystemTime(new Date(first.getTime()+90*86400000-1))
+    const lines=finalized.lines.map(line=>updateSettlementLinePrice(line,'2.70'))
+    const edited=await savePurchaseSettlementDraft({...finalized,lines,totalAmountCents:2700})
+    expect(edited).toMatchObject({draftId:finalized.draftId,revision:2,finalizedAt:first,finalizedBy:'u1',totalAmountCents:2700})
+    expect(state.records.get(`${draftPath}/actions/2`)).toMatchObject({type:'edit_after_finalize',revision:2,performedBy:'u1',performedAt:new Date(),beforeSnapshot:{totalAmountCents:2100,lines:[{unitPriceCentsPerKg:210}]},afterSnapshot:{totalAmountCents:2700,lines:[{unitPriceCentsPerKg:270}]}})
+    expect(state.records.get('fishSpecies/jin_xian')).toEqual(master)
+    vi.setSystemTime(new Date(first.getTime()+90*86400000))
+    state.writes.mockClear()
+    await expect(savePurchaseSettlementDraft(edited)).rejects.toThrow('90 天')
+    expect(state.writes).not.toHaveBeenCalled()
+  })
   it('finalizes the same document with trusted first timestamp and typed before/after audit',async()=>{
     const draft=await savePurchaseSettlementDraft(input())
     const finalized=await finalizePurchaseSettlement({...draft,receiptNo:'FINAL'})
