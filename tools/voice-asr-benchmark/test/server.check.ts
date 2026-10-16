@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { request, type IncomingHttpHeaders, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, resolve, sep } from 'node:path'
@@ -32,7 +32,7 @@ interface LocalClient {
   restart(): Promise<void>
 }
 
-async function withServer(providers: ProviderAdapter[], run: (client: LocalClient) => Promise<void>) {
+async function withServer(providers: ProviderAdapter[], run: (client: LocalClient) => Promise<void>, loadFish: () => Promise<FishCatalog> = async () => catalog) {
   const directory = await mkdtemp(join(tmpdir(), 'ccm-asr-server-check-'))
   const dataDir = join(directory, 'data'), staticDir = join(directory, 'static')
   await mkdir(staticDir)
@@ -66,7 +66,7 @@ async function withServer(providers: ProviderAdapter[], run: (client: LocalClien
         const closing = new Promise<void>((done, reject) => server!.close(error => error ? reject(error) : done()))
         server.closeAllConnections(); await closing
       }
-      server = createBenchmarkServer({ dataDir, staticDir, providers, loadFish: async () => catalog })
+      server = createBenchmarkServer({ dataDir, staticDir, providers, loadFish })
       await new Promise<void>((done, reject) => { server!.once('error', reject); server!.listen(0, '127.0.0.1', done) })
       const address = server.address()
       assert.ok(address && typeof address !== 'string'); assert.equal(address.address, '127.0.0.1')
@@ -89,6 +89,75 @@ async function withServer(providers: ProviderAdapter[], run: (client: LocalClien
 }
 
 describe('local benchmark server with injected providers and temporary storage', () => {
+  it('reports health and configuration flags without secrets, tokens, model details, Master Data reads, or local writes', async () => {
+    let masterReads = 0
+    const providers = [Object.assign(adapter('openai', async () => result('openai')), { apiKey: 'FAKE_HEALTH_SECRET', token: 'FAKE_HEALTH_TOKEN' }),
+      { ...adapter('tencent', async () => result('tencent')), configured: false }]
+    await withServer(providers, async client => {
+      const health = await client.send('/api/health')
+      assert.equal(health.status, 200)
+      assert.deepEqual(health.json(), { ok: true, providers: { openai: { configured: true }, tencent: { configured: false } } })
+      assert.equal(health.text.includes('FAKE_HEALTH_'), false)
+      assert.equal(health.text.includes(client.token), false)
+      assert.equal(masterReads, 0)
+      await assert.rejects(access(join(client.directory, 'data')), { code: 'ENOENT' })
+    }, async () => { masterReads++; throw new Error('Health must not contact Master Data') })
+  })
+
+  for (const available of ['openai', 'tencent'] as const) {
+    it(`runs only ${available} when the other provider is unconfigured`, async () => {
+      const called: ProviderId[] = []
+      const providers = (['openai', 'tencent'] as const).map(provider => ({
+        ...adapter(provider, async () => { called.push(provider); return result(provider) }), configured: provider === available,
+      }))
+      await withServer(providers, async client => {
+        const reply = await client.send('/api/benchmark', 'POST', { ...inputBody(), providers: [available] })
+        assert.equal(reply.status, 200)
+        assert.deepEqual(called, [available])
+        const sample = reply.json().sample as BenchmarkSample
+        assert.equal(sample.results.length, 1)
+        assert.equal(sample.results[0].provider, available)
+        assert.equal(sample.results[0].wholeBasketCorrect, true)
+      })
+    })
+  }
+
+  it('rejects two unconfigured providers clearly before reading Master Data, parsing audio, saving samples, or invoking adapters', async () => {
+    let calls = 0, masterReads = 0
+    const providers = (['openai', 'tencent'] as const).map(provider => ({
+      ...adapter(provider, async () => { calls++; return result(provider) }), configured: false,
+    }))
+    await withServer(providers, async client => {
+      const health = await client.send('/api/health')
+      assert.deepEqual(health.json(), { ok: true, providers: { openai: { configured: false }, tencent: { configured: false } } })
+      for (const audioBase64 of [inputBody().audioBase64, 'invalid audio']) {
+        const reply = await client.send('/api/benchmark', 'POST', { ...inputBody(), audioBase64 })
+        assert.equal(reply.status, 503)
+        assert.deepEqual(reply.json(), { error: '尚未配置任何语音识别服务' })
+      }
+      assert.equal(calls, 0); assert.equal(masterReads, 0)
+      await assert.rejects(access(join(client.directory, 'data')), { code: 'ENOENT' })
+      assert.deepEqual((await client.send('/api/samples')).json().samples, [])
+    }, async () => { masterReads++; return catalog })
+  })
+
+  it('rejects an unconfigured selection with its provider name before saving or invoking any adapter', async () => {
+    for (const unavailable of ['openai', 'tencent'] as const) {
+      let calls = 0, masterReads = 0
+      const providers = (['openai', 'tencent'] as const).map(provider => ({
+        ...adapter(provider, async () => { calls++; return result(provider) }), configured: provider !== unavailable,
+      }))
+      await withServer(providers, async client => {
+        const reply = await client.send('/api/benchmark', 'POST', { ...inputBody(), providers: [unavailable], audioBase64: 'invalid audio' })
+        assert.equal(reply.status, 503)
+        assert.deepEqual(reply.json(), { error: `${unavailable === 'openai' ? 'OpenAI' : 'Tencent'} API 尚未配置` })
+        assert.equal(calls, 0); assert.equal(masterReads, 0)
+        await assert.rejects(access(join(client.directory, 'data')), { code: 'ENOENT' })
+        assert.deepEqual((await client.send('/api/samples')).json().samples, [])
+      }, async () => { masterReads++; return catalog })
+    }
+  })
+
   it('runs selected providers concurrently on the same AudioInput and byte buffer, then persists one sample', async () => {
     const received: AudioInput[] = []
     let release: () => void = () => {}

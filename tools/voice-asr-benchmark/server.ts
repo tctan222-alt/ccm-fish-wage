@@ -71,6 +71,12 @@ export function createBenchmarkServer(options: ServerOptions = {}) {
           if (busy) throw new RequestError(409, '已有比较进行中，请等待完成。')
           busy = true
           try {
+            if (!Array.isArray(body.providers) || !body.providers.length || body.providers.length > 2 || new Set(body.providers).size !== body.providers.length || body.providers.some(id => id !== 'openai' && id !== 'tencent')) throw new RequestError(400, '请选择 OpenAI 和/或腾讯 ASR。')
+            if (!adapters.some(adapter => adapter.configured)) throw new RequestError(503, '尚未配置任何语音识别服务')
+            const selected = (body.providers as ProviderId[]).map(id => adapters.find(adapter => adapter.provider === id))
+            if (selected.some(adapter => !adapter)) throw new RequestError(400, '所选 provider 不可用。')
+            const unconfigured = selected.filter(adapter => !adapter!.configured)
+            if (unconfigured.length) throw new RequestError(503, `${unconfigured.map(adapter => adapter!.provider === 'openai' ? 'OpenAI' : 'Tencent').join('、')} API 尚未配置`)
             const catalog = await loadFish()
             if (catalog.error) throw new RequestError(503, catalog.error)
             const expectedFish = catalog.fish.find(fish => fish.active && fish.id === body.expectedFishSpeciesId)
@@ -78,9 +84,6 @@ export function createBenchmarkServer(options: ServerOptions = {}) {
             if (typeof body.expectedWeightKg !== 'string' || !/^\d+(?:\.\d)?$/.test(body.expectedWeightKg.trim())) throw new RequestError(400, '标准重量必须为正数，最多 1 位小数。')
             const expectedWeightKg = Number(body.expectedWeightKg)
             if (expectedWeightKg <= 0 || !Number.isSafeInteger(Math.round(expectedWeightKg * 10))) throw new RequestError(400, '标准重量超出有效范围。')
-            if (!Array.isArray(body.providers) || !body.providers.length || body.providers.length > 2 || new Set(body.providers).size !== body.providers.length || body.providers.some(id => id !== 'openai' && id !== 'tencent')) throw new RequestError(400, '请选择 OpenAI 和/或腾讯 ASR。')
-            const selected = (body.providers as ProviderId[]).map(id => adapters.find(adapter => adapter.provider === id))
-            if (selected.some(adapter => !adapter)) throw new RequestError(400, '所选 provider 不可用。')
             const sampleId = randomUUID()
             let audio: ReturnType<typeof readAudio>
             try { audio = readAudio(body.audioBase64, sampleId) } catch (error) { throw new RequestError(400, (error as Error).message) }
@@ -103,6 +106,10 @@ export function createBenchmarkServer(options: ServerOptions = {}) {
         throw new RequestError(404, '接口不存在。')
       }
       if (req.method !== 'GET') throw new RequestError(405, '不支持此请求方式。')
+      if (path === '/api/health') return json(res, 200, { ok: true, providers: {
+        openai: { configured: adapters.some(adapter => adapter.provider === 'openai' && adapter.configured) },
+        tencent: { configured: adapters.some(adapter => adapter.provider === 'tencent' && adapter.configured) },
+      } })
       if (path === '/api/config') return json(res, 200, { csrfToken, maxDurationSeconds: MAX_DURATION_SECONDS, providers: adapters.map(adapter => ({ id: adapter.provider, label: adapter.provider === 'openai' ? 'OpenAI' : '腾讯', configured: adapter.configured, model: adapter.model })) })
       if (path === '/api/fish') return json(res, 200, await loadFish())
       if (path === '/api/samples') return json(res, 200, await history())
