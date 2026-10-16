@@ -1,8 +1,8 @@
-import { cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
+import { act,cleanup,fireEvent,render,screen,waitFor } from '@testing-library/react'
 import { MemoryRouter,Route,Routes } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
-import { buildWeighingEntry,newWeighingSession,type FishSpeciesRecord } from '../lib/weighing'
+import { buildWeighingEntry,newWeighingSession,type FishSpeciesRecord,type WeighingEntry } from '../lib/weighing'
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
 
 const now=()=>new Date('2026-10-16T00:00:00Z')
@@ -10,14 +10,54 @@ const session={...newWeighingSession({id:'source-978',productType:'fish_head',we
 const entry=buildWeighingEntry({id:'entry-jin',sessionId:session.id,productType:'fish_head',fishSpeciesId:'jin',fishSpecies:{id:'jin',speciesCode:'jin_xian',displayName:'金线'},fishMealQuality:null,entryMode:'individual',sequenceNo:1,weightGrams:80000,remark:'',recordedAt:new Date('2026-10-05T01:00:00Z'),recordedAtClient:'2026-10-05T09:00:00+08:00',recordedBy:'u1'})
 const master:FishSpeciesRecord={id:'jin',speciesCode:'jin_xian',displayName:'金线',active:true,order:0,notes:'',basePriceCentsPerKg:250}
 const bundle={session,entries:[entry],actions:[]}
-function page({species=master,saved=null,finalizer=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,status:'settlement_finalized' as const,finalizedAt:now(),finalizedBy:'u1',revision:draft.revision+1})),clock=now}:{species?:FishSpeciesRecord;saved?:PurchaseSettlementDraft|null;finalizer?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>;clock?:()=>Date}={}){
+function page({species=master,saved=null,finalizer=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,status:'settlement_finalized' as const,finalizedAt:now(),finalizedBy:'u1',revision:draft.revision+1})),clock=now,speciesReader,sourceEntries=bundle.entries}:{species?:FishSpeciesRecord;saved?:PurchaseSettlementDraft|null;finalizer?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>;clock?:()=>Date;speciesReader?:()=>Promise<FishSpeciesRecord[]>;sourceEntries?:WeighingEntry[]}={}){
   const saver=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,revision:draft.revision+1}))
-  const loader=vi.fn(async()=>[species])
-  return {saver,loader,finalizer,...render(<MemoryRouter initialEntries={['/fish-head-settlement/source-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[]} bundleLoader={async()=>bundle} fishSpeciesLoader={loader} draftLoader={async()=>saved} draftSaver={saver} finalizer={finalizer} now={clock}/>}/></Routes></MemoryRouter>)}
+  const loader=vi.fn(speciesReader??(async()=>[species]))
+  const source={...bundle,entries:sourceEntries,session:{...session,fishHeadBasketCount:sourceEntries.length,fishHeadWeightGrams:sourceEntries.reduce((sum,line)=>sum+line.weightGrams,0),totalWeightGrams:sourceEntries.reduce((sum,line)=>sum+line.weightGrams,0)}}
+  return {saver,loader,finalizer,...render(<MemoryRouter initialEntries={['/fish-head-settlement/source-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[]} bundleLoader={async()=>source} fishSpeciesLoader={loader} draftLoader={async()=>saved} draftSaver={saver} finalizer={finalizer} now={clock}/>}/></Routes></MemoryRouter>)}
 }
-afterEach(()=>{cleanup();window.localStorage.clear()})
+function finalizedInvoice():PurchaseSettlementDraft {
+  const lines=buildPurchaseSettlementLines([asSettlementSourceEntry(entry)],'fish_head','978',[master]).map(line=>updateSettlementLinePrice(line,'2.70'))
+  return {...makeSettlementDraft({productType:'fish_head',businessDate:'05/10/2026',dateSortKey:20261005,monthKey:'10/2026',monthSortKey:202610,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'',lines,sourceEntryIds:[entry.id],revision:2}),status:'settlement_finalized',finalizedAt:new Date('2026-10-05T02:00:00Z'),finalizedBy:'u1',sourceSessionId:session.id,sourceSessionRevision:3}
+}
+afterEach(()=>{cleanup();window.localStorage.clear();vi.useRealTimers()})
 
 describe('Fish Head Master suggestions and invoice-only actual prices',()=>{
+  it('shows and edits existing finalized price snapshots without depending on an unavailable Master',async()=>{
+    const result=page({saved:finalizedInvoice(),speciesReader:()=>new Promise(()=>{})})
+    await screen.findByRole('table')
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+    expect(result.loader).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    expect(screen.getByLabelText('金线单价')).toBeEnabled()
+    expect(result.loader).not.toHaveBeenCalled()
+  })
+  it('keeps the finalized view on Master failure and retries only new-species defaults without resetting saved prices',async()=>{
+    const extra={...entry,id:'entry-lai',clientEntryId:'entry-lai',fishSpeciesId:'lai',fishSpeciesCodeSnapshot:'lai_ge',fishSpeciesNameSnapshot:'来戈',displayNameSnapshot:'来戈',sequenceNo:2}
+    const speciesReader=vi.fn<()=>Promise<FishSpeciesRecord[]>>().mockRejectedValueOnce(new Error('Master offline')).mockResolvedValue([master,{...master,id:'lai',speciesCode:'lai_ge',displayName:'来戈',basePriceCentsPerKg:300}])
+    const result=page({saved:finalizedInvoice(),sourceEntries:[entry,extra],speciesReader})
+    await screen.findByRole('table');expect(result.loader).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Master offline')
+    expect(screen.getByRole('table')).toBeInTheDocument();expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+    expect(screen.getByLabelText('金线单价')).toBeDisabled();expect(result.saver).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button',{name:'重新读取默认价并修改'}))
+    await waitFor(()=>expect(screen.getByLabelText('来戈单价')).toHaveValue('3.05'))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70');expect(speciesReader).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+  it('bounds lazy Master editing reads without hiding finalized history',async()=>{
+    vi.useFakeTimers()
+    const extra={...entry,id:'entry-lai',fishSpeciesId:'lai',fishSpeciesCodeSnapshot:'lai_ge',fishSpeciesNameSnapshot:'来戈',displayNameSnapshot:'来戈',sequenceNo:2}
+    page({saved:finalizedInvoice(),sourceEntries:[entry,extra],speciesReader:()=>new Promise(()=>{})})
+    await act(async()=>{})
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    expect(screen.getByRole('status')).toHaveTextContent('正在读取新增鱼种默认价')
+    await act(async()=>{await vi.advanceTimersByTimeAsync(15000)})
+    expect(screen.getByRole('alert')).toHaveTextContent('15 秒')
+    expect(screen.getByRole('table')).toBeInTheDocument();expect(screen.getByRole('button',{name:'重新读取默认价并修改'})).toBeEnabled()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+  })
   it('auto-populates Master base plus premium, then recomputes and saves a local override without changing Master',async()=>{
     const original={...master}
     const {saver,loader}=page()

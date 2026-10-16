@@ -67,11 +67,13 @@ export interface PurchaseSettlementDraft {
 }
 
 /** Recalculate current weights while retaining the saved price snapshots. */
+export function settlementLineIdentity(line:PurchaseSettlementLine):string {
+  return line.lineType==='fish_head'?`head:${line.fishSpeciesCodeSnapshot??line.fishSpeciesId??line.nameSnapshot}`:`meal:${line.qualityCodeSnapshot}`
+}
+
 export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:PurchaseSettlementLine[]):PurchaseSettlementLine[]{
-  const identity=(line:PurchaseSettlementLine)=>line.lineType==='fish_head'
-    ?`head:${line.fishSpeciesCodeSnapshot??line.fishSpeciesId??line.nameSnapshot}`:`meal:${line.qualityCodeSnapshot}`
   return current.map(line=>{
-    const previous=saved.find(item=>identity(item)===identity(line))
+    const previous=saved.find(item=>settlementLineIdentity(item)===settlementLineIdentity(line))
     if(!previous)return line
     const next={...line,defaultUnitPriceCentsPerKg:previous.defaultUnitPriceCentsPerKg,
       unitPriceCentsPerKg:previous.unitPriceCentsPerKg,priceWasEdited:previous.priceWasEdited}
@@ -86,11 +88,11 @@ export function reconcileSettlementLines(current:PurchaseSettlementLine[],saved:
 export function parseSettlementPrice(value:string):number|null {
   const clean=value.trim()
   if(clean==='')return null
-  if(!/^(?:\d+|\d+\.\d{1,2}|\.\d{1,2})$/.test(clean))throw new Error('单价必须是最多两位小数的正数金额。')
+  if(!/^(?:\d+|\d+\.\d{1,2}|\.\d{1,2})$/.test(clean))throw new Error('单价必须是最多两位小数的非负金额。')
   const normalized=clean.startsWith('.')?`0${clean}`:clean
   const [whole,fraction='']=normalized.split('.')
   const cents=Number(whole)*100+Number(fraction.padEnd(2,'0'))
-  if(!Number.isSafeInteger(cents)||cents<=0||cents>MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG)throw new Error('单价须大于 RM0，并且不超过 RM100,000.00/kg。')
+  if(!Number.isSafeInteger(cents)||cents<0)throw new Error('单价格式不正确。')
   return cents
 }
 
@@ -141,6 +143,7 @@ export function assertFishHeadSettlementPrices(draft:Pick<PurchaseSettlementDraf
 
 export function updateSettlementLinePrice(line:PurchaseSettlementLine,input:string):PurchaseSettlementLine {
   const price=parseSettlementPrice(input)
+  if(line.lineType==='fish_head'&&price!==null&&(price<=0||price>MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG))throw new Error('单价须大于 RM0，并且不超过 RM100,000.00/kg。')
   return {...line,unitPriceCentsPerKg:price,priceWasEdited:true,amountCents:price===null?0:lineAmountCents(line.totalWeightGrams,price)}
 }
 

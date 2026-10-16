@@ -99,8 +99,7 @@ describe('purchase settlement pricing',()=>{
     expect(parseSettlementPrice('.8')).toBe(80)
     expect(parseSettlementPrice('')).toBeNull()
     expect(()=>parseSettlementPrice('-1')).toThrow()
-    expect(()=>parseSettlementPrice('0')).toThrow('大于 RM0')
-    expect(()=>parseSettlementPrice('100000.01')).toThrow('不超过')
+    expect(parseSettlementPrice('0')).toBe(0)
     expect(()=>parseSettlementPrice('1.2.3')).toThrow()
     expect(()=>parseSettlementPrice('1.234')).toThrow()
     expect(()=>parseSettlementPrice('abc')).toThrow()
@@ -126,10 +125,18 @@ describe('purchase settlement pricing',()=>{
 
   it('recalculates half-up amount in cents when a user edits the unit price',()=>{
     const line=buildPurchaseSettlementLines([entry()],'fish_head','833')[0]
+    expect(()=>updateSettlementLinePrice(line,'0')).toThrow('大于 RM0')
+    expect(()=>updateSettlementLinePrice(line,'100000.01')).toThrow('不超过')
     expect(calculateSettlementLineAmount(line)).toBe(32903)
     const edited=updateSettlementLinePrice(line,'1.20')
     expect(edited).toMatchObject({unitPriceCentsPerKg:120,priceWasEdited:true,amountCents:19260})
     expect(calculateSettlementLineAmount({...line,totalWeightGrams:1,unitPriceCentsPerKg:500})).toBe(1)
+  })
+
+  it('retains the existing Fish Meal price and amount validation behavior',()=>{
+    const meal=buildPurchaseSettlementLines([entry({productType:'fish_meal',fishMealQuality:'bag'})],'fish_meal','978')[0]
+    expect(updateSettlementLinePrice(meal,'0.80')).toMatchObject({unitPriceCentsPerKg:80,amountCents:12840})
+    expect(()=>updateSettlementLinePrice(meal,'0.00')).toThrow('Unit price must be')
   })
 
   it('builds a stable draft without changing source entry facts',()=>{

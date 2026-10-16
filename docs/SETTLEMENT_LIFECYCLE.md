@@ -188,6 +188,11 @@ and the existing atomic full before/after actions contain price and total change
 Head mobile rows expose actual price and amount without a sideways table scroll;
 Fish Meal keeps its current table. Price inputs use decimal keyboard hints.
 
+Finalized history displays saved snapshots without a Master read. Entering Edit
+only fetches current Master when source corrections introduced a new species;
+failure/timeout leaves the saved invoice visible with a separate retry. Existing
+species retain saved prices and never require Master availability to edit.
+
 Master Rules add only the optional base field and its positive integer bound.
 Same-function redundant required-key listing is removed while every required
 field remains directly validated; emulator tests individually reject missing
