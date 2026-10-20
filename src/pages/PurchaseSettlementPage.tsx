@@ -150,8 +150,12 @@ export function PurchaseSettlementPage({
       let species:FishSpeciesRecord[]=[]
       if(fishHead&&sourceEntries.length&&draft?.status!=='settlement_finalized'){progress('master');species=await read(fishSpeciesLoader);if(cancelled)return}
       setMasterSpecies(species)
-      const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'',species)
-      const nextLines=draft?.status==='settlement_finalized'?draft.lines:source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
+      let nextLines:PurchaseSettlementLine[]
+      if(draft?.status==='settlement_finalized')nextLines=draft.lines
+      else{
+        const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'',species)
+        nextLines=source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
+      }
       setSavedDraft(draft)
       setSourceSession(source?.session??null);setEntries(sourceEntries);setReceiptNo(draft?.receiptNo??source?.session.externalSlipNo??'');setDraftRevision(draft?.revision??0)
       setDraftId(draft?.draftId)
@@ -234,22 +238,26 @@ export function PurchaseSettlementPage({
   }
   async function beginEdit(){
     if(!editable||recovery||localDraftBlocked||busy)return
-    // A source weight correction is reviewed explicitly, never changes finalized view on read.
-    let current=buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry),productType,sourceSession?.vesselCodeSnapshot??'',masterSpecies)
-    const needsNewDefaults=fishHead&&current.some(line=>!lines.some(saved=>settlementLineIdentity(saved)===settlementLineIdentity(line)))
-    if(needsNewDefaults){
-      const generation=contextGeneration.current,controller=new AbortController()
-      editMasterController.current=controller;setBusy(true);setEditMasterLoading(true);setEditMasterError('')
-      try{
-        const species=await readSettlementWithDeadline(fishSpeciesLoader,controller.signal,()=> 'master')
-        if(controller.signal.aborted||generation!==contextGeneration.current)return
-        setMasterSpecies(species)
+    setError('');setEditMasterError('')
+    try{
+      // A source weight correction is reviewed explicitly, never changes finalized view on read.
+      let current=buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry),productType,sourceSession?.vesselCodeSnapshot??'',masterSpecies)
+      const needsNewDefaults=fishHead&&current.some(line=>!lines.some(saved=>settlementLineIdentity(saved)===settlementLineIdentity(line)))
+      if(needsNewDefaults){
+        const generation=contextGeneration.current,controller=new AbortController()
+        editMasterController.current=controller;setBusy(true);setEditMasterLoading(true)
+        let species:FishSpeciesRecord[]
+        try{
+          species=await readSettlementWithDeadline(fishSpeciesLoader,controller.signal,()=> 'master')
+          if(controller.signal.aborted||generation!==contextGeneration.current)return
+          setMasterSpecies(species)
+        }catch(problem){if(generation===contextGeneration.current&&!controller.signal.aborted)setEditMasterError(`无法读取新增鱼种的默认价：${problem instanceof Error?problem.message:'请重试。'} 已保存结单仍可查看。`);return}
+        finally{if(generation===contextGeneration.current){setBusy(false);setEditMasterLoading(false)}}
         current=buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry),productType,sourceSession?.vesselCodeSnapshot??'',species)
-      }catch(problem){if(generation===contextGeneration.current&&!controller.signal.aborted)setEditMasterError(`无法读取新增鱼种的默认价：${problem instanceof Error?problem.message:'请重试。'} 已保存结单仍可查看。`);return}
-      finally{if(generation===contextGeneration.current){setBusy(false);setEditMasterLoading(false)}}
-    }
-    const next=reconcileSettlementLines(current,lines)
-    setLines(next);setPriceInputs(Object.fromEntries(next.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])));setEditing(true)
+      }
+      const next=reconcileSettlementLines(current,lines)
+      setLines(next);setPriceInputs(Object.fromEntries(next.map(line=>[lineKey(line),priceText(line.unitPriceCentsPerKg)])));setEditing(true)
+    }catch{setError('无法更新结单重量，请核对来源称重资料的重量与价格范围；已保存结单仍可查看。')}
   }
   async function copyTable(){
     const header=fishHead?'鱼名\t总重量\t篮数\t预设价\t单价 RM/kg\t金额':'品质\t总重量\t篮数/总重记录\t预设价\t单价 RM/kg\t金额'

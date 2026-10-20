@@ -235,7 +235,10 @@ async function writeSettlement(value:PurchaseSettlementDraft,finalize:boolean):P
   })
   // Resolve the trusted timestamp, rather than returning a serverTimestamp sentinel to the UI.
   if(result.status==='settlement_finalized'){
-    const confirmed=await getDocFromServer(reference)
+    const confirmed=await getDocFromServer(reference).catch((problem:unknown)=>{
+      const code=problem&&typeof problem==='object'&&'code' in problem?String(problem.code):''
+      throw new Error(`结单已提交，但无法确认服务器保存结果${code?`（${code}）`:''}；请重新载入核对后再操作。`,{cause:problem})
+    })
     if(!confirmed.exists())throw new Error('无法确认结单保存结果，请重新载入核对；本机草稿已保留。')
     if(Number(confirmed.data().revision)!==result.revision)throw new Error('结单保存后又被其他装置修改，请重新打开核对最新版本；本机草稿已保留。')
     return draftFrom(confirmed.id,confirmed.data())

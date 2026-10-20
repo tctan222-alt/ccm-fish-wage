@@ -222,6 +222,38 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     fireEvent.click(screen.getByRole('button',{name:/载入更多/}));await screen.findByRole('article',{name:'现场单 SECOND'});expect(screen.getAllByRole('article')).toHaveLength(2)
     expect(loader.mock.calls[1][1]).toBe(cursor)
   })
+  it.each(['resolve','reject'])('ignores an old next-page %s while new criteria load and retains the new cursor',async outcome=>{
+    const oldCursor={fingerprint:'old-fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
+    const newCursor={...oldCursor,fingerprint:'new-fixture'}
+    const oldPage=deferred<{items:SettlementSummary[];cursor:SettlementCursor|null}>()
+    const newPage=deferred<{items:SettlementSummary[];cursor:SettlementCursor|null}>()
+    const loader=vi.fn<SettlementPageLoader>()
+      .mockResolvedValueOnce({items:[item({sessionCode:'OLD-FIRST'})],cursor:oldCursor})
+      .mockImplementationOnce(()=>oldPage.promise)
+      .mockImplementationOnce(()=>newPage.promise)
+      .mockResolvedValueOnce({items:[item({id:'new-next',sessionCode:'NEW-NEXT'})],cursor:null})
+    renderSearch(loader);await ready()
+    fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+    expect(loader.mock.calls[1][1]).toBe(oldCursor)
+    fireEvent.click(screen.getByRole('button',{name:'今天 Today'}));search()
+    expect(loader.mock.calls[2][0]).toMatchObject({productType,from:'2026-10-03',to:'2026-10-03'})
+    expect(loader.mock.calls[2][1]).toBeNull()
+    await act(async()=>{
+      if(outcome==='resolve')oldPage.resolve({items:[item({id:'old-late',sessionCode:'OLD-LATE'})],cursor:oldCursor})
+      else oldPage.reject(new Error('old next-page failure'))
+    })
+    expect(screen.getByRole('status')).toHaveTextContent('正在载入')
+    expect(screen.queryByRole('article')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    await act(async()=>newPage.resolve({items:[item({id:'new-first',sessionCode:'NEW-FIRST'})],cursor:newCursor}))
+    expect(screen.getByRole('article',{name:'现场单 NEW-FIRST'})).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+    await screen.findByRole('article',{name:'现场单 NEW-NEXT'})
+    expect(loader.mock.calls[3][1]).toBe(newCursor)
+    expect(screen.getAllByRole('article')).toHaveLength(2)
+    expect(screen.queryByRole('article',{name:'现场单 OLD-LATE'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })
 describe('Fish Head Settlement list to existing detail routes',()=>{
   it('opens the clicked same-vessel same-day session in the real existing settlement page',async()=>{

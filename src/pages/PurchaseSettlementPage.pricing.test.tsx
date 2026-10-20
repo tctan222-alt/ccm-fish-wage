@@ -20,6 +20,9 @@ function finalizedInvoice():PurchaseSettlementDraft {
   const lines=buildPurchaseSettlementLines([asSettlementSourceEntry(entry)],'fish_head','978',[master]).map(line=>updateSettlementLinePrice(line,'2.70'))
   return {...makeSettlementDraft({productType:'fish_head',businessDate:'05/10/2026',dateSortKey:20261005,monthKey:'10/2026',monthSortKey:202610,vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'',lines,sourceEntryIds:[entry.id],revision:2}),status:'settlement_finalized',finalizedAt:new Date('2026-10-05T02:00:00Z'),finalizedBy:'u1',sourceSessionId:session.id,sourceSessionRevision:3}
 }
+function oversizedSource(){
+  return Array.from({length:335},(_,index)=>({...entry,id:`entry-${index}`,clientEntryId:`entry-${index}`,sequenceNo:index+1,weightGrams:300_000}))
+}
 afterEach(()=>{cleanup();window.localStorage.clear();vi.useRealTimers()})
 
 describe('Fish Head Master suggestions and invoice-only actual prices',()=>{
@@ -31,6 +34,35 @@ describe('Fish Head Master suggestions and invoice-only actual prices',()=>{
     fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
     expect(screen.getByLabelText('金线单价')).toBeEnabled()
     expect(result.loader).not.toHaveBeenCalled()
+  })
+  it('keeps the saved finalized invoice readable when current source totals exceed the calculation limit',async()=>{
+    const saved=finalizedInvoice(),original=structuredClone(saved)
+    const result=page({saved,sourceEntries:oversizedSource(),speciesReader:()=>new Promise(()=>{})})
+    await screen.findByRole('table')
+    expect(screen.getByText('80 kg')).toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+    expect(screen.getAllByText('RM 216.00')).toHaveLength(2)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(result.loader).not.toHaveBeenCalled()
+    expect(result.saver).not.toHaveBeenCalled()
+    expect(saved).toEqual(original)
+  })
+  it('shows a Chinese edit error and retains the saved invoice when recalculating current source is invalid',async()=>{
+    const saved=finalizedInvoice(),original=structuredClone(saved)
+    const result=page({saved,sourceEntries:oversizedSource()})
+    await screen.findByRole('table')
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法更新结单重量，请核对来源称重资料')
+    expect(screen.getByRole('alert')).toHaveTextContent('已保存结单仍可查看')
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(screen.getByText('80 kg')).toBeInTheDocument()
+    expect(screen.getAllByText('RM 216.00')).toHaveLength(2)
+    expect(screen.getByRole('button',{name:'修改结单 Edit'})).toBeEnabled()
+    expect(result.saver).not.toHaveBeenCalled()
+    expect(result.finalizer).not.toHaveBeenCalled()
+    expect(result.loader).not.toHaveBeenCalled()
+    expect(saved).toEqual(original)
   })
   it('keeps the finalized view on Master failure and retries only new-species defaults without resetting saved prices',async()=>{
     const extra={...entry,id:'entry-lai',clientEntryId:'entry-lai',fishSpeciesId:'lai',fishSpeciesCodeSnapshot:'lai_ge',fishSpeciesNameSnapshot:'来戈',displayNameSnapshot:'来戈',sequenceNo:2}
@@ -115,5 +147,26 @@ describe('Fish Head Master suggestions and invoice-only actual prices',()=>{
       await waitFor(()=>expect(result.saver).toHaveBeenCalledTimes(1))
       expect(result.saver.mock.calls[0][0].lines[0]).toMatchObject({unitPriceCentsPerKg:280,defaultUnitPriceCentsPerKg:255,baseUnitPriceCentsPerKg:250})
     }else{expect(edit).toBeDisabled();expect(screen.getByLabelText('金线单价')).toBeDisabled();expect(result.saver).not.toHaveBeenCalled()}
+  })
+  it('locks an already open price editor exactly at 90 days without discarding unsaved local prices',async()=>{
+    vi.useFakeTimers()
+    const saved=finalizedInvoice(),deadline=new Date('2026-10-05T02:00:00Z').getTime()+90*86400000
+    vi.setSystemTime(deadline-1000)
+    const result=page({saved,clock:()=>new Date()})
+    await act(async()=>{})
+    fireEvent.click(screen.getByRole('button',{name:'修改结单 Edit'}))
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'2.80'}})
+    expect(screen.getByRole('button',{name:'保存修改'})).toBeEnabled()
+    const localDrafts=Object.keys(window.localStorage).map(key=>window.localStorage.getItem(key))
+    expect(localDrafts.join('')).toContain('2.80')
+    await act(async()=>{await vi.advanceTimersByTimeAsync(1000)})
+    expect(screen.getByLabelText('金线单价')).toBeDisabled()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.80')
+    expect(screen.getByRole('button',{name:'保存修改'})).toBeDisabled()
+    fireEvent.click(screen.getByRole('button',{name:'保存修改'}))
+    expect(result.saver).not.toHaveBeenCalled()
+    expect(result.finalizer).not.toHaveBeenCalled()
+    expect(Object.keys(window.localStorage).map(key=>window.localStorage.getItem(key))).toEqual(localDrafts)
+    expect(screen.getByText(/已锁定 Locked/)).toBeInTheDocument()
   })
 })
