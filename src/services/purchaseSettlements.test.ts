@@ -139,6 +139,28 @@ describe('atomic settlement finalization',()=>{
     expect(results.filter(result=>result.status==='fulfilled')).toHaveLength(1)
     expect([...state.records.keys()].filter(path=>path.startsWith('purchaseSettlementDrafts/')&&!path.includes('/actions/'))).toHaveLength(1)
   })
+
+  it.each(['unavailable','deadline-exceeded'])('preserves a committed finalization when its confirmation read fails with %s and reloads the same invoice',async code=>{
+    const connectionError=Object.assign(new Error('Server confirmation read failed'),{code})
+    state.afterServerRead=path=>{if(path===draftPath){state.afterServerRead=null;throw connectionError}}
+    const problem=await finalizePurchaseSettlement(input()).then(()=>null,(error:Error)=>error)
+    expect(problem?.message).toContain('无法确认')
+    expect(problem?.message).toContain('请重新载入')
+    expect(problem?.message).toContain(code)
+    expect(problem?.cause).toBe(connectionError)
+    const committed=state.records.get(draftPath)
+    expect(committed).toMatchObject({status:'settlement_finalized',revision:1})
+    expect(state.records.get(`${draftPath}/actions/1`)).toMatchObject({type:'finalize',revision:1})
+    state.writes.mockClear()
+    await expect(finalizePurchaseSettlement(input())).rejects.toThrow('来源称重单已有结单（fish_head_session_source），请重新载入。')
+    expect(state.writes).not.toHaveBeenCalled()
+    const reloaded=await loadPurchaseSettlementDraftForSource(bundle(),'fish_head')
+    expect(reloaded).toMatchObject({draftId:'fish_head_session_source',status:'settlement_finalized',revision:1,finalizedAt:committed?.finalizedAt})
+    const edited=await savePurchaseSettlementDraft({...reloaded!,receiptNo:'recovered-after-network'})
+    expect(edited).toMatchObject({draftId:reloaded?.draftId,revision:2,finalizedAt:committed?.finalizedAt})
+    expect(state.records.get(`${draftPath}/actions/2`)).toMatchObject({type:'edit_after_finalize',beforeSnapshot:{revision:1},afterSnapshot:{revision:2}})
+    expect([...state.records.keys()].filter(path=>path.startsWith('purchaseSettlementDrafts/')&&!path.includes('/actions/'))).toEqual([draftPath])
+  })
 })
 
 describe('source-authoritative draft lookup',()=>{

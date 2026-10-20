@@ -4,13 +4,14 @@ import { MemoryRouter,Route,Routes,useNavigate } from 'react-router-dom'
 import { afterEach,beforeEach,describe,expect,it,vi } from 'vitest'
 import { PurchaseSettlementPage } from './PurchaseSettlementPage'
 import { asSettlementSourceEntry,buildPurchaseSettlementLines,makeSettlementDraft,updateSettlementLinePrice,type PurchaseSettlementDraft } from '../lib/purchaseSettlement'
-import { buildWeighingEntry,newWeighingSession } from '../lib/weighing'
+import { buildWeighingEntry,newWeighingSession,type FishSpeciesRecord } from '../lib/weighing'
 import type { Vessel } from '../lib/purchasing'
 import { createSettlementLocalDraftStore } from '../services/settlementLocalDrafts'
 import type { WeighingBundle } from '../services/weighing'
 
 type PageProps=ComponentProps<typeof PurchaseSettlementPage>
 const vessel:Vessel={id:'v978',vesselCode:'978',displayName:'978',active:true,order:0,notes:'',defaultSupplierId:'',defaultSupplierNameSnapshot:''}
+const masterSpecies:FishSpeciesRecord={id:'jin_xian',speciesCode:'jin_xian',displayName:'金线',active:true,order:1,notes:'',basePriceCentsPerKg:250}
 const fixedNow=()=>new Date('2026-10-03T00:00:00Z')
 function deferred<T>(){
   let resolve!:(value:T)=>void
@@ -98,6 +99,72 @@ describe('settlement pending-read recovery',()=>{
     expect(screen.getByRole('button',{name:'重新载入结单'})).toBeEnabled()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('button',{name:'保存结单草稿'})).not.toBeInTheDocument()
+  })
+
+  it('retries an initial Master read failure without deleting or silently applying the stored invoice override',async()=>{
+    const source=bundle(),saved=draftFor(source,'1.23'),store=createSettlementLocalDraftStore('master-recovery')
+    store.save({version:1,productType:'fish_head',sourceSessionId:source.session.id,sourceSessionRevision:1,settlementRevision:0,
+      businessDate:'01/10/2026',vesselId:'v978',vesselCodeSnapshot:'978',receiptNo:'LOCAL-123',
+      priceInputs:{['entry-'+source.session.id]:'1.23'},lines:saved.lines,updatedAt:'2026-10-03T00:00:00Z'})
+    const originalLocal=store.load('fish_head',source.session.id)
+    const fishSpeciesLoader=vi.fn<NonNullable<PageProps['fishSpeciesLoader']>>()
+      .mockRejectedValueOnce(new Error('鱼种默认价读取失败：网络断开'))
+      .mockResolvedValue([masterSpecies])
+    const bundleLoader=vi.fn(async()=>source),saver=vi.fn()
+    renderPage({bundleLoader,fishSpeciesLoader,localDraftStore:store,draftSaver:saver})
+    await flushReads()
+    expectNotLoading()
+    expect(screen.getByRole('alert')).toHaveTextContent('鱼种默认价读取失败：网络断开')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    expect(screen.queryByText('当前没有称重资料，不能结单。')).not.toBeInTheDocument()
+    expect(store.load('fish_head',source.session.id)).toEqual(originalLocal)
+    fireEvent.click(screen.getByRole('button',{name:'重新载入结单'}))
+    await flushReads()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading',{name:'发现未完成草稿'})).toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.55')
+    expect(store.load('fish_head',source.session.id)).toEqual(originalLocal)
+    fireEvent.click(screen.getByRole('button',{name:'恢复草稿'}))
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.23')
+    expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('LOCAL-123')
+    expect(bundleLoader.mock.calls).toEqual([['source-978'],['source-978']])
+    expect(fishSpeciesLoader).toHaveBeenCalledTimes(2)
+    expect(saver).not.toHaveBeenCalled()
+  })
+
+  it('times out the initial Master read and ignores its late prices after a retry and invoice override',async()=>{
+    const pending=deferred<FishSpeciesRecord[]>(),store=createSettlementLocalDraftStore('master-timeout')
+    const fishSpeciesLoader=vi.fn<NonNullable<PageProps['fishSpeciesLoader']>>()
+      .mockImplementationOnce(()=>pending.promise).mockResolvedValue([masterSpecies])
+    const saver=vi.fn()
+    renderPage({fishSpeciesLoader,localDraftStore:store,draftSaver:saver})
+    await flushReads()
+    expect(screen.getByRole('status')).toHaveTextContent('正在读取鱼种默认价')
+    await advance(14_999)
+    expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
+    await advance(1)
+    expectNotLoading()
+    expect(screen.getByRole('alert')).toHaveTextContent('读取鱼种默认价较慢，已超过 15 秒')
+    expect(screen.queryByRole('table')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button',{name:'重新载入结单'}))
+    await flushReads()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.55')
+    fireEvent.change(screen.getByLabelText('金线单价'),{target:{value:'1.23'}})
+    fireEvent.change(screen.getByLabelText('鱼头纸单号'),{target:{value:'LATEST-LOCAL'}})
+    const latestLocal=store.load('fish_head','source-978')
+    expect(latestLocal).toMatchObject({receiptNo:'LATEST-LOCAL',priceInputs:{'entry-source-978':'1.23'},
+      lines:[{baseUnitPriceCentsPerKg:250,defaultUnitPriceCentsPerKg:255,unitPriceCentsPerKg:123,amountCents:9840}]})
+    await act(async()=>pending.resolve([{...masterSpecies,basePriceCentsPerKg:999}]))
+    await flushReads()
+    expectNotLoading()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('1.23')
+    expect(screen.getByLabelText('鱼头纸单号')).toHaveValue('LATEST-LOCAL')
+    expect(screen.getByText('基础价 RM 2.50 · 船号加价 RM 0.05（默认快照）')).toBeInTheDocument()
+    expect(screen.getAllByText('RM 98.40')).toHaveLength(2)
+    expect(store.load('fish_head','source-978')).toEqual(latestLocal)
+    expect(fishSpeciesLoader).toHaveBeenCalledTimes(2)
+    expect(saver).not.toHaveBeenCalled()
   })
 
   it('identifies a pending draft read and makes it retryable after its own 15-second deadline',async()=>{

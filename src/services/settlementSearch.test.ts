@@ -97,6 +97,33 @@ describe('projected server settlement search',()=>{
     expect(new Set([...first.items,...second.items,...third.items].map(item=>item.id)).size).toBe(61)
     expect(third.cursor).toBeNull();expect(JSON.stringify(first.cursor)).toBe(saved)
   })
+  it.each([
+    ['fish_head','date'],['fish_head','vessel'],['fish_meal','date'],['fish_meal','vessel'],
+  ] as const)('retries the same %s %s cursor without skipping records after the amount-header join fails',async(productType,mode)=>{
+    const docs=Array.from({length:61},(_,index)=>session(`retry-${String(index).padStart(3,'0')}`,index%2?'2026-10-03':'03/10/2026',
+      {productType,dateSortKey:20261003}))
+    const fixture=queryFixture(docs)
+    let failNextJoin=false
+    const run=vi.fn(async(query:StructuredQuery)=>{
+      if(query.from[0].collectionId==='purchaseSettlementDrafts'&&failNextJoin){
+        failNextJoin=false
+        throw new Error('amount headers temporarily unavailable')
+      }
+      return fixture(query)
+    })
+    const load=createSettlementPageLoader(run)
+    const criteria:SettlementSearch={...search,productType,mode,...(mode==='vessel'?{vesselId:'v833',from:'',to:''}:{})}
+    const first=await load(criteria),savedCursor=JSON.stringify(first.cursor)
+    expect(first.items).toHaveLength(25);expect(first.cursor).not.toBeNull()
+    failNextJoin=true
+    await expect(load(criteria,first.cursor)).rejects.toThrow('amount headers temporarily unavailable')
+    expect(JSON.stringify(first.cursor)).toBe(savedCursor)
+    const retried=await load(criteria,first.cursor),last=await load(criteria,retried.cursor)
+    expect([retried.items.length,last.items.length]).toEqual([25,11])
+    expect([...first.items,...retried.items,...last.items].map(item=>item.id)).toEqual(
+      Array.from({length:61},(_,index)=>`retry-${String(60-index).padStart(3,'0')}`))
+    expect(last.cursor).toBeNull();expect(JSON.stringify(first.cursor)).toBe(savedCursor)
+  })
   it('does not scan older empty canonical months before returning a full recent ISO page from a large range',async()=>{
     const run=queryFixture(Array.from({length:26},(_,index)=>session(`recent-${index}`,'2026-10-03')))
     const page=await createSettlementPageLoader(run)({...search,from:'2000-01-01'})
