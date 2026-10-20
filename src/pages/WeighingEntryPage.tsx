@@ -625,7 +625,7 @@ export function WeighingEntryPage({
         {pending>0&&<button type="button" disabled={syncing} onClick={()=>void syncNow()}>{syncing?'正在同步…':'重新同步'}</button>}
       </div>
       {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2>
-        {productType==='fish_head'?<FishHeadLiveSummary entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''}/>:<CategorySummary entries={activeContextEntries}/>}
+        {productType==='fish_head'?<FishHeadLiveSummary entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''} masterSpecies={species}/>:<CategorySummary entries={activeContextEntries}/>}
       </section>}
     </section>
 

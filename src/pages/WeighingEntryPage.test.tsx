@@ -14,10 +14,10 @@ const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesse
 afterEach(()=>{cleanup();vi.clearAllMocks()})
 
 function Location(){return <output aria-label="route">{useLocation().pathname}</output>}
-function setup(sync=remoteSync(),store=createMemoryWeighingStore(),guard=false){
+function setup(sync=remoteSync(),store=createMemoryWeighingStore(),guard=false,species=DEFAULT_FISH_SPECIES){
   const page=<WeighingEntryPage
     vesselLoader={async()=>vessels}
-    speciesLoader={async()=>DEFAULT_FISH_SPECIES}
+    speciesLoader={async()=>species}
     openSessionLoader={async()=>null}
     closedSessionLoader={async()=>null}
     bundleLoader={async()=>{throw new Error('offline')}}
@@ -114,19 +114,22 @@ describe('iPhone 现场称重单页',()=>{
 
   it('切换船号后鱼头纸单号仍可输入，且会在下一篮保存到该草稿单',async()=>{
     const {store}=setup()
-    await screen.findByLabelText('重量（kg）')
+    const weight=await screen.findByLabelText('重量（kg）')
     await waitFor(()=>expect(screen.getByRole('option',{name:'833'})).toHaveValue('v833'))
     fireEvent.change(screen.getByRole('combobox',{name:'船号'}),{target:{value:'v833'}})
     expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v833')
     const slip=screen.getByLabelText('鱼头纸单号')
-    await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
+    await waitFor(()=>expect(weight).not.toBeDisabled())
     fireEvent.change(slip,{target:{value:'FH-833-A'}})
-    fireEvent.change(screen.getByLabelText('重量（kg）'),{target:{value:'60'}})
+    fireEvent.change(weight,{target:{value:'60'}})
     await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
 
     await screen.findByText('已保存')
     expect(await store.getSession('session-v978-20260730')).toMatchObject({vesselId:'v833',externalSlipNo:'FH-833-A'})
+    expect(await store.getEntries('session-v978-20260730')).toEqual([
+      expect.objectContaining({vesselId:'v833',vesselCodeSnapshot:'833',weightGrams:60_000}),
+    ])
   })
 
   it('切换船号会切换当天同产品的草稿单，不会混入或改写另一艘船的记录',async()=>{
@@ -621,6 +624,26 @@ describe('iPhone 现场称重单页',()=>{
     expect(summary).toHaveTextContent('RM 2.10/kg')
     expect(summary).toHaveTextContent('RM 168.26')
     expect(summary).toHaveTextContent('当前总金额')
+  })
+
+  it.each([
+    [250,'RM 2.55/kg','RM 25.50'],
+    [null,'—','尚有 1 个鱼种未定价'],
+  ])('现场汇总使用已载入的 Master 默认价 %s，保留明确未定价',async(basePrice,priceText,totalText)=>{
+    const species=DEFAULT_FISH_SPECIES.map(item=>item.speciesCode==='jin_xian'?{...item,basePriceCentsPerKg:basePrice}:item)
+    const {store,unmount}=setup(remoteSync(),createMemoryWeighingStore(),false,species)
+    fireEvent.change(await screen.findByLabelText('重量（kg）'),{target:{value:'10'}})
+    await waitFor(()=>expect(screen.getByRole('button',{name:'确认加入'})).not.toBeDisabled())
+    fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
+    await screen.findByText('已保存')
+    const summary=screen.getByRole('region',{name:'现场汇总'})
+    expect(summary).toHaveTextContent(priceText)
+    expect(summary).toHaveTextContent(totalText)
+    expect(summary).not.toHaveTextContent('RM 2.10/kg')
+    if(basePrice===null)expect(summary).not.toHaveTextContent('当前总金额')
+    unmount()
+    setup(remoteSync(),store,false,species)
+    await waitFor(()=>expect(screen.getByRole('region',{name:'现场汇总'})).toHaveTextContent(totalText))
   })
 })
 

@@ -1,10 +1,10 @@
 import { buildFishHeadLiveValuation } from '../lib/fishHeadLiveValuation'
 import { formatSettlementMoney } from '../lib/purchaseSettlement'
-import { formatWeightKg,type WeighingEntry } from '../lib/weighing'
+import { formatWeightKg,type FishSpeciesRecord,type WeighingEntry } from '../lib/weighing'
 
-export function FishHeadLiveSummary({entries,vesselCode}:{entries:WeighingEntry[];vesselCode:string}){
+export function FishHeadLiveSummary({entries,vesselCode,masterSpecies=[]}:{entries:WeighingEntry[];vesselCode:string;masterSpecies?:readonly FishSpeciesRecord[]}){
   let valuation
-  try{valuation=buildFishHeadLiveValuation(entries,vesselCode)}
+  try{valuation=buildFishHeadLiveValuation(entries,vesselCode,masterSpecies)}
   catch{return <p className="error" role="alert">当前金额无法计算，请核对称重资料；仍可继续称重。</p>}
   if(valuation.rows.length===0)return null
 

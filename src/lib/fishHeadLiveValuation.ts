@@ -1,5 +1,5 @@
 import { asSettlementSourceEntry, buildPurchaseSettlementLines } from './purchaseSettlement'
-import type { WeighingEntry } from './weighing'
+import type { FishSpeciesRecord, WeighingEntry } from './weighing'
 
 export interface FishHeadLiveValuationRow {
   nameSnapshot:string
@@ -19,8 +19,8 @@ export interface FishHeadLiveValuation {
 }
 
 /** Read-only preview: settlement owns grouping, default prices and half-up amounts. */
-export function buildFishHeadLiveValuation(entries:WeighingEntry[], vesselCode:string):FishHeadLiveValuation {
-  const rows = buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry), 'fish_head', vesselCode).map(line => ({
+export function buildFishHeadLiveValuation(entries:WeighingEntry[], vesselCode:string, masterSpecies:readonly FishSpeciesRecord[]=[]):FishHeadLiveValuation {
+  const rows = buildPurchaseSettlementLines(entries.map(asSettlementSourceEntry), 'fish_head', vesselCode, masterSpecies).map(line => ({
     nameSnapshot:line.nameSnapshot,
     basketCount:line.basketCount,
     totalWeightGrams:line.totalWeightGrams,
