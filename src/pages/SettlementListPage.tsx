@@ -47,6 +47,7 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
   const [moreError,setMoreError]=useState('')
   const generation=useRef(0)
   const moreLock=useRef(false)
+  const moreRequest=useRef<{controller:AbortController;deadline:number}|null>(null)
   const update=(changes:Partial<FishHeadSettlementFilter>)=>setParams(fishHeadSettlementFilterParams({...filter,...changes}),{replace:true})
   const search=()=>{if(query){setApplied({query,key:queryKey});setReload(value=>value+1)}}
   useEffect(()=>{
@@ -62,14 +63,18 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
   useEffect(()=>{
     const current=++generation.current
     const controller=new AbortController()
+    const cancel=()=>{
+      generation.current=current+1;controller.abort()
+      if(moreRequest.current){moreRequest.current.controller.abort();window.clearTimeout(moreRequest.current.deadline);moreRequest.current=null}
+    }
     setItems([]);setCursor(null);setMoreError('');setMoreLoading(false);moreLock.current=false;setError('')
-    if(!applied.query){setLoading(false);return()=>{generation.current=current+1;controller.abort()}}
+    if(!applied.query){setLoading(false);return cancel}
     setLoading(true)
     const deadline=window.setTimeout(()=>{if(generation.current===current){controller.abort();setError('结单查询超时，请缩小日期范围或检查网络后重试。');setLoading(false)}},20_000)
     pageLoader({...applied.query,productType},null,controller.signal).then(page=>{if(generation.current===current&&!controller.signal.aborted){setItems(page.items);setCursor(page.cursor)}})
       .catch(problem=>{if(generation.current===current&&!controller.signal.aborted)setError(problem instanceof Error?problem.message:'无法载入结单，请重试。')})
       .finally(()=>{window.clearTimeout(deadline);if(generation.current===current)setLoading(false)})
-    return()=>{generation.current=current+1;controller.abort();window.clearTimeout(deadline)}
+    return()=>{cancel();window.clearTimeout(deadline)}
   },[pageLoader,applied,reload,productType])
 
   async function loadMore(){
@@ -80,13 +85,18 @@ export function SettlementListPage({productType,pageLoader=loadSettlementPage,ve
     const deadline=window.setTimeout(()=>{
       if(!settled&&generation.current===current){controller.abort();moreLock.current=false;setMoreLoading(false);setMoreError('下一页载入超时，请重试。')}
     },20_000)
+    moreRequest.current={controller,deadline}
     try{
       const page=await pageLoader({...applied.query,productType},cursor,controller.signal)
       if(generation.current===current&&!controller.signal.aborted){
         setItems(previous=>[...previous,...page.items.filter(item=>!previous.some(old=>old.id===item.id))]);setCursor(page.cursor)
       }
     }catch(problem){if(generation.current===current&&!controller.signal.aborted)setMoreError(problem instanceof Error?problem.message:'无法载入下一页，请重试。')}
-    finally{settled=true;window.clearTimeout(deadline);if(generation.current===current&&!controller.signal.aborted){moreLock.current=false;setMoreLoading(false)}}
+    finally{
+      settled=true;window.clearTimeout(deadline)
+      if(moreRequest.current?.controller===controller)moreRequest.current=null
+      if(generation.current===current&&!controller.signal.aborted){moreLock.current=false;setMoreLoading(false)}
+    }
   }
   const vesselChoices=useMemo(()=>{
     const choices=vessels.map(vessel=>({id:vessel.id,label:vessel.vesselCode+(vessel.active?'':'（历史船 Historical）')}))

@@ -148,7 +148,7 @@ export function PurchaseSettlementPage({
       if(draft?.sourceSessionId&&source&&draft.sourceSessionId!==source.session.id)throw new Error('结单关联了另一张称重单，请核查来源。')
       const sourceEntries=source?.entries??[]
       let species:FishSpeciesRecord[]=[]
-      if(fishHead&&sourceEntries.length&&draft?.status!=='settlement_finalized'){progress('master');species=await read(fishSpeciesLoader);if(cancelled)return}
+      if(fishHead&&sourceEntries.some(entry=>!entry.voided&&entry.productType===productType)&&draft?.status!=='settlement_finalized'){progress('master');species=await read(fishSpeciesLoader);if(cancelled)return}
       setMasterSpecies(species)
       let nextLines:PurchaseSettlementLine[]
       if(draft?.status==='settlement_finalized')nextLines=draft.lines
