@@ -127,10 +127,16 @@ describe('Retail 30-day editing', () => {
     expect(service.update).not.toHaveBeenCalled()
   })
   it('allows the last second and handles an expiry while the page stays open without extending createdAt', async () => {
-    vi.setSystemTime(created + 30 * day - 1000); await editReady()
-    vi.setSystemTime(created + 30 * day); fireEvent.focus(window)
+    vi.useRealTimers(); vi.useFakeTimers()
+    vi.setSystemTime(created + 30 * day - 1000)
+    // Flush the loaded editor's effects before simulating the page regaining focus.
+    await act(async () => { mount() })
+    expect(screen.getByRole('button', { name: '保存修改 Save Changes' })).toBeEnabled()
+    await act(async () => { vi.setSystemTime(created + 30 * day); fireEvent.focus(window) })
     expect(screen.getByText(/已超过 30 天修改期限/)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '保存修改 Save Changes' })).not.toBeInTheDocument()
+    expect(original.createdAt?.toDate().getTime()).toBe(created)
+    expect(service.update).not.toHaveBeenCalled()
   })
   it('rearms a 30-day deadline beyond the browser timer integer limit instead of overflowing the timeout', async () => {
     vi.useRealTimers(); vi.useFakeTimers(); vi.setSystemTime(created)
