@@ -6,6 +6,8 @@ This project uses decision-threshold mode. Minimize user involvement in ordinary
 
 The GitHub issue or explicit task request is the working contract. Do not ask the user to relay messages between ChatGPT, Codex, GitHub, or CI.
 
+For scheduled development, follow [`docs/CODEX_AUTOMATION_WORKFLOW.md`](docs/CODEX_AUTOMATION_WORKFLOW.md). Only an OWNER-approved, unblocked `codex-ready` Issue is eligible for a new claim. Continue an existing authorized PR first; claim at most one new Issue per run. A historical backlog entry, label added without OWNER authorization, or previous production approval is not permission to start new work or publish it.
+
 Do not ask before:
 - Inspecting repository code, history, issues, pull requests, and relevant documentation
 - Choosing ordinary implementation details
@@ -65,7 +67,7 @@ If two sources conflict, follow the higher-priority source and fix stale documen
 
 ## Development Workflow
 
-1. Start from current `main`.
+1. Start new work from current `main`; continue an existing authorized task on its linked branch. Inspect and preserve local changes before switching branches. Never reset or discard an unfinished run's work.
 2. Never implement normal feature/fix work directly on `main`.
 3. Create a focused branch such as `feature/...`, `fix/...`, `hotfix/...`, or `chore/...`.
 4. Inspect only the affected area and relevant rules.
@@ -77,20 +79,22 @@ If two sources conflict, follow the higher-priority source and fix stale documen
    - `npm run lint`
    - `npm test`
    - `npm run build`
-8. If Firestore Rules change, also run the applicable Firestore rules tests before release.
+8. If Firestore Rules change, also run compile, applicable Emulator tests using `firebase-tools@15.29.0`, and the compiled-size guard before merge. Keep the guard at 253,952 bytes; unknown or failing Rules size blocks merge.
 9. Commit and push the branch, then open a PR to `main`.
 10. Keep the PR small and describe business outcome, changed scope, verification, deployment impact, and unresolved decisions only.
-11. Do not deploy an unmerged feature branch to formal production. Use local Emulator or Hosting Preview if preview is required.
-12. Merge to `main` only when CI passes and no unresolved business decision remains.
-13. Production deployment happens only from reviewed/merged `main`.
+11. Do not deploy an unmerged feature branch to formal production. Use the local Emulator for previews; Firebase Hosting Preview also requires separate explicit authorization.
+12. Merge to `main` only when required checks/CI pass, material review findings are resolved, Rules size is known, and no unresolved OWNER decision remains. Do not silently promote a Draft PR: honor any hold instruction and record its readiness and validation before changing its state.
+13. Verify the merged commit, sync clean `main` with `origin/main`, and report code completion. Merge is not a production release.
 
 ## Deployment Rules
 
 - Firebase project: `ccm-fishery-os-4490d`.
 - Never run `firebase init`.
 - Documentation-only changes require no Firebase deployment.
-- Frontend changes: deploy Firebase Hosting after the reviewed change is merged to `main`.
-- Firestore Rules changes: deploy both `firestore:rules` and `hosting` after merge to `main`.
+- Scheduled development must never deploy production Hosting, Firestore Rules, indexes, Functions, or any other production resource. A release needs separate, explicit OWNER approval identifying the target commit and resources in a release task; merge, green CI, and `codex-ready` do not grant it.
+- Only after that separate approval, release from clean, synced, reviewed, CI-passing `main`. When dependencies require it, use `firebase-tools@15.29.0` in order: indexes → verify all required indexes READY → Rules and actual release pointer verification → Hosting. Stop if a preceding gate fails.
+- Production business-data writes, backfills, imports, migrations, and test records are forbidden without separate explicit OWNER approval of exact scope and before/after fields. A deployment approval does not approve data changes.
+- Do not introduce Functions, Blaze, paid services, or access/security loosening under the development automation.
 - If production deployment requires a missing credential, secret, or permission, do not weaken security or commit credentials. Report that single blocker.
 - Never deploy from an unreviewed branch to formal production.
 
@@ -103,6 +107,7 @@ If two sources conflict, follow the higher-priority source and fix stale documen
 - Wage records must never be hard deleted.
 - Voiding must retain an audit record.
 - Historical records must not be silently rewritten when defaults change.
+- Preserve the independent 7-day weighing, 90-day settlement, and 30-day Retail edit windows, existing audits, and module data isolation unless the OWNER explicitly approves a business-rule change.
 - Typecheck, lint, tests, and build must pass before release.
 - Do not commit `node_modules`, `dist`, `.firebase`, `*.tsbuildinfo`, secrets, or temporary scripts.
 
