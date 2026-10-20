@@ -235,7 +235,10 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     renderSearch(loader);await ready()
     fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
     expect(loader.mock.calls[1][1]).toBe(oldCursor)
+    const oldSignal=loader.mock.calls[1][2]!
+    expect(oldSignal.aborted).toBe(false)
     fireEvent.click(screen.getByRole('button',{name:'今天 Today'}));search()
+    expect(oldSignal.aborted).toBe(true)
     expect(loader.mock.calls[2][0]).toMatchObject({productType,from:'2026-10-03',to:'2026-10-03'})
     expect(loader.mock.calls[2][1]).toBeNull()
     await act(async()=>{
@@ -253,6 +256,19 @@ describe.each(['fish_head','fish_meal'] as const)('%s shared date-first search',
     expect(screen.getAllByRole('article')).toHaveLength(2)
     expect(screen.queryByRole('article',{name:'现场单 OLD-LATE'})).not.toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+  it('aborts the in-flight next page when leaving the list without starting another query',async()=>{
+    const cursor={fingerprint:'fixture',iso:{buffer:[],after:null,done:false},canonical:{buffer:[],after:null,done:true},monthIndex:0,isoCenturyIndex:0} satisfies SettlementCursor
+    const page=deferred<{items:SettlementSummary[];cursor:null}>()
+    const loader=vi.fn<SettlementPageLoader>().mockResolvedValueOnce({items:[item()],cursor}).mockImplementationOnce(()=>page.promise)
+    const view=renderSearch(loader);await ready()
+    fireEvent.click(screen.getByRole('button',{name:/载入更多/}))
+    const signal=loader.mock.calls[1][2]!
+    expect(signal.aborted).toBe(false)
+    view.unmount()
+    expect(signal.aborted).toBe(true)
+    await act(async()=>page.reject(new DOMException('Cancelled','AbortError')))
+    expect(loader).toHaveBeenCalledTimes(2)
   })
 })
 describe('Fish Head Settlement list to existing detail routes',()=>{

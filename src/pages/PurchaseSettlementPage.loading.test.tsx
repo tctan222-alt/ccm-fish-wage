@@ -55,6 +55,23 @@ describe('settlement pending-read recovery',()=>{
     expect(screen.queryByRole('button',{name:'重新载入结单'})).not.toBeInTheDocument()
   })
 
+  it('skips Master reads for an all-voided source after checking its source and existing draft',async()=>{
+    const original=bundle()
+    const source:WeighingBundle={session:{...original.session,revision:2,fishHeadBasketCount:0,fishHeadWeightGrams:0,totalWeightGrams:0},
+      entries:original.entries.map(entry=>({...entry,voided:true,voidReason:'误录',voidedBy:'u1',voidedAt:fixedNow(),revision:2}))}
+    const bundleLoader=vi.fn(async()=>source),draftLoader=vi.fn(async()=>null)
+    const fishSpeciesLoader=vi.fn<NonNullable<PageProps['fishSpeciesLoader']>>(()=>new Promise(()=>{}))
+    renderPage({bundleLoader,draftLoader,fishSpeciesLoader})
+    await flushReads()
+    expect(bundleLoader).toHaveBeenCalledExactlyOnceWith('source-978')
+    expect(draftLoader).toHaveBeenCalledExactlyOnceWith(source,'fish_head',expect.any(Function))
+    expect(fishSpeciesLoader).not.toHaveBeenCalled()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByText('当前没有称重资料，不能结单。')).toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'保存结单草稿'})).not.toBeInTheDocument()
+    expect(screen.queryByRole('button',{name:'完成结单 Finalize'})).not.toBeInTheDocument()
+  })
+
   it('distinguishes an absent tuple source from a failed or permanently pending read',async()=>{
     const legacyDraftLoader=vi.fn(async()=>null)
     renderPage({sourceLoader:async()=>({session:null,bundle:null}),legacyDraftLoader},'/fish-head-settlement')
