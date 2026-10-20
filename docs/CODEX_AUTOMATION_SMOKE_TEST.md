@@ -20,7 +20,9 @@ does not prove a future unattended run has happened.
 - Re-read #60 and its empty comment list before recording one claim comment and
   transitioning `codex-ready` → `codex-in-progress`; read-back confirmed it.
 - This documentation task uses the same focused branch/PR as the #59 queue
-  infrastructure, `codex/issue-59-automation-workflow`. No business feature was
+  infrastructure, `chore/issue-59-automation-workflow`. The initial `codex/...`
+  name was renamed after GitHub rejected it because remote branch `codex`
+  already exists; that existing branch was preserved. No business feature was
   started to consume quota.
 
 ## Executable safety checks

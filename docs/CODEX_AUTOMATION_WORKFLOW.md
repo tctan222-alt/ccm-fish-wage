@@ -85,6 +85,8 @@ production operations remain outside this dispatcher.
    Re-read to confirm. If a write times out, inspect GitHub before retrying;
    do not duplicate a successful claim or PR.
 7. New tasks start from clean synced main on a focused `codex/...` branch.
+   If that prefix conflicts with an existing remote ref, use a focused
+   `chore/...`, `fix/...` or `feature/...` name; never delete the conflicting ref.
    Use one focused PR. Preserve existing Draft/hold instructions, notably old
    unrelated PRs #32/#36: "existing PR first" never overrides their hold.
 8. Checkpoint branch, current SHA, PR URL, changed/uncommitted files, checks,
