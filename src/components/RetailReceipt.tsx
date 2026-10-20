@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatRetailAuditTimestamp, formatRetailDate } from '../lib/retailDate'
 import { retailMoney, retailWeightKg, type RetailSale } from '../lib/retailSales'
 import { createRetailInvoicePdf } from '../lib/retailInvoicePdf'
@@ -19,11 +19,14 @@ export function RetailReceiptActions({ sale }: { sale: RetailSale }) {
   const [generationError, setGenerationError] = useState(''), [actionError, setActionError] = useState('')
   const [notice, setNotice] = useState(''), [fallback, setFallback] = useState(false)
   const [sharing, setSharing] = useState(false), [retry, setRetry] = useState(0)
+  const outputGeneration = useRef(0)
   const pdf = prepared?.sale === sale ? prepared : null
 
   useEffect(() => {
     let current = true, result: PreparedPdf | undefined
+    outputGeneration.current += 1
     setPrepared(null); setGenerationError(''); setActionError(''); setNotice(''); setFallback(false)
+    setSharing(false)
     // Finish all asynchronous work before the user clicks Share on Safari.
     void createRetailInvoicePdf(sale).then(file => {
       if (!current) return
@@ -32,6 +35,7 @@ export function RetailReceiptActions({ sale }: { sale: RetailSale }) {
     }).catch(() => { if (current) setGenerationError('PDF 生成失败，请重试。 PDF generation failed. Please retry.') })
     return () => {
       current = false
+      outputGeneration.current += 1
       // An opened viewer/download may still need its URL after this invoice unmounts.
       // Handed-off URLs live until the browser unloads this document; never revoke them early.
       if (result?.url && !result.handedOff) URL.revokeObjectURL(result.url)
@@ -58,6 +62,7 @@ export function RetailReceiptActions({ sale }: { sale: RetailSale }) {
     setActionError(''); setNotice('')
     if (!pdf) { setActionError('PDF 尚未准备好，请稍候重试。 PDF is not ready. Please wait and retry.'); return }
     if (sharing) return
+    const generation = outputGeneration.current
     try {
       if (!navigator.share || !navigator.canShare || !navigator.canShare({ files: [pdf.file] })) {
         showFallback(window.isSecureContext === false ? '当前连接不支持文件分享，请使用 HTTPS，或打开 / 下载 PDF。 File sharing requires HTTPS. You can also open or download the PDF.' : '此浏览器不支持 PDF 文件分享，请打开或下载 PDF。 This browser cannot share PDF files. Please open or download the PDF.')
@@ -68,11 +73,11 @@ export function RetailReceiptActions({ sale }: { sale: RetailSale }) {
       setSharing(true)
       await request
     } catch (problem) {
-      if (!(problem && typeof problem === 'object' && 'name' in problem && problem.name === 'AbortError')) {
+      if (generation === outputGeneration.current && !(problem && typeof problem === 'object' && 'name' in problem && problem.name === 'AbortError')) {
         setActionError('PDF 分享失败，请重试，或使用打开 / 下载 PDF。 PDF sharing failed. Please retry, or open or download the PDF.')
         showFallback('可改用下方按钮打开或下载 PDF。 Use the buttons below to open or download the PDF.')
       }
-    } finally { setSharing(false) }
+    } finally { if (generation === outputGeneration.current) setSharing(false) }
   }
 
   function openPdf() {
