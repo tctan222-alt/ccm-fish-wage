@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildFishHeadLiveValuation } from './fishHeadLiveValuation'
 import { asSettlementSourceEntry, buildPurchaseSettlementLines } from './purchaseSettlement'
-import type { WeighingEntry } from './weighing'
+import { DEFAULT_FISH_SPECIES, type FishSpeciesRecord, type WeighingEntry } from './weighing'
 
 const entry = (overrides:Partial<WeighingEntry> = {}):WeighingEntry => ({
   id:'entry-1',clientEntryId:'entry-1',sessionId:'session-1',productType:'fish_head',
@@ -107,6 +107,40 @@ describe('fish-head live valuation', () => {
     const result = buildFishHeadLiveValuation(source, '833')
     expect(result.rows[0]).toMatchObject({defaultUnitPriceCentsPerKg:205,amountCents:205})
     expect(source).toEqual(original)
+  })
+
+  it.each([['833',250],['978',255],['5202',255]])('uses the configured Master default and existing vessel premium for %s', (vesselCode, price) => {
+    const master=DEFAULT_FISH_SPECIES.map(item=>item.speciesCode==='jin_xian'?{...item,basePriceCentsPerKg:250}:item)
+    const result=buildFishHeadLiveValuation([entry({weightGrams:10_000})],vesselCode,master)
+    expect(result.rows[0]).toMatchObject({defaultUnitPriceCentsPerKg:price,amountCents:price*10})
+    expect(result.knownAmountCents).toBe(price*10)
+  })
+
+  it('keeps an explicitly unset Master price unpriced while retaining absent-field legacy fallback', () => {
+    const master=DEFAULT_FISH_SPECIES.map(item=>item.speciesCode==='jin_xian'?{...item,basePriceCentsPerKg:null}:item)
+    const result=buildFishHeadLiveValuation([entry({weightGrams:1_000}),otherFish()], '978',master)
+    expect(result.rows[0]).toMatchObject({defaultUnitPriceCentsPerKg:null,amountCents:null})
+    expect(result.rows[1]).toMatchObject({defaultUnitPriceCentsPerKg:250,amountCents:2500})
+    expect(result).toMatchObject({basketCount:2,totalWeightGrams:11000,knownAmountCents:2500,missingPriceSpeciesCount:1})
+  })
+
+  it('matches settlement Master grouping without changing entries or Master records', () => {
+    const master:readonly FishSpeciesRecord[]=Object.freeze(DEFAULT_FISH_SPECIES.map(item=>Object.freeze({
+      ...item,id:`master-${item.speciesCode}`,
+      ...(item.speciesCode==='jin_xian'?{basePriceCentsPerKg:250}:{}),
+    })))
+    const source=[Object.freeze(entry({weightGrams:80_100})),Object.freeze(otherFish()),
+      Object.freeze(entry({id:'entry-3',sequenceNo:3,weightGrams:80_400})),Object.freeze(otherFish({id:'voided',voided:true}))]
+    const original=structuredClone({source,master})
+    const live=buildFishHeadLiveValuation(source,'978',master)
+    const settlement=buildPurchaseSettlementLines(source.map(asSettlementSourceEntry),'fish_head','978',master)
+    expect(live.rows).toEqual(settlement.map(line=>({
+      nameSnapshot:line.nameSnapshot,basketCount:line.basketCount,totalWeightGrams:line.totalWeightGrams,
+      defaultUnitPriceCentsPerKg:line.defaultUnitPriceCentsPerKg,
+      amountCents:line.defaultUnitPriceCentsPerKg===null?null:line.amountCents,sourceEntryIds:line.sourceEntryIds,
+    })))
+    expect(live.rows[0]).toMatchObject({basketCount:2,totalWeightGrams:160500,defaultUnitPriceCentsPerKg:255,amountCents:40928})
+    expect({source,master}).toEqual(original)
   })
 
   it.each(['833','978','5202','1785'])('matches settlement grouping, default price and amount for vessel %s', vesselCode => {
