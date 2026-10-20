@@ -1,5 +1,7 @@
 # ERP Master Backlog
 
+> **Current execution boundary — OWNER Issue #59 (2026-10-20):** This file is a historical requirements/status ledger, not an automatic task queue. Earlier “next Priority”, “待开始”, or “release after merge” wording does not authorize execution today. Use only the OWNER-approved Issue queue in [CODEX_AUTOMATION_WORKFLOW.md](CODEX_AUTOMATION_WORKFLOW.md); verify current GitHub/main status before treating an item as unfinished. Code merge is not deployment. Every production release and every production write/backfill/import/migration requires its own explicit OWNER approval. Historical delivery notes below remain unchanged.
+
 ## Owner follow-up: Fish Head pricing and loading recovery (2026-10-16)
 
 Implemented from reviewed main `d10ff3ecb6c1e58a8f430731ed04c56d254af4c1`:
@@ -37,11 +39,11 @@ Owner 已确认，2026-09-30。本文记录正式业务要求、执行顺序和�
 
 ## 执行约定
 
-- 按 Priority 0–10 顺序推进，每个独立业务范围从最新 `main` 建立 focused branch / PR。完成一项、CI 全绿且 review 无 blocker，再进入下一项；不一次开发全部功能。
+- Priority 0–10 记录历史计划，不再自动逐项推进。仅处理 OWNER 已批准、无阻塞的 `codex-ready` Issue；优先继续关联的已授权 PR，每轮最多认领一个新任务。新任务从最新 `main` 建 focused branch；续作先保留现有 branch/local changes。
 - 普通技术实现、测试和兼容修复自行处理；只有真实业务歧义、受保护权限或不可逆操作需要 Owner 决策。
 - 不部署 feature branch，不运行 `firebase init`，不使用 Cloud Functions / Blaze，不 hard delete 生产历史，不写生产假业务记录。
 - 合并前运行 `git diff --check`、typecheck、lint、tests、build。Rules 有变更时额外运行 compile、Emulator tests、size gate。
-- 生产发布只能来自 reviewed、CI-passing、merged main；按 [测试与部署规范](TEST_AND_DEPLOY_RULES.md) 执行。
+- 合并不代表上线。每次 production 发布都需要 OWNER 单独明确批准 commit 和资源；生产数据写入、回填、导入、迁移另需 exact scope / before-after 批准。定时开发不执行这些操作。获准发布只能来自 clean、synced、reviewed、CI-passing、merged main，并按 [测试与部署规范](TEST_AND_DEPLOY_RULES.md) 执行。
 - 相关依据：[Baseline](CODEX_BASELINE.md)、[架构](ERP_ARCHITECTURE.md)、[采购规则](PURCHASE_RULES.md)、[工钱规则](WAGE_RULES.md)、[任务模板](CODEX_TASK_TEMPLATE.md)。本次 Owner 决策优先于相冲突的旧需求。
 
 ## 状态总览
