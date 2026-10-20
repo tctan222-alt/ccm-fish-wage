@@ -5,11 +5,15 @@ import { afterEach,expect,it,vi } from 'vitest'
 import { DEFAULT_FISH_SPECIES,newWeighingSession,type WeighingEntry,type WeighingSession } from '../lib/weighing'
 import { createMemoryWeighingStore } from '../services/weighingOffline'
 import { WeighingEntryPage } from './WeighingEntryPage'
+import { readFileSync } from 'node:fs'
 
 const vessels=['978','833','2072','9633','4818','2031','1785','5202'].map((vesselCode,order)=>({
   id:`v${vesselCode}`,vesselCode,displayName:vesselCode,defaultSupplierId:'',defaultSupplierNameSnapshot:'',active:true,order,notes:'',
 }))
-afterEach(cleanup)
+afterEach(()=>{
+  cleanup()
+  document.querySelectorAll('style[data-weighing-visibility-test]').forEach(style=>style.remove())
+})
 function mount(overrides:Partial<Parameters<typeof WeighingEntryPage>[0]>={}){
   const store=createMemoryWeighingStore()
   let sequence=0
@@ -88,12 +92,17 @@ it('waits for the complete typed date before asking to discard a basket and rest
 })
 
 it('rejects an impossible completed date without querying or discarding the original draft',async()=>{
+  const styles=document.createElement('style')
+  styles.dataset.weighingVisibilityTest=''
+  styles.textContent=readFileSync('src/styles.css','utf8')
+  document.head.append(styles)
   const openSessionLoader=vi.fn(async()=>null)
   mount({openSessionLoader});await ready();typeWeight()
   const input=screen.getByLabelText('日期'),reads=openSessionLoader.mock.calls.length
   fireEvent.change(input,{target:{value:'31/02/2026'}});fireEvent.blur(input)
   expect(input).toHaveAttribute('aria-invalid','true')
   expect(screen.getByRole('alert')).toHaveTextContent('日期必须为有效的 DD/MM/YYYY 格式。')
+  expect(screen.getByRole('alert')).toBeVisible()
   expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   expect(screen.getByLabelText('重量（kg）')).toHaveValue('80.5')
   expect(screen.getByRole('button',{name:'确认加入'})).toBeDisabled()

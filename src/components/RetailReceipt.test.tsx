@@ -110,6 +110,37 @@ describe('Retail invoice output', () => {
     expect(share).toHaveBeenCalledWith({ files: [nextFile], title: '门市现金结算单 · next · 07092026 星期一 Mon · 阿华' })
     await act(async () => {})
   })
+  it.each(['AbortError','NotAllowedError'])('ignores an old %s share response after changing invoices and retains the current PDF options', async name => {
+    let rejectOld!: (problem: Error) => void
+    share.mockReturnValueOnce(new Promise<void>((_resolve,reject)=>{rejectOld=reject}))
+    const next={...sale,id:'next',vendorName:'阿华'},nextFile=new File(['%PDF-1.4'],'next.pdf',{type:'application/pdf'})
+    const view=render(<RetailReceiptActions sale={sale}/>)
+    await waitFor(()=>expect(screen.getByRole('button',{name:'PDF / 分享 PDF / Share'})).toBeEnabled())
+    fireEvent.click(screen.getByRole('button',{name:'PDF / 分享 PDF / Share'}))
+    expect(share).toHaveBeenCalledWith({files:[file],title:expect.stringContaining('receipt-1')})
+    generate.mockResolvedValueOnce(nextFile)
+    view.rerender(<RetailReceiptActions sale={next}/>)
+    await waitFor(()=>expect(generate).toHaveBeenCalledTimes(2))
+    await act(async()=>{})
+    await act(async()=>rejectOld(new DOMException('Old invoice share ended',name)))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(createUrl).not.toHaveBeenCalled()
+    expect(screen.getByRole('button',{name:'PDF / 分享 PDF / Share'})).toBeEnabled()
+    fireEvent.click(screen.getByRole('button',{name:'其他 PDF 选项 More PDF Options'}))
+    expect(createUrl).toHaveBeenCalledWith(nextFile)
+    expect(screen.getByRole('button',{name:'打开 PDF Open PDF'})).toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'下载 PDF Download PDF'})).toHaveAttribute('download','next.pdf')
+  })
+  it('does not create an unused fallback URL when sharing fails after leaving the invoice', async()=>{
+    let rejectShare!: (problem:Error)=>void
+    share.mockReturnValueOnce(new Promise<void>((_resolve,reject)=>{rejectShare=reject}))
+    await ready()
+    fireEvent.click(screen.getByRole('button',{name:'PDF / 分享 PDF / Share'}))
+    cleanup()
+    await act(async()=>rejectShare(new DOMException('The page was left','NotAllowedError')))
+    expect(createUrl).not.toHaveBeenCalled()
+    expect(revokeUrl).not.toHaveBeenCalled()
+  })
   it('reports a blocked PDF popup, and retains an opened URL across receipt navigation', async () => {
     canShare.mockReturnValue(false)
     const replace = vi.fn(), viewer = { opener: window, location: { replace } }
