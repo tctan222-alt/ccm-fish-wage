@@ -355,6 +355,8 @@ describe('iPhone 现场称重单页',()=>{
   it('支持 Enter 确认，并让鱼仔总重保留品质及 remark 而不增加篮数',async()=>{
     const {store}=setup()
     await screen.findByLabelText('重量（kg）')
+    // This tests Enter/total entry after the mock Master resolves its canonical vessel.
+    await waitFor(()=>expect(screen.getByRole('combobox',{name:'船号'})).toHaveValue('v978'))
     fireEvent.click(screen.getByRole('button',{name:'鱼仔'}))
     await waitFor(()=>expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled())
     const bagQualityButton=screen.getByRole('button',{name:'包鱼仔'})
@@ -371,7 +373,8 @@ describe('iPhone 现场称重单页',()=>{
 
     await screen.findByText('已保存')
     const [saved]=await store.getEntries('session-v978-20260730')
-    expect(saved).toMatchObject({fishMealQuality:'bag',entryMode:'total',sequenceNo:null,weightGrams:3_568_000,remark:'总共48包'})
+    expect(saved).toMatchObject({vesselId:'v978',vesselCodeSnapshot:'978',productType:'fish_meal',
+      fishMealQuality:'bag',entryMode:'total',sequenceNo:null,weightGrams:3_568_000,remark:'总共48包'})
     expect(screen.getByText('0 篮')).toBeInTheDocument()
     expect(screen.getByLabelText('route')).toHaveTextContent('/weighing/new')
   })
