@@ -1,0 +1,337 @@
+[
+  {
+    "groupKey": "large-muli",
+    "label": "大目力",
+    "aliases": [
+      "大目力"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "medium-large-muli",
+    "label": "大中目力",
+    "aliases": [
+      "大中目力"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "medium-muli",
+    "label": "中目力",
+    "aliases": [
+      "中目力"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-muli-white",
+    "label": "目力仔(白肉)",
+    "aliases": [
+      "目力仔(白肉)"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "geli-yellowline-jizi",
+    "label": "戈里仔/黄线仔/记仔",
+    "aliases": [
+      "戈里仔",
+      "黄线仔",
+      "记仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-geli",
+    "label": "小戈里仔",
+    "aliases": [
+      "小戈里仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "jinli",
+    "label": "中金里/金里仔",
+    "aliases": [
+      "中金里",
+      "金里仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "red-mulin",
+    "label": "红目林",
+    "aliases": [
+      "红目林"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "black-mulin",
+    "label": "乌目林",
+    "aliases": [
+      "乌目林"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-red-black-mulin",
+    "label": "红/乌目林仔",
+    "aliases": [],
+    "method": "general"
+  },
+  {
+    "groupKey": "huangma",
+    "label": "黄麻鱼",
+    "aliases": [
+      "黄麻鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "youma",
+    "label": "幼麻仔鱼",
+    "aliases": [
+      "幼麻仔鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "redstripe-banana-whitehead-yingge",
+    "label": "红条/香蕉鱼/白头/英哥鱼",
+    "aliases": [
+      "红条",
+      "香蕉鱼",
+      "白头",
+      "英哥鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "jiazai-daozai",
+    "label": "加仔/刀仔",
+    "aliases": [
+      "加仔",
+      "刀仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "lizai",
+    "label": "利仔",
+    "aliases": [
+      "利仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "niuwei",
+    "label": "牛尾/中牛尾",
+    "aliases": [
+      "牛尾",
+      "中牛尾"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "shazhan",
+    "label": "红沙占/白沙占",
+    "aliases": [
+      "红沙占",
+      "白沙占"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "laige",
+    "label": "来戈",
+    "aliases": [
+      "来戈"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-laige",
+    "label": "来戈仔",
+    "aliases": [
+      "来戈仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "huangjia-daoli-rouzhu",
+    "label": "大黄甲/刀力/肉竹仔",
+    "aliases": [
+      "大黄甲",
+      "刀力",
+      "肉竹仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "roujiang-yinyu",
+    "label": "肉江/银鱼",
+    "aliases": [
+      "肉江",
+      "银鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "hongding-jinxian",
+    "label": "红丁/金线/大眼金鱼/红加",
+    "aliases": [
+      "红丁",
+      "金线",
+      "大眼金鱼",
+      "红加"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-jinxian",
+    "label": "金线仔",
+    "aliases": [
+      "金线仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "baiyue-niunan",
+    "label": "中/白月仔/牛南",
+    "aliases": [
+      "白月仔",
+      "牛南"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "jiasai-dingwen-mukong",
+    "label": "加晒/丁温/目孔(拖网)",
+    "aliases": [
+      "加晒",
+      "丁温",
+      "目孔"
+    ],
+    "method": "trawl"
+  },
+  {
+    "groupKey": "gugu-sand",
+    "label": "咯咯/古古/金古/沙仔/沙条/三板仔",
+    "aliases": [
+      "咯咯",
+      "古古",
+      "金古",
+      "沙仔",
+      "沙条",
+      "三板仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "zhuzhan-assorted",
+    "label": "竹占/水占仔/白竹占/石头鱼/白皂/飞鱼/香鱼/米午仔/娃娃鱼/红水占",
+    "aliases": [
+      "竹占",
+      "水占仔",
+      "白竹占",
+      "石头鱼",
+      "白皂",
+      "飞鱼",
+      "香鱼",
+      "米午仔",
+      "娃娃鱼",
+      "红水占"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-niuwei",
+    "label": "牛尾仔",
+    "aliases": [
+      "牛尾仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "qiyu",
+    "label": "旗鱼",
+    "aliases": [
+      "旗鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "small-baidai",
+    "label": "白代仔",
+    "aliases": [
+      "白代仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "zhuli-qinglan",
+    "label": "朱力/拉仔/色拉/青兰/大目",
+    "aliases": [
+      "朱力",
+      "拉仔",
+      "色拉",
+      "青兰",
+      "大目"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "baiyu-assorted",
+    "label": "白鱼/水昌仔/只仔/什鱼/目洛",
+    "aliases": [
+      "白鱼",
+      "水昌仔",
+      "只仔",
+      "什鱼",
+      "目洛"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "yingwei-futou",
+    "label": "硬尾/斧头鱼",
+    "aliases": [
+      "硬尾",
+      "斧头鱼"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "secondary-assorted",
+    "label": "次鱼/沙毛/树叶/甲仔/伍支秋/九沙/鱼仔",
+    "aliases": [
+      "次鱼",
+      "沙毛",
+      "树叶",
+      "甲仔",
+      "伍支秋",
+      "九沙",
+      "鱼仔"
+    ],
+    "method": "general"
+  },
+  {
+    "groupKey": "dingwen-mukong-jiaxi",
+    "label": "丁温/目孔/加西（底船）",
+    "aliases": [
+      "丁温",
+      "目孔",
+      "加西"
+    ],
+    "method": "bottom"
+  },
+  {
+    "groupKey": "qinglan",
+    "label": "青兰（底船）",
+    "aliases": [
+      "青兰"
+    ],
+    "method": "bottom"
+  }
+]

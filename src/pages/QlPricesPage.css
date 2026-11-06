@@ -1,0 +1,22 @@
+.ql-prices{max-width:1000px}
+.ql-prices .notice,.ql-source,.ql-sync{overflow-wrap:anywhere}
+.ql-source{background:#edf6f8;border:1px solid #c7dce3;border-radius:12px;padding:12px 16px;margin:16px 0}
+.ql-source p{margin:6px 0}
+.ql-source-note{color:#52636e;font-size:.9rem}
+.ql-filters{display:grid;grid-template-columns:1fr 2fr 1fr;gap:12px;margin:20px 0}
+.ql-filters label{display:flex;flex-direction:column;gap:6px;font-weight:600;min-width:0}
+.ql-filters input,.ql-filters select{width:100%;min-width:0;font-size:16px;box-sizing:border-box}
+.ql-price-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.ql-price-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;border:1px solid #dbe4e8;border-radius:12px;padding:16px;background:#fff;min-width:0}
+.ql-price-card h2{font-size:1rem;margin:0;overflow-wrap:anywhere}
+.ql-price-card p{margin:6px 0;color:#52636e;font-size:.88rem}
+.ql-price-card .ql-price-change{grid-column:1/-1}
+.ql-price-value{font-size:1.3rem;white-space:nowrap;color:#154c5c}
+.ql-price-value small{font-size:.8rem;font-weight:400;margin-left:3px}
+.ql-sync{margin-top:28px;border-top:1px solid #dbe4e8;padding-top:16px}
+.ql-preview{margin-top:16px;padding:16px;border:1px solid #c7dce3;border-radius:12px;background:#f7fafb}
+.ql-preview li{margin:10px 0}
+.ql-local-audit{margin-top:16px;overflow-wrap:anywhere}
+.ql-local-audit summary{cursor:pointer;font-weight:600}
+.ql-local-audit ol{padding-left:22px}
+@media(max-width:620px){.ql-filters,.ql-price-list{grid-template-columns:1fr}.ql-price-card{padding:12px}.ql-preview{padding:12px}.ql-source{padding:10px 12px}}

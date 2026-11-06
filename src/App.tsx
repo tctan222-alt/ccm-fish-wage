@@ -28,6 +28,7 @@ const WeighingEntryPage = lazy(() => import('./pages/WeighingEntryPage').then(mo
 const WeighingSessionsPage = lazy(() => import('./pages/WeighingSessionsPage').then(module => ({ default: module.WeighingSessionsPage })))
 const WeighingReviewPage = lazy(() => import('./pages/WeighingReviewPage').then(module => ({ default: module.WeighingReviewPage })))
 const FishSpeciesPage = lazy(() => import('./pages/FishSpeciesPage').then(module => ({ default: module.FishSpeciesPage })))
+const QlPricesPage = lazy(() => import('./pages/QlPricesPage').then(module => ({ default: module.QlPricesPage })))
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then(module => ({ default: module.DashboardPage })))
 const FishDepartmentPage = lazy(() => import('./pages/FishDepartmentPage').then(module => ({ default: module.FishDepartmentPage })))
 const IceDepartmentPage = lazy(() => import('./pages/IceDepartmentPage').then(module => ({ default: module.IceDepartmentPage })))
@@ -107,6 +108,7 @@ function AuthenticatedApp() {
         <Route path="/weighing/:sessionId" element={<WeighingEntryPage />} />
         <Route path="/weighing/:sessionId/review" element={<WeighingReviewPage />} />
         <Route path="/fish-species" element={<FishSpeciesPage />} />
+        <Route path="/ql-prices" element={<QlPricesPage />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
     </Suspense>

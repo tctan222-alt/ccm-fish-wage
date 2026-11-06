@@ -14,6 +14,6 @@ export function fallbackFor(pathname: string) {
   if (module === 'purchases') return id ? '/purchases' : '/ccm-admin'
   if (module === 'vessel-trips') return id ? '/vessel-trips' : '/ccm-admin'
   if (module === 'vessel-wage-templates') return '/vessel-trips'
-  if (['workers', 'partners', 'vessels', 'purchase-categories', 'fish-species'].includes(module) || (module === 'master-data' && id)) return '/master-data'
+  if (['workers', 'partners', 'vessels', 'purchase-categories', 'fish-species', 'ql-prices'].includes(module) || (module === 'master-data' && id)) return '/master-data'
   return '/dashboard'
 }
