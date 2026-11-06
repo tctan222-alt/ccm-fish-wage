@@ -16,9 +16,16 @@ Internal ERP system for Chin Chua Meng Fishery (CCM).
 - iPhone First
 - Desktop for Administration
 
-## Local setup
+## Cloud development setup
 
-Use Node.js 20 and run `npm install`. The production Firebase project is
+Use the managed cloud checkout; no personal PC or fixed path is required. Run
+`bash scripts/cloud-setup.sh` and `bash scripts/cloud-validate.sh` for the project
+Node version, locked dependencies and quality gates. Optional demo Rules tooling
+and migration/automation boundaries are documented in
+[the cloud setup guide](docs/CODEX_CLOUD_SETUP.md) and
+[the cloud workflow](docs/CODEX_AUTOMATION_WORKFLOW.md).
+
+The production Firebase project is
 `ccm-fishery-os-4490d`; its public Web client values are documented in
 `.env.example` and built-in defaults keep production builds from failing when an
 environment file is absent. Individual Fish Head Cutting Wage records are stored

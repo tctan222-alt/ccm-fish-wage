@@ -1,186 +1,196 @@
-# Codex development queue
+# Cloud development queue
 
-Authority: [OWNER-approved Issue #59](https://github.com/tctan222-alt/ccm-fish-wage/issues/59).
-GitHub Issues are the durable task contract. This workflow automates development,
-validation, review and safe code merges. **Merge is not production release.**
+Authority: [Issue #74](https://github.com/tctan222-alt/ccm-fish-wage/issues/74)
+updates the execution model established by
+[Issue #59](https://github.com/tctan222-alt/ccm-fish-wage/issues/59).
+GitHub stores source, approved task contracts, PRs, checks and checkpoints.
+**Code merge is not production release.** No personal PC or fixed checkout path
+is required for the cloud preparation and validation described here.
 
-## Execution and schedule
+## Execution state and handover
 
-One local Codex scheduled task checks this repository every day at **09:00
-Asia/Kuala_Lumpur (UTC+8)**. Monday's same run prioritizes finishing an already
-approved PR before considering one new issue. Do not create a second Monday
-dispatcher. Monday is a planning window before the approximate Tuesday Weekly
-Reset, not a promise about account quota or its reset time.
+The owner has selected a managed cloud development environment. A manually
+initiated cloud task has already read source, installed dependencies, tested,
+pushed a branch, opened/repaired/reviewed and merged [PR #75](https://github.com/tctan222-alt/ccm-fish-wage/pull/75)
+for #73. Its merged main CI is [42227398229](https://github.com/tctan222-alt/ccm-fish-wage/actions/runs/42227398229).
+#73 is closed with `codex-done`; its approved QL fallback must not be reimplemented.
+The missing ERP Sheet runtime read authorization is documented separately in
+[QL_CUSTOMER_PRICES.md](QL_CUSTOMER_PRICES.md).
 
-The schedule is a desktop Codex thread heartbeat with local command execution and
-the connected GitHub tools, not a reminder to the owner to run commands.
-The computer must be awake, the app running, the repository available, and Codex /
-GitHub authentication valid. Unattended execution still obeys sandbox and account
-limits. Report actual permission/authentication failures; never weaken permissions
-or buy/reset credits. A web-only reminder with no local executor is **not** this
-workflow. If moved to such a surface, stop and request a local Codex project or an
-enabled local execution connection.
+The former desktop `ccm-erp` heartbeat was configured at 09:00
+Asia/Kuala_Lumpur. That historical configuration did **not** migrate with the
+repository. On 2026-11-06 the owner confirmed in the cloud conversation that it is disabled,
+with no active task or omitted unpushed work; that attestation is recorded in #74.
+This resolves the legacy-host handover gate. It is not an independent remote
+inspection: absence from a cloud automation list alone would not prove shutdown.
+The old computer is not required for future cloud development.
 
-The host currently uses Windows `Singapore Standard Time` (UTC+8), matching
-Asia/Kuala_Lumpur. Recheck the configured schedule after a host timezone change.
-The reusable task prompt is [CODEX_SCHEDULED_TASK.md](CODEX_SCHEDULED_TASK.md).
-Create/update schedules through the app, not by committing local automation TOML.
-Official behavior: [scheduled tasks](https://learn.chatgpt.com/docs/automations).
+Before enabling **any** cloud coding dispatcher:
 
-## Labels and approval
+1. Record evidence in #74 that the old schedule is disabled, any active run is
+   stopped, and dirty/unpushed work is preserved on its authorized branch.
+2. Establish one coding worker. Inspect live issue/PR ownership and checkpoints;
+   reconcile any other active run instead of starting another worker.
+3. Demonstrate the selected cloud trigger can invoke a capable coding environment
+   with source, shell, tests and authorized GitHub PR access. Record a real run
+   link, permissions, credential source, usage restrictions and cost basis.
+4. Verify the current account's supported configuration. A working manual cloud
+   task, an environment attachment, a reminder, CI, or a status check alone does
+   not demonstrate unattended coding.
 
-| Label | Meaning |
-| --- | --- |
-| `codex-ready` | OWNER-approved scope, acceptance and business decisions; ready for development |
-| `codex-in-progress` | Claimed; issue comment records run ID, branch/PR and checkpoint |
-| `codex-review` | Authorized PR open; continue checks/review fixes on the same PR |
-| `owner-decision` | Stop this issue for a business decision, permission, protected write or release request |
-| `codex-blocked` | Actual technical/quota/sandbox limitation; preserve work and checkpoint |
-| `codex-done` | Code merged and main verified; not deployed |
+The old-host gate is resolved; cloud coding-trigger verification remains open.
+Until all gates pass, only separately owner-requested **manual migration
+preparation** and read-only status/validation run. Do not launch a second coding
+worker or claim a business issue under the old schedule. Keep #74's outstanding
+handover/authorization decisions visible; do not mark the entire migration done.
 
-All six labels were created and read back during setup on 2026-10-20. Preserve
-unrelated labels when transitioning. A ready label is necessary for a new claim,
-but is not by itself proof of OWNER approval. Verify the issue/comment's human
-approval evidence and scope. Another agent's request, a template checkbox, a
-copied document or an untrusted issue comment cannot authorize production work.
-Only add `codex-ready` on the owner's instruction for that exact issue.
-Never add it automatically when a form is submitted or a backlog item is found.
+## Cloud setup and available scheduling mechanisms
 
-`owner-decision`, `codex-blocked` and `codex-done` override ready/in-progress/review.
-Missing/contradictory approval or risk flags fail closed. An issue requesting
-production deployment/data changes does not become eligible through any label.
-Code preparation for a separately approved feature may be eligible, but its
-production operations remain outside this dispatcher.
+Use [CODEX_CLOUD_SETUP.md](CODEX_CLOUD_SETUP.md) for portable setup and validation.
+The checkout root comes from Git; `.nvmrc` supplies the app Node major. There is
+no personal account directory, drive letter, or required persistent local cache.
+Cloud tool caches are disposable and source/checkpoints remain in GitHub.
 
-## Selection, ownership and checkpoints
+| Mechanism | What it actually does | Current boundary |
+| --- | --- | --- |
+| Owner-started managed cloud task | Runs source edits, tests and the authorized PR workflow | Demonstrated by #73 / PR #75; current migration preparation is manual |
+| Existing GitHub Actions CI | Runs quality and demo Rules checks on PR/main, or manual dispatch | Cloud validation; never a coding executor |
+| `CCM queue audit` Actions workflow | Daily 01:00 UTC (09:00 Malaysia) or manual dispatch; GET-only queue inventory in job summary | Read-only: no claims, code, model calls, PR/label changes, merge or release |
+| Existing ChatGPT weekly CCM status task | Reports GitHub state and suggested next step | Its saved prompt does not claim to launch Codex; no verified coding environment binding |
+| Native cloud Scheduled/Work coding task | Potential subscription-based path | Not configured/proven here; must demonstrate actual execution and pass handover gates first |
+| Native GitHub `@codex` coding mention | A non-review PR mention can start a cloud coding chat and push with permission | Documented subscription route; scheduled Actions-bot actor/account linkage and actual coding execution are unverified here |
+| Official Codex GitHub Action | Model-based coding on a hosted runner | Its documented API-key path needs separate API billing/credits and an owner-approved cap. Not installed or enabled |
 
-1. Read `AGENTS.md`, this workflow, #59 and the live issue/PR state. Fetch all
-   pages of open Issues/PRs and relevant comments, rather than assuming the
-   first API page is the whole queue. Resolve linked PRs individually, including
-   closed/merged ones; stale ready labels after a merge require reconciliation,
-   never duplicate implementation. Do not infer state from old chat summaries.
-2. There is **one canonical dispatcher on this local repository/host**. Before
-   any claim, checkout, file edit or GitHub mutation, acquire its exclusive lock:
-   `node scripts/codex-queue.mjs acquire <unique-run-id>`.
-   The lock lives in Git's common directory, shared by local worktrees.
-   An existing lock means stop, not steal or expire it. Two independent hosts
-   are not coordinated by this local lock: do not enable a second dispatcher on
-   another host. Migrate only after the original run has explicitly stopped.
-3. Inspect `git status`, branch and existing run/checkpoint comments. Never
-   reset, clean, discard changes or automatically stash someone else's work.
-   If another task owns the checkout, preserve it and checkpoint a blocker.
-   After a crash, inspect the old run's real status and work before releasing
-   its exact run ID; no age/TTL alone proves the run has stopped.
-4. Prefer an open PR linked to an OWNER-approved in-progress/review issue.
-   Continue that PR's branch and local fixes. An active issue without a PR is
-   resumed from its checkpoint, not claimed again. Multiple active issues/PRs
-   with unclear ownership require triage, not concurrent development.
-5. Only when there is no resumable active issue, choose **at most one** eligible
-   `codex-ready` issue: smallest explicit numeric priority first, then smallest
-   issue number. Missing priority sorts last. After that issue finishes, stop
-   this run; do not consume a second issue.
-6. Immediately re-read the chosen issue, linked PRs and checkpoint before claim.
-   Record one claim comment with run ID, approval evidence and branch (or
-   existing PR), then add `codex-in-progress` and remove `codex-ready`.
-   Re-read to confirm. If a write times out, inspect GitHub before retrying;
-   do not duplicate a successful claim or PR.
-7. New tasks start from clean synced main on a focused `codex/...` branch.
-   If that prefix conflicts with an existing remote ref, use a focused
-   `chore/...`, `fix/...` or `feature/...` name; never delete the conflicting ref.
-   Use one focused PR. Preserve existing Draft/hold instructions, notably old
-   unrelated PRs #32/#36: "existing PR first" never overrides their hold.
-8. Checkpoint branch, current SHA, PR URL, changed/uncommitted files, checks,
-   unresolved review/decisions and next action on the Issue. Quota or actual
-   permission limits use `codex-blocked`; the next run may inspect availability,
-   and remove only a resolved technical blocker with evidence before resuming.
-   It must not remove `owner-decision` without the owner's answer.
-9. Release the lock with `node scripts/codex-queue.mjs release <same-run-id>`
-   only after the checkpoint/report is saved and the run has stopped working.
-   A wrong run ID cannot release another run's lock.
+The queue audit's built-in `GITHUB_TOKEN` has only contents/issues/pull-request
+read permissions. It does not infer owner approval from labels or issue prose.
+Its schedule can be delayed by GitHub; the run summary is status evidence, not a
+promise to start development at that minute. Standard hosted runners for this
+public repository do not require a new paid coding service. No new API account,
+secret, self-hosted runner, paid service or spending commitment is introduced.
 
-No ready/active task means a short queue audit, not invented business work.
-Unlabelled #24/#40/#41, old merged PRs and historic backlog paragraphs are not a
-new development authorization. Do not close/relabel unrelated work during triage.
+Native GitHub coding mentions are an additional possible subscription path, not
+just code review. Existing automatic Review does not establish write-capable
+coding or a scheduled Actions actor. No official evidence here establishes that
+`github-actions[bot]` maps to the owner's ChatGPT account/entitlement; a GitHub API
+token alone is not ChatGPT authentication. Verify repository/environment linkage,
+trusted actor, branch rights, usage limits and a controlled coding run before
+posting scheduled mentions. The read-only audit never posts mentions. GitHub
+workflow-recursion rules do not prove how a third-party Codex App handles bots.
+Do not copy a personal `auth.json` to this public repository or its Actions: the
+official advanced ChatGPT-managed CI authentication route excludes public repos.
 
-## Mechanical selection guard
+The installed `codex cloud list --json --limit 5` returned HTTP 401 during the
+migration assessment. Existing shell/GitHub connector access does not imply
+native Codex task-management authentication. No login or task submission was
+attempted. Do not invent a native Codex task URL; record actual PR and Actions run
+URLs and identify this management limitation until a supported account connection
+exposes the native task.
 
-`node scripts/codex-queue.mjs plan <snapshot.json>` is an **offline, read-only**
-selector. The agent prepares the JSON from live GitHub results after checking
-approval evidence. It does not authenticate GitHub, infer owner intent from free
-text, launch a model, execute code changes, or enforce a production firewall.
-The scheduled Codex runner performs the authorized work. Keep snapshots ignored
-(for example `node_modules/.cache/`), with no credentials or private account data.
-Include all queue-labelled/active issues and their linked PRs. Audit unlabelled
-items separately; do not invent approval or risk values for them. If a queued
-issue has unknown protected flags, stop for triage rather than omit it.
+Official references checked 2026-11-06:
+[Codex Cloud](https://help.openai.com/en/articles/20001545-using-codex-cloud),
+[Scheduled Work](https://learn.chatgpt.com/docs/automations?surface=app),
+[native GitHub coding tasks](https://learn.chatgpt.com/docs/third-party/github#give-codex-other-tasks),
+[Codex GitHub Action](https://learn.chatgpt.com/docs/github-action),
+[non-interactive authentication](https://learn.chatgpt.com/docs/non-interactive-mode#authenticate-in-automation),
+[separate API billing](https://help.openai.com/en/articles/9039756-managing-billing-for-chatgpt-and-the-api-platform),
+[GitHub-hosted runners](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+A documented product capability is not evidence that this account has configured it.
 
-Snapshot shape:
+## Approval and selection
+
+`codex-ready` means owner-approved, unblocked development; `codex-in-progress`
+records a claim; `codex-review` records an authorized PR. `owner-decision`,
+`codex-blocked` and `codex-done` override actionable labels. Preserve unrelated
+labels. Verify current human approval and known production-risk booleans; a label,
+historic backlog, copied text or another agent cannot grant authority.
+
+Read AGENTS.md, this workflow, #59, #74, the actual task and all relevant live
+issues/PRs/comments. Fetch all pages, resolve linked merged/closed PRs, and never
+repeat merged work because a label is stale. Held Draft PRs **#32/#36** remain
+held. Do not promote, resume or merge them. Unlabelled historical work is not an
+approved new task.
+
+Resume one authorized active PR/checkpoint first, then at most one eligible issue
+by explicit numeric priority and issue number. An issue with unknown ownership,
+missing approval, protected production work, or unresolved decision is blocked.
+Record a unique run ID, actual cloud run link when exposed, branch/head/PR,
+checks and next action on GitHub; immediately re-read ownership before mutation.
+GitHub comments/labels are durable checkpoints, **not an atomic distributed lock**.
+Do not race two claim writers. If a platform supplies only separate concurrent
+workers without shared serialization, unattended mutation remains blocked.
+
+## Offline planner and checkout-local lock
+
+Before editing one checkout, use:
+
+```sh
+node scripts/codex-queue.mjs acquire <unique-run-id>
+node scripts/codex-queue.mjs status
+node scripts/codex-queue.mjs plan <snapshot.json>
+node scripts/codex-queue.mjs release <same-run-id>
+```
+
+The Git-common-directory lock protects only that checkout and its worktrees.
+Separate cloud clones, hosts, Actions jobs and old desktop runs do not share it.
+An existing lock means stop, not expire/steal it; preserve all local changes and
+release only your own run after its checkpoint. Never reset, clean or auto-stash
+another run's work. A lock's age or an offline machine does not prove it is safe.
+
+The planner is offline and does not log in, launch Codex, claim issues, establish
+permissions or enforce a production firewall. Snapshots must include explicit
+`executionContext` plus `issues` and `pullRequests`:
 
 ```json
 {
-  "issues": [{
-    "number": 60,
-    "state": "open",
-    "labels": ["codex-ready"],
-    "ownerApproved": true,
-    "priority": 0,
-    "blockers": [],
-    "productionDeploy": false,
-    "productionDataWrites": false
-  }],
-  "pullRequests": [{
-    "number": 61,
-    "state": "open",
-    "draft": true,
-    "issueNumber": 60
-  }]
+  "executionContext": {
+    "mode": "prepare",
+    "cloudCodingVerified": false,
+    "legacyDispatcherStopped": true,
+    "noOtherWorker": true
+  },
+  "issues": [],
+  "pullRequests": []
 }
 ```
 
-These numbers illustrate the shape, not permission to execute an issue. Required
-flags must be known booleans. `ownerApproved` must reflect verified human evidence.
-Actions are `claim`, `resume-pr`, `resume-issue`, `audit` or `stop`. A Draft result
-allows approved work on that PR, not automatic promotion.
-Run guard tests with `node --test scripts/codex-queue.node-test.mjs`; CI runs these
-too. The name deliberately separates Node-runner tests from app Vitest discovery.
+This current preparation example returns `prepare` with no selected business
+issue. Missing context returns `stop`. `manual` / `scheduled` coding selection
+requires all three observations to be true. For `scheduled`, verified coding
+means the actual scheduled trigger completed a coding invocation, not manual
+Cloud/CI success. The caller must substantiate these facts; toggling JSON flags
+is not evidence or authorization. `null` is an unknown observation and blocks.
 
-## Checks, review, merge and report
+Issue records retain number/state/labels, verified `ownerApproved`, numeric or
+null `priority`, blockers and explicit `productionDeploy:false` /
+`productionDataWrites:false`. PR records retain number/state/draft/issueNumber.
+The original queue selection, merged-work reconciliation and hold guards remain.
+Keep snapshots in ignored scratch storage, with no credentials. Run guard and
+audit tests with `node --test scripts/*.node-test.mjs`.
 
-- Targeted tests during iteration; full typecheck, lint, app tests and build
-  before finalizing. Run `git diff --check`; never weaken assertions or gates.
-- Rules changes require compile + Emulator tests with **firebase-tools@15.29.0**.
-  The compiled Rules size guard stays **253,952 bytes**. Verify the size before
-  merge even when unchanged; unknown size is not a pass.
-- Review the final diff against both the task and repo standards. Fix material
-  findings on the same PR. Resolve GitHub threads only after verifying the fix.
-  Never fabricate another human's review or dismiss a genuine objection.
-- A new automation-owned Draft may be marked Ready only after checks/review are
-  clean, no explicit hold applies, and the status change is recorded on GitHub.
-  Do not silently promote or merge a pre-existing held Draft.
-- Re-read head/base SHAs, approval scope, all checks and review threads just
-  before merging. All required checks on the current head must be green; obey
-  branch protection. Never use admin bypass, force push or merge with pending
-  decisions. Pass the expected head SHA to the merge API.
-- After merge, fetch and fast-forward main, confirm `main == origin/main`,
-  clean working tree, merge ancestry and successful main CI. Then mark the issue
-  `codex-done`, close it with a concise evidence comment, and stop.
-- If main CI fails, do not call the issue done or deploy; checkpoint and repair
-  only within the already approved scope and normal PR checks.
+## Review, code merge and production boundary
 
-Report completed work, business decisions (or None), checks/CI/review, PR/SHA,
-remaining blockers and **production deployment: NO; production writes: NO**.
-GitHub is the durable report; do not ask the owner to relay messages.
+Work on a focused branch from clean synced main; preserve and continue existing
+authorized fixes. Run targeted tests, then full typecheck/lint/app tests/build,
+`git diff --check`, independent Standards/Spec review and current-head GitHub CI.
+Rules changes require firebase-tools@15.29.0 compile/Emulator tests; always verify
+the compiled guard of **253,952 bytes** before code merge, even when unchanged.
+Unknown size, red CI, material review or an unresolved decision for that code scope
+blocks merge. A preparation PR may describe unresolved activation blockers, but
+must not activate a coding worker or claim handover is complete.
 
-## Production boundary
+Honor holds and drafts; document any permitted Ready transition. Re-read exact
+head/base, approval, checks and unresolved threads before merging; obey protection,
+pass the expected head SHA, never bypass or force push. After a permitted merge,
+fetch/fast-forward main, check clean `main == origin/main`, reviewed-tree/ancestry
+and exact main CI. Mark only the completed scope done, preserve remaining #74
+handover blockers and stop after the authorized task.
 
-This scheduled task has **no production-release authority**. No Hosting, Rules,
-indexes, Functions, production writes, backfills, imports, migrations, fake
-records, `firebase init`, Blaze/paid services or access weakening.
-Do not reuse prior releases' approvals from this chat. Route release/data work
-to `owner-decision` and stop it, even if main is clean and CI is green.
-
-A separately authorized release task must confirm exact commit/resources and,
-where applicable, indexes READY → successful actual Rules release → Hosting.
-It is a different task, not a privilege inherited by this recurring prompt.
-Any future real-data change requires the exact affected records and before/after
-proposal plus separate approval. Local tests use mocks or the demo Emulator.
+**No production Firebase Hosting, Rules, indexes, Functions or other release. No
+production business-data reads/writes, backfill, import, migration, test records,
+`firebase init`, Blaze, new paid services, secret commits or access weakening.**
+Release and data-change requests require separate exact-scope owner approval;
+they cannot inherit approval from merge, CI, queue labels or this migration.
+Keep the independent 7-day weighing / 90-day settlement / 30-day Retail windows
+and audits. Checkpoint actual quota/auth/sandbox blockers without discarding work
+or claiming a fabricated reset/usage balance. Report actual links/results, pending
+owner decisions and production operations **NO**.

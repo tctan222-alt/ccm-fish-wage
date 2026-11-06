@@ -12,7 +12,91 @@ const issue = (number, overrides = {}) => ({
 const pr = (number, issueNumber, overrides = {}) => ({
   number, issueNumber, state: 'open', draft: false, ...overrides,
 })
-const snapshot = (issues = [], pullRequests = []) => ({ issues, pullRequests })
+const verifiedExecution = (overrides = {}) => ({
+  mode: 'manual', cloudCodingVerified: true, legacyDispatcherStopped: true, noOtherWorker: true, ...overrides,
+})
+const snapshot = (issues = [], pullRequests = [], executionContext = verifiedExecution()) => ({
+  issues, pullRequests, executionContext,
+})
+
+test('missing execution context cannot implicitly authorize a coding worker', () => {
+  const result = planQueue({ issues: [issue(73)], pullRequests: [] })
+  assert.equal(result.action, 'stop')
+  assert.equal(result.issueNumber, null)
+  assert.equal(result.executionMode, null)
+  assert.match(result.reason, /Execution context missing/)
+})
+
+test('explicit migration preparation never claims or resumes business work', () => {
+  const result = planQueue(snapshot([
+    issue(73), issue(74, { labels: ['owner-decision'] }),
+  ], [pr(75, 73)], verifiedExecution({
+    mode: 'prepare', cloudCodingVerified: false, legacyDispatcherStopped: null, noOtherWorker: null,
+  })))
+  assert.equal(result.action, 'prepare')
+  assert.equal(result.executionMode, 'prepare')
+  assert.equal(result.issueNumber, null)
+  assert.equal(result.prNumber, null)
+  assert.deepEqual(result.ignored, [{ issueNumber: 74, reason: 'blocking-status' }])
+})
+
+for (const mode of ['manual', 'scheduled']) {
+  for (const legacyDispatcherStopped of [false, null]) {
+    test(`${mode} worker stops when legacy dispatcher stopped=${legacyDispatcherStopped}`, () => {
+      const result = planQueue(snapshot([issue(73)], [], verifiedExecution({ mode, legacyDispatcherStopped })))
+      assert.equal(result.action, 'stop')
+      assert.equal(result.issueNumber, null)
+      assert.match(result.reason, /Legacy dispatcher/)
+    })
+  }
+  for (const noOtherWorker of [false, null]) {
+    test(`${mode} worker stops when no other worker=${noOtherWorker}`, () => {
+      const result = planQueue(snapshot([issue(73)], [], verifiedExecution({ mode, noOtherWorker })))
+      assert.equal(result.action, 'stop')
+      assert.equal(result.issueNumber, null)
+      assert.match(result.reason, /another coding worker/)
+    })
+  }
+  test(`${mode} worker needs verified actual cloud coding capability`, () => {
+    const result = planQueue(snapshot([issue(73)], [], verifiedExecution({ mode, cloudCodingVerified: false })))
+    assert.equal(result.action, 'stop')
+    assert.equal(result.issueNumber, null)
+    assert.match(result.reason, /not coding runners/)
+  })
+}
+
+test('verified scheduled mode retains existing approved PR preference', () => {
+  const result = planQueue(snapshot([issue(73, { priority: 0 }), issue(70)], [pr(71, 70)], verifiedExecution({ mode: 'scheduled' })))
+  assert.equal(result.executionMode, 'scheduled')
+  assert.equal(result.action, 'resume-pr')
+  assert.equal(result.issueNumber, 70)
+  assert.equal(result.prNumber, 71)
+})
+
+test('execution observations require explicit known fields and values', () => {
+  const { noOtherWorker: omitted, ...missingObservation } = verifiedExecution()
+  assert.equal(omitted, true)
+  for (const executionContext of [
+    null, {}, [], missingObservation,
+    verifiedExecution({ mode: 'unknown' }),
+    verifiedExecution({ cloudCodingVerified: 'true' }),
+    verifiedExecution({ legacyDispatcherStopped: 'false' }),
+    verifiedExecution({ noOtherWorker: 'unknown' }),
+    verifiedExecution({ distributedLockVerified: true }),
+  ]) assert.throws(() => planQueue(snapshot([issue(73)], [], executionContext)))
+})
+
+for (const number of [32, 36]) {
+  test(`held PR #${number} cannot resume or become a duplicate claim through stale labels`, () => {
+    for (const label of ['codex-ready', 'codex-in-progress', 'codex-review']) {
+      const result = planQueue(snapshot([issue(number, { labels: [label] })], [pr(number, number, { draft: true })]))
+      assert.equal(result.action, 'stop')
+      assert.equal(result.issueNumber, null)
+      assert.equal(result.prNumber, null)
+      assert.match(result.reason, /Held PR/)
+    }
+  })
+}
 
 test('claims at most one ready approved issue, ordered by priority then issue number', () => {
   const result = planQueue(snapshot([
@@ -173,6 +257,21 @@ test('old locks never expire automatically and malformed locks are retained', ()
     assert.throws(() => readLock(lockPath), /malformed/)
     assert.throws(() => releaseLock(lockPath, 'new-run'), /malformed/)
     assert.equal(readFileSync(lockPath, 'utf8'), '{broken')
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('checkout locks do not pretend to coordinate independent clones', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ccm-codex-clones-'))
+  const first = join(directory, 'first-clone.lock'), second = join(directory, 'second-clone.lock')
+  try {
+    acquireLock(first, 'first-worker')
+    acquireLock(second, 'second-worker')
+    assert.equal(readLock(first).runId, 'first-worker')
+    assert.equal(readLock(second).runId, 'second-worker')
+    releaseLock(first, 'first-worker')
+    releaseLock(second, 'second-worker')
   } finally {
     rmSync(directory, { recursive: true, force: true })
   }

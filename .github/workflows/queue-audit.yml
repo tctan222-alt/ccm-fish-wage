@@ -1,0 +1,44 @@
+name: Cloud queue inventory (read only)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/queue-audit.yml
+      - scripts/cloud-queue-audit.mjs
+      - scripts/cloud-queue-audit.node-test.mjs
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/queue-audit.yml
+      - scripts/cloud-queue-audit.mjs
+      - scripts/cloud-queue-audit.node-test.mjs
+  schedule:
+    # 09:00 Asia/Kuala_Lumpur (UTC+8). This is status inventory, not coding.
+    - cron: '0 1 * * *'
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: ccm-cloud-queue-inventory
+  cancel-in-progress: false
+
+jobs:
+  inventory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Read GitHub queue and write run summary
+        run: node scripts/cloud-queue-audit.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

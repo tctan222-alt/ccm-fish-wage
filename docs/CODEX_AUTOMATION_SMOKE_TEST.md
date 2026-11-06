@@ -1,3 +1,11 @@
+# Historical trial — superseded by cloud migration
+
+The desktop setup below is dated evidence from Issue #59, not current operating
+instructions. [Issue #74](https://github.com/tctan222-alt/ccm-fish-wage/issues/74)
+and [the cloud workflow](CODEX_AUTOMATION_WORKFLOW.md) supersede its path,
+PC-awake and heartbeat assumptions. The owner confirmed the old task stopped on
+2026-11-06. **Do not re-enable `ccm-erp` from this trial recipe.**
+
 # Queue setup safe trial — 2026-10-20
 
 Setup contract: [#59](https://github.com/tctan222-alt/ccm-fish-wage/issues/59).
