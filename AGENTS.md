@@ -6,7 +6,9 @@ This project uses decision-threshold mode. Minimize user involvement in ordinary
 
 The GitHub issue or explicit task request is the working contract. Do not ask the user to relay messages between ChatGPT, Codex, GitHub, or CI.
 
-For scheduled development, follow [`docs/CODEX_AUTOMATION_WORKFLOW.md`](docs/CODEX_AUTOMATION_WORKFLOW.md). Only an OWNER-approved, unblocked `codex-ready` Issue is eligible for a new claim. Continue an existing authorized PR first; claim at most one new Issue per run. A historical backlog entry, label added without OWNER authorization, or previous production approval is not permission to start new work or publish it.
+For cloud development, follow [`docs/CODEX_AUTOMATION_WORKFLOW.md`](docs/CODEX_AUTOMATION_WORKFLOW.md) and OWNER migration Issue #74. Use the managed cloud computer and Git-derived checkout root; no personal PC is required. Before any new coding dispatcher, verify the old `ccm-erp` schedule/run is stopped, work preserved and no worker overlaps. Unknown handover blocks activation. A reminder, read-only queue audit or CI is not a coding executor. Manual migration preparation may proceed under the owner's direct instruction without starting a business dispatcher.
+
+Only an OWNER-approved, unblocked `codex-ready` Issue is eligible for a new business claim. Continue an existing authorized PR first; claim at most one new Issue per run. The checkout-local Git lock does not coordinate separate cloud clones/hosts; require verified single-worker ownership. A historical backlog entry, label added without OWNER authorization, or previous production approval is not permission to start work or publish it. Never infer a paid API or unattended-run authorization from a working manual cloud task.
 
 Do not ask before:
 - Inspecting repository code, history, issues, pull requests, and relevant documentation
@@ -74,7 +76,7 @@ If two sources conflict, follow the higher-priority source and fix stale documen
 5. Implement the smallest complete change that satisfies the acceptance criteria.
 6. During iteration, run targeted tests first. Do not repeatedly run the entire suite after every small edit.
 7. Before opening or finalizing a PR, run the full quality gate once:
-   - `npm ci` when dependencies need installation
+   - `bash scripts/cloud-setup.sh` when dependencies need installation (add `--rules` for the pinned demo Rules toolchain)
    - `npm run typecheck`
    - `npm run lint`
    - `npm test`
@@ -100,7 +102,7 @@ If two sources conflict, follow the higher-priority source and fix stale documen
 
 ## Fixed Project Rules
 
-- Project directory: `C:\\Users\\tctan\\ccm-fish-wage`
+- Resolve the project directory with `git rev-parse --show-toplevel`; no fixed personal path, computer or persistent local executor is required. Cloud setup/validation: [`docs/CODEX_CLOUD_SETUP.md`](docs/CODEX_CLOUD_SETUP.md).
 - Preserve all existing usable functionality unless the task explicitly replaces it.
 - Use integer cents for monetary amounts.
 - Weight must be integer kilograms from 1 to 300 unless a newer confirmed business rule supersedes this.

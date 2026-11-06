@@ -6,8 +6,10 @@ import process from 'node:process'
 
 const issueKeys = ['number', 'state', 'labels', 'ownerApproved', 'priority', 'blockers', 'productionDeploy', 'productionDataWrites']
 const prKeys = ['number', 'state', 'draft', 'issueNumber']
+const executionKeys = ['mode', 'cloudCodingVerified', 'legacyDispatcherStopped', 'noOtherWorker']
 const activeLabels = ['codex-in-progress', 'codex-review']
 const blockedLabels = ['owner-decision', 'codex-blocked', 'codex-done']
+const heldPrNumbers = new Set([32, 36])
 
 function record(value, keys, context) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -31,9 +33,19 @@ function uniqueNumbers(items, context) {
 // Explicit approval and explicit false production flags must come from current,
 // verified human evidence. The planner does not infer approval from a ready label.
 export function validateSnapshot(snapshot) {
-  record(snapshot, ['issues', 'pullRequests'], 'snapshot')
+  record(snapshot, ['issues', 'pullRequests', 'executionContext'], 'snapshot')
   if (!Array.isArray(snapshot.issues) || !Array.isArray(snapshot.pullRequests)) {
     throw new Error('snapshot requires issues and pullRequests arrays')
+  }
+  if (snapshot.executionContext !== undefined) {
+    const execution = snapshot.executionContext
+    record(execution, executionKeys, 'executionContext')
+    if (!['prepare', 'manual', 'scheduled'].includes(execution.mode)
+      || typeof execution.cloudCodingVerified !== 'boolean'
+      || ![true, false, null].includes(execution.legacyDispatcherStopped)
+      || ![true, false, null].includes(execution.noOtherWorker)) {
+      throw new Error('executionContext requires an explicit mode, cloudCodingVerified boolean, and boolean/null handover observations')
+    }
   }
   for (const issue of snapshot.issues) {
     record(issue, issueKeys, 'issue')
@@ -90,7 +102,30 @@ export function planQueue(input) {
   })
   const result = (action, reason, issueNumber = null, prNumber = null) => ({
     action, reason, issueNumber, prNumber, ignored,
+    executionMode: snapshot.executionContext?.mode ?? null,
   })
+  // These are caller-verified observations, not a lock or capability check.
+  // A scheduled context must verify the actual coding trigger, not just CI or
+  // a successful manually initiated cloud task. The planner never launches it.
+  const execution = snapshot.executionContext
+  if (!execution) return result('stop', 'Execution context missing; do not authorize a coding worker implicitly')
+  if (execution.mode === 'prepare') {
+    return result('prepare', 'Preparation only for a separately authorized migration task; no business issue claim or coding dispatcher')
+  }
+  if (!execution.cloudCodingVerified) {
+    return result('stop', 'Actual cloud coding execution for this mode is not verified; status checks and CI are not coding runners')
+  }
+  if (execution.legacyDispatcherStopped !== true) {
+    return result('stop', 'Legacy dispatcher is not confirmed stopped; do not start another coding worker')
+  }
+  if (execution.noOtherWorker !== true) {
+    return result('stop', 'Absence of another coding worker is not confirmed; reconcile ownership before continuing')
+  }
+  if (snapshot.issues.some((issue) => !ineligibleReason(issue)
+    && issue.labels.some((label) => [...activeLabels, 'codex-ready'].includes(label))
+    && snapshot.pullRequests.some((pr) => pr.state === 'open' && pr.issueNumber === issue.number && heldPrNumbers.has(pr.number)))) {
+    return result('stop', 'Held PR #32/#36 is linked to actionable work; preserve its hold and do not duplicate implementation')
+  }
   const active = snapshot.issues.filter((issue) => issue.state === 'open'
     && issue.labels.some((label) => activeLabels.includes(label)))
   if (active.length > 1) {
@@ -135,8 +170,10 @@ function validateRunId(runId) {
   }
 }
 
-// Pass an explicit temporary path in tests. The CLI always uses Git's shared
-// common directory, so the primary checkout and worktrees share one lock.
+// Checkout-only protection: this Git common-directory lock covers its worktrees,
+// not other clones, computers, cloud tasks or GitHub Actions runners. Cross-host
+// safety requires a verified single worker; GitHub checkpoints are not an atomic
+// distributed mutex. Pass an explicit temporary path in tests.
 export function readLock(lockPath) {
   let text
   try {
@@ -165,7 +202,7 @@ export function acquireLock(lockPath, runId) {
   try {
     descriptor = openSync(lockPath, 'wx', 0o600)
   } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('Dispatcher lock already exists; do not start overlapping work or remove it automatically')
+    if (error.code === 'EEXIST') throw new Error('Checkout lock already exists; do not start overlapping work or remove it automatically')
     throw error
   }
   const payload = { runId, createdAt: new Date().toISOString() }
