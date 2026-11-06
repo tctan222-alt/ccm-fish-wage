@@ -219,6 +219,13 @@ describe('iPhone 现场称重单页',()=>{
     fireEvent.click(screen.getByRole('button',{name:'确认加入'}))
     await waitFor(async()=>expect(await store.getEntries('same-name-session')).toHaveLength(2))
 
+    // Local storage commits before React publishes the new entry to the page.
+    const history=screen.getByRole('heading',{name:'完整历史记录'}).closest('section')!
+    await waitFor(()=>expect(within(history).getAllByRole('button',{name:/第 [12] 篮.*金线/})).toHaveLength(2))
+    expect(await store.getEntries('same-name-session')).toEqual([
+      expect.objectContaining({fishSpeciesCodeSnapshot:'lai_ge',weightGrams:60_000}),
+      expect.objectContaining({fishSpeciesCodeSnapshot:'jin_xian',weightGrams:80_000}),
+    ])
     const summary=screen.getByRole('region',{name:'现场汇总'})
     expect(within(summary).getAllByRole('rowheader',{name:'金线'})).toHaveLength(2)
     expect(within(summary).getByText('80 kg')).toBeInTheDocument()
