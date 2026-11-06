@@ -8,6 +8,7 @@ export function MasterDataPage(){
       <Link to="/vessel-wage-templates"><strong>Vessel Wage Templates</strong><span>978 / 833 day and night wage rates</span></Link>
       <Link to="/purchase-categories"><strong>Purchase Categories</strong><span>Fish categories used on receiving receipts</span></Link>
       <Link to="/fish-species"><strong>鱼头鱼名与基础默认价</strong><span>Fish Head Master：中文鱼名、基础 RM/kg 与顺序</span></Link>
+      <Link to="/ql-prices"><strong>QL Foods 鱼头客户价格</strong><span>QL 专用价格参考、来源版本与更新检查</span></Link>
       <Link to="/retail-sales/fish"><strong>门市鱼名与建议价</strong><span>中文 / 马来文、建议售价、启用状态</span></Link>
       <Link to="/purchases"><strong>Purchases & Receiving</strong><span>Receipts, supplier payables and monthly statements</span></Link>
     </nav>

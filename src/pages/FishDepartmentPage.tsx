@@ -6,6 +6,7 @@ export function FishDepartmentPage() {
       <Link to="/fish-head-purchase">鱼头购入</Link><Link to="/fish-head-settlement">鱼头结单</Link>
       <Link to="/fish-meal-purchase">鱼仔购入</Link><Link to="/fish-meal-settlement">鱼仔结单</Link>
       <Link to="/fish-head-wages">切鱼头工钱计算</Link>
+      <Link to="/ql-prices">QL Foods 鱼头客户价格</Link>
     </nav>
   </main>
 }
