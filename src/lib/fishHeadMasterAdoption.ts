@@ -1,4 +1,4 @@
-import { previewFishHeadMasterImport, type FishHeadMasterImportRecord, type FishHeadMasterProposedRecord } from './fishHeadMasterImport'
+import { isQlMarketPriceRow, QL_FISH_HEAD_MASTER_ROWS, previewFishHeadMasterImport, type FishHeadMasterImportRecord, type FishHeadMasterProposedRecord } from './fishHeadMasterImport'
 import { QL_SEED_VERSION, type QlPriceRow } from './qlPrices'
 
 /** Stable versioned foreign key: aliases, fishing method and original row remain in the immutable QL source. */
@@ -52,7 +52,7 @@ export function prepareQlMasterAdoption(
     let action: QlMasterWriteEntry['action'] =
       proposal.change === 'create' ? 'create' : proposal.change === 'unchanged' ? 'unchanged' : 'update'
     if (proposal.status === 'conflict') {
-      if (acceptedSeparate.has(proposal.proposalKey)) {
+      if (acceptedSeparate.has(proposal.proposalKey) || isQlMarketPriceRow(proposal.source)) {
         // A conflict may be resolved only by explicitly creating a *separate* grouped identity.
         // Existing generic species, prior snapshots and unrelated aliases are preserved.
         const id = `ql_${proposal.source.groupKey.replace(/-/g, '_')}_${proposal.source.method}`.slice(0, 40)
@@ -63,7 +63,8 @@ export function prepareQlMasterAdoption(
         }
         proposed = { id, speciesCode: id, displayName: proposal.source.label,
           aliases: [...proposal.source.aliases], method: proposal.source.method,
-          basePriceCentsPerKg: proposal.source.priceCentsPerKg, sourceGroupKey: proposal.source.groupKey,
+          // Conflicting identities are retained; new independent groups start without a price.
+          basePriceCentsPerKg: null, sourceGroupKey: proposal.source.groupKey,
           sourceVersion: QL_SEED_VERSION.version, sourceEffectiveDate: QL_SEED_VERSION.effectiveDate,
           sourceRow: proposal.source.sourceRow }
         before = null
@@ -90,7 +91,7 @@ export function prepareQlMasterAdoption(
     usedCodes.add(proposed.speciesCode)
     entries.push({ action, sourceKey: proposal.proposalKey, sourceRef, before, proposed })
   }
-  if (entries.length + blocked.length !== 36) throw new Error('QL 36组处理不完整，禁止继续。')
+  if (entries.length + blocked.length !== QL_FISH_HEAD_MASTER_ROWS.length) throw new Error('QL 非底船候选组处理不完整，禁止继续。')
   return { sourceVersion: QL_SEED_VERSION.version, entries, blocked,
     creates: entries.filter(row => row.action === 'create').length,
     updates: entries.filter(row => row.action === 'update').length,
