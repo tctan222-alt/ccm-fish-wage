@@ -2,21 +2,22 @@
 
 ## Source and production boundary
 
-The immutable source is `src/data/qlPrices20261010.json`: 36 QL Foods groups effective 2026-10-10. Its old-price column is **not** a production Master snapshot. The change affects future Fish Head defaults only; historical prices, completed settlements, transaction overrides and other departments are outside the tool's paths.
+The immutable source is `src/data/qlPrices20261010.json`: **36 QL Foods reference groups** effective 2026-10-10, but the OWNER has excluded **both bottom-vessel groups** from Fish Head Master adoption. Thus **only 34 non-bottom candidate groups** enter the Master review/manifest, never the bottom groups #35 and #36. The source and separate QL customer-price reference stay unchanged. Its old-price column is **not** a production Master snapshot. The change affects future Fish Head defaults only; historical prices, completed settlements, transaction overrides and other departments are outside the tool's paths.
 
-The browser offers a read-only 36-group comparison, explicit conflict resolution and JSON download. It has no bulk-write implementation. `VITE_APPROVED_QL_MASTER_WRITES` cannot authorize adoption. The downloaded browser comparison is not an executable approval manifest.
+The browser offers a read-only **34-group non-bottom Master** comparison, explicit conflict resolution and JSON download. It has no bulk-write implementation. `VITE_APPROVED_QL_MASTER_WRITES` cannot authorize adoption. The downloaded browser comparison is not an executable approval manifest.
 
 `qlSourceRef = ql-foods-2026-10-10|<groupKey>:<method>` preserves immutable aliases and method provenance. Ordinary signed-in clients cannot create, replace or remove this reference; existing ordinary Master editing remains available. Actual adoption uses the official server SDK and an existing, independently verified IAM identity. No Functions, Blaze, new credentials or paid service is introduced.
 
 ## Matching and comparison
 
-The operator manifest lists all 36 source groups as create, price update, metadata update or unchanged, with exact existing before-images and proposed after-images. The complete Master snapshot also retains records outside the QL source. Existing IDs, codes, names, order, notes and creation provenance are preserved. All original aliases remain in the immutable source.
+The operator manifest lists all **34 eligible non-bottom** source groups as create, price update, metadata update or unchanged, with exact existing before-images and proposed after-images. The complete Master snapshot also retains records outside the QL source. Existing IDs, codes, names, order, notes and creation provenance are preserved. All original aliases remain in the immutable source.
 
-- 丁温 / 目孔: trawl RM2.00/kg; bottom RM2.10/kg.
-- 青兰: general RM0.90/kg; bottom RM1.10/kg.
-- 加晒 and 加西 remain distinct.
+- 丁温 / 目孔: QL trawl reference RM2.00/kg vs bottom reference RM2.10/kg. **Bottom is excluded. The trawl Master candidate has an explicitly null default; daily operator types the actual market price.**
+- 青兰: QL general reference RM0.90/kg vs bottom reference RM1.10/kg. **Bottom is excluded. The general grouped Master candidate has an explicitly null default; daily operator types the actual market price.**
+- The two bottom groups remain in the immutable 36-row QL customer reference only; they are never imported or created in Master. 加晒 and 加西 remain distinct.
+- Legacy ambiguous fish names and their saved defaults/IDs are not overwritten by a forced QL price. For an existing ambiguous generic name, the planner creates a separate grouped **null-price** candidate, keeping legacy IDs and data. New independent groups have an unset default, not RM0; a real sale/purchase/settlement must use the operator-entered positive actual RM/kg and preserve that price snapshot.
 
-A generic alias shared by multiple fishing contexts requires an explicit separate-group selection; it is never silently overwritten. All 36 groups must resolve. Duplicate IDs, codes or source ownership, generated-ID collisions, unknown fields and unresolved mappings stop the whole operation. Missing price fields differ from explicit null, and server timestamps and document versions retain nanoseconds.
+A generic alias shared by multiple fishing contexts requires an explicit separate-group selection; it is never silently overwritten. All 34 eligible non-bottom groups must resolve; bottom groups never count toward completion. Duplicate IDs, codes or source ownership, generated-ID collisions, unknown fields and unresolved mappings stop the whole operation. Missing price fields differ from explicit null, and server timestamps and document versions retain nanoseconds.
 
 ## Protected operator workflow
 

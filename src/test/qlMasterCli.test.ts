@@ -65,7 +65,7 @@ describe('QL operator CLI explicit authorization',()=>{
     const {manifest,filename}=await manifestFile(),output=path.join(directory,'receipt.json')
     transport.run.mockImplementation(async()=>{
       await writeFile(output,'competing file')
-      return {status:'applied',writes:36,manifestHash:manifest.sha256}
+      return {status:'applied',writes:34,manifestHash:manifest.sha256}
     })
     await expect(runQlMasterCli(['apply','--execute','--project',project,'--actor',actor,'--manifest',filename,
       '--approved-hash',manifest.sha256,'--output',output])).rejects.toThrow('SERVER applied; local receipt')

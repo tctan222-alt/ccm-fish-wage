@@ -5,7 +5,7 @@ import type { FishSpeciesRecord } from '../lib/weighing'
 import { initializeDefaultFishSpecies,loadFishSpecies,saveFishSpecies } from '../services/weighing'
 import { prepareQlMasterAdoption } from '../lib/fishHeadMasterAdoption'
 import { fishHeadMasterBasePriceCents,fishHeadMasterPriceInputToCents,fishHeadMasterPriceInputValue } from '../lib/fishHeadMasterPrice'
-import { previewFishHeadMasterImport,fishHeadMasterProposalKey } from '../lib/fishHeadMasterImport'
+import { isQlMarketPriceRow,previewFishHeadMasterImport,fishHeadMasterProposalKey } from '../lib/fishHeadMasterImport'
 import { QL_METHOD_LABELS } from '../lib/qlPrices'
 import './fishSpecies.css'
 
@@ -49,45 +49,51 @@ function money(cents:number|null){return cents===null?'未设默认价':`RM${(ce
 function QlMasterPreview({items}:{items:FishSpeciesRecord[]}){
   const [createSeparate,setCreateSeparate]=useState<string[]>([])
   const preview=previewFishHeadMasterImport(items)
-  const eligibleSeparateKeys=new Set(preview.proposals.filter(item=>item.status==='conflict').map(item=>item.proposalKey))
+  const eligibleSeparateKeys=new Set(preview.proposals.filter(item=>item.status==='conflict' && !isQlMarketPriceRow(item.source)).map(item=>item.proposalKey))
   // Master edits may change a conflicted row into a safe match. Never let a stale
   // checkbox selection throw during render; reset it after the new Master loads.
   const activeSeparate=createSeparate.filter(key=>eligibleSeparateKeys.has(key))
   const plan=prepareQlMasterAdoption(items,activeSeparate)
+  const planned=new Map(plan.entries.map(entry=>[entry.sourceKey,entry]))
   useEffect(()=>{setCreateSeparate([])},[items])
   function downloadReview(){
-    const review={sourceVersion:preview.sourceVersion,readOnly:true,createSeparateFor:activeSeparate,
+    const review={sourceVersion:preview.sourceVersion,readOnly:true,policy:'bottom-excluded; cross-method-conflicting-price-unset',createSeparateFor:activeSeparate,
       rows:preview.proposals.map(item=>({sourceRef:`${preview.sourceVersion}|${item.proposalKey}`,label:item.source.label,
-        method:item.source.method,aliases:item.source.aliases,priceCentsPerKg:item.source.priceCentsPerKg,status:item.status,
+        method:item.source.method,aliases:item.source.aliases,sourcePriceCentsPerKg:item.source.priceCentsPerKg,
+        proposedBasePriceCentsPerKg:planned.get(item.proposalKey)?.proposed.basePriceCentsPerKg??null,
+        plannedAction:planned.get(item.proposalKey)?.action??'blocked',status:item.status,
         existing:item.matches.map(match=>({id:match.id,speciesCode:match.speciesCode,displayName:match.displayName,
           basePriceCentsPerKg:fishHeadMasterBasePriceCents(match),qlSourceRef:match.qlSourceRef??null}))}))}
     const url=URL.createObjectURL(new Blob([JSON.stringify(review,null,2)],{type:'application/json'}))
-    const link=document.createElement('a');link.href=url;link.download='ql-master-review-2026-10-10.json';link.click()
+    const link=document.createElement('a');link.href=url;link.download='ql-master-34-nonbottom-review-2026-10-10.json';link.click()
     setTimeout(()=>URL.revokeObjectURL(url),0)
   }
-  return <details className="ql-master-preview"><summary>审阅 QL 36组新默认价 Preview（只读）</summary>
-    <p className="notice">来源 {preview.sourceVersion} · 生效参考 {preview.sourceEffectiveDate}。此预览本身不会写入 Master；采用前须获得独立发布与生产数据改价批准。</p>
+  return <details className="ql-master-preview"><summary>审阅 QL 34组非底船 Master 候选（只读）</summary>
+    <p className="notice">QL 原始36组参考资料保持不变；其中底船2组不纳入 Master，以下仅展示34组非底船候选。跨鱼法存在价差的鱼名不预设价格，按当天行情输入。此页不会写入生产数据。</p>
+    <p className="notice">来源 {preview.sourceVersion} · 生效参考 {preview.sourceEffectiveDate}。采用前须获得独立生产数据批准。</p>
     <p><strong>安全匹配 {preview.matchedCount}</strong> · 拟修改基础价 {preview.changedCount} · 同价 {preview.unchangedCount} · 待新增 {preview.newCount} · <strong>冲突 {preview.conflictCount}</strong> · 保留未采用旧资料（含冲突） {preview.retainedLegacyCount}</p>
     <div className="ql-master-table-wrap"><table><caption>未来基础默认价对照（不含船号加价）</caption><thead><tr><th scope="col"># / 来源组</th><th scope="col">状态</th><th scope="col">现有 Master / 旧 RM/kg</th><th scope="col">拟议新 RM/kg</th></tr></thead><tbody>
       {preview.proposals.map(item=><tr key={fishHeadMasterProposalKey(item)} className={`ql-master-${item.status}`}>
         <td><strong>{item.source.sourceRow-3}. {item.source.label}</strong><small>{QL_METHOD_LABELS[item.source.method]} · 别名：{item.source.aliases.join('、')||'保留整组，不自动拆分'}</small></td>
-        <td>{item.status==='matched'?'匹配':item.status==='new'?'新增':'冲突，阻止自动采用'}
-          {item.status==='conflict'&&<label className="ql-master-resolution">
+        <td>{item.status==='matched'?'匹配':item.status==='new'?'新增':planned.has(item.proposalKey)?'独立空价组（保留旧鱼）':'冲突，阻止自动采用'}
+          {item.status==='conflict'&&!isQlMarketPriceRow(item.source)&&<label className="ql-master-resolution">
             <input type="checkbox" checked={activeSeparate.includes(item.proposalKey)}
               onChange={event=>setCreateSeparate(current=>event.target.checked?[...current,item.proposalKey]:current.filter(key=>key!==item.proposalKey))}/>
-            单独建立来源组，保留现有鱼名和旧价格
+            单独建立空默认价来源组，保留现有鱼名和旧价格
           </label>}</td>
         <td>{item.matches.length?item.matches.map((match,index)=><small key={`${match.id}:${index}`}>{match.displayName} ({match.speciesCode} / ID: {match.id}) · {money(fishHeadMasterBasePriceCents(match))}{!match.active?' · 已停用':''}</small>):'无匹配记录'}{item.reason&&<small>{item.reason}</small>}</td>
-        <td><strong>{money(item.source.priceCentsPerKg)}</strong>{item.status==='conflict'&&<small>映射未定，不能采用</small>}</td>
+        <td><strong>{!planned.has(item.proposalKey)?'未列入本次采用':planned.get(item.proposalKey)!.proposed.basePriceCentsPerKg===null?'留空（按当天行情）':money(planned.get(item.proposalKey)!.proposed.basePriceCentsPerKg)}</strong>
+          {(planned.get(item.proposalKey)?.proposed.basePriceCentsPerKg!==item.source.priceCentsPerKg)&&<small>QL 来源参考价 {money(item.source.priceCentsPerKg)}，不作为 Master 默认价</small>}
+          {item.status==='conflict'&&!planned.has(item.proposalKey)&&<small>映射未定，不能采用</small>}</td>
       </tr>)}</tbody></table></div>
-    <p className="notice">丁温／目孔的拖网与底船、青兰的一般与底船必须保留不同上下文；加晒与加西保持不同来源拼写。表外旧鱼名不会删除。</p>
+    <p className="notice">底船鱼名不纳入 Master。青兰、丁温／目孔等跨作业方式价差的来源组留空基础价；实际单价在当天业务单据中填写。原有旧鱼名、加晒与加西及历史价不覆盖。</p>
     <p className="notice">未来获准采用时，只影响新默认建议价；已保存结单、实际成交价与 978／5202 船号加价保持原样。Retail、Fish Meal 与 QL 客户价独立。</p>
     <section aria-label="QL 36组导入审核" className="ql-master-approval">
       <h3>批量采用审核（不在浏览器执行）</h3>
-      <p>待新增 {plan.creates} · 拟更新价格 {plan.updates} · 同价 {plan.unchanged} · 未解决冲突 {plan.blocked.length}。</p>
+      <p>非底船候选 {preview.proposals.length} · 待新增 {plan.creates} · 拟更新价格 {plan.updates} · 同价 {plan.unchanged} · 未解决冲突 {plan.blocked.length}。</p>
       {plan.blocked.length>0&&<p role="status">还有 {plan.blocked.length} 组映射未确认；不能部分导入。</p>}
       <p role="status">未获得生产发布与批量改价批准，本页不会执行导入。真实采用由获准操作者使用绑定完整快照、变更清单和回退记录的独立事务工具执行；前端开关不能授权改价。</p>
-      <button type="button" onClick={downloadReview}>下载36组审核对照（不执行）</button>
+      <button type="button" onClick={downloadReview}>下载34组非底船审核对照（不执行）</button>
     </section>
   </details>
 }

@@ -1,5 +1,5 @@
 import { prepareQlMasterAdoption, sourceFromQlMasterRef } from './fishHeadMasterAdoption'
-import type { FishHeadMasterImportRecord } from './fishHeadMasterImport'
+import { QL_FISH_HEAD_MASTER_ROWS, type FishHeadMasterImportRecord } from './fishHeadMasterImport'
 import { QL_SEED_VERSION } from './qlPrices'
 
 export const QL_MASTER_COLLECTION = 'fishSpecies'
@@ -122,7 +122,7 @@ export async function buildQlMasterManifest(input: {
   const records = snapshot.map(item => ({ ...item.data, id: item.id }) as FishHeadMasterImportRecord)
   const createSeparateFor = [...(input.createSeparateFor ?? [])].sort()
   const plan = prepareQlMasterAdoption(records, createSeparateFor)
-  if (plan.blocked.length || plan.entries.length !== 36) throw new Error(`Resolve every source group before approval (${plan.blocked.length} blocked).`)
+  if (plan.blocked.length || plan.entries.length !== QL_FISH_HEAD_MASTER_ROWS.length) throw new Error(`Resolve every non-bottom Fish Head Master source group before approval (${plan.blocked.length} blocked).`)
   const byId = new Map(snapshot.map(item => [item.id, item]))
   const nextOrder = Math.max(0, ...snapshot.map(item => Number(item.data.order)))
   const entries = plan.entries.map((entry): QlMasterManifestEntry => {

@@ -20,54 +20,69 @@ describe('Fish Head Master price editing',()=>{
     try{
       const saver=vi.fn(),initializer=vi.fn()
       render(<MemoryRouter><FishSpeciesPage loader={async()=>[]} saver={saver} initializer={initializer}/></MemoryRouter>)
-      fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
+      fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
       expect(screen.queryByRole('button',{name:'确认采用36组新基础默认价'})).not.toBeInTheDocument()
-      expect(screen.getByRole('button',{name:'下载36组审核对照（不执行）'})).toBeEnabled()
+      expect(screen.getByRole('button',{name:'下载34组非底船审核对照（不执行）'})).toBeEnabled()
       expect(saver).not.toHaveBeenCalled();expect(initializer).not.toHaveBeenCalled()
     }finally{vi.unstubAllEnvs()}
   })
-  it('previews all 36 groups and conflicting old prices without writing Master',async()=>{
+  it('previews only 34 non-bottom groups and conflicting old prices without writing Master',async()=>{
     const saver=vi.fn(),initializer=vi.fn()
     const items=[species({id:'ding_wen',speciesCode:'ding_wen',displayName:'丁温',basePriceCentsPerKg:190})]
     const before=JSON.stringify(items)
     render(<MemoryRouter><FishSpeciesPage loader={async()=>items} saver={saver} initializer={initializer}/></MemoryRouter>)
-    fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
+    fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
     const table=screen.getByRole('table',{name:'未来基础默认价对照（不含船号加价）'})
-    expect(within(table).getAllByRole('row')).toHaveLength(37)
-    expect(within(table).getAllByText('冲突，阻止自动采用')).toHaveLength(2)
-    expect(within(table).getAllByText(/丁温.*RM1.90/)).toHaveLength(2)
+    expect(within(table).getAllByRole('row')).toHaveLength(35)
+    expect(within(table).getAllByText('独立空价组（保留旧鱼）')).toHaveLength(1)
+    expect(within(table).getAllByText(/丁温.*RM1.90/)).toHaveLength(1)
     expect(within(table).getByText('25. 加晒/丁温/目孔(拖网)')).toBeInTheDocument()
-    expect(within(table).getByText('35. 丁温/目孔/加西（底船）')).toBeInTheDocument()
+    expect(within(table).queryByText('35. 丁温/目孔/加西（底船）')).not.toBeInTheDocument()
+    expect(within(table).queryByText('36. 青兰（底船）')).not.toBeInTheDocument()
+    expect(within(table).getAllByText('留空（按当天行情）')).toHaveLength(2)
     expect(saver).not.toHaveBeenCalled()
     expect(initializer).not.toHaveBeenCalled()
     expect(JSON.stringify(items)).toBe(before)
+  })
+  it('keeps market-conflicting generic 青兰 at an explicit blank default instead of applying QL price',async()=>{
+    const original=[species({id:'qing_lan',speciesCode:'qing_lan',displayName:'青兰',basePriceCentsPerKg:null})]
+    const saver=vi.fn()
+    render(<MemoryRouter><FishSpeciesPage loader={async()=>original} saver={saver}/></MemoryRouter>)
+    fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
+    const table=screen.getByRole('table',{name:'未来基础默认价对照（不含船号加价）'})
+    expect(within(table).getAllByText('留空（按当天行情）')).toHaveLength(2)
+    expect(within(table).queryByText('36. 青兰（底船）')).not.toBeInTheDocument()
+    expect(saver).not.toHaveBeenCalled()
   })
   it('does not crash or retain obsolete separate-group choices when a previously inactive fish is reactivated',async()=>{
     const old=species({id:'jin_xian',speciesCode:'jin_xian',displayName:'金线',
       active:false,basePriceCentsPerKg:205})
     const saver=vi.fn(async(next:FishSpeciesRecord)=>next)
     render(<MemoryRouter><FishSpeciesPage loader={async()=>[old]} saver={saver}/></MemoryRouter>)
-    fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
-    const choice=screen.getByRole('checkbox',{name:'单独建立来源组，保留现有鱼名和旧价格'})
+    fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
+    const choice=screen.getByRole('checkbox',{name:'单独建立空默认价来源组，保留现有鱼名和旧价格'})
     fireEvent.click(choice)
     expect(choice).toBeChecked()
+    expect(screen.getByText('独立空价组（保留旧鱼）')).toBeInTheDocument()
+    expect(screen.getAllByText('留空（按当天行情）')).toHaveLength(3)
+    expect(screen.getByText('QL 来源参考价 RM2.10，不作为 Master 默认价')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button',{name:'重新启用'}))
     await waitFor(()=>{
       expect(screen.getByText(/未解决冲突 0/)).toBeInTheDocument()
-      expect(screen.queryByRole('checkbox',{name:'单独建立来源组，保留现有鱼名和旧价格'})).not.toBeInTheDocument()
+      expect(screen.queryByRole('checkbox',{name:'单独建立空默认价来源组，保留现有鱼名和旧价格'})).not.toBeInTheDocument()
     })
     expect(saver).toHaveBeenCalledWith(expect.objectContaining({id:'jin_xian',active:true}))
   })
   it('does not present an empty-Master plan when the Master load failed',async()=>{
     render(<MemoryRouter><FishSpeciesPage loader={async()=>{throw new Error('offline')}}/></MemoryRouter>)
     await screen.findByRole('alert')
-    expect(screen.queryByText('审阅 QL 36组新默认价 Preview（只读）')).not.toBeInTheDocument()
+    expect(screen.queryByText('审阅 QL 34组非底船 Master 候选（只读）')).not.toBeInTheDocument()
   })
   it('distinguishes unchanged matches from proposed price modifications',async()=>{
     const items=[species({id:'jin_xian',speciesCode:'jin_xian',displayName:'金线',basePriceCentsPerKg:205}),
       species({id:'hong_mu_lin',speciesCode:'hong_mu_lin',displayName:'红目林',basePriceCentsPerKg:275})]
     render(<MemoryRouter><FishSpeciesPage loader={async()=>items}/></MemoryRouter>)
-    fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
+    fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
     expect(screen.getByText(/拟修改基础价 1 · 同价 1/)).toBeInTheDocument()
   })
   it('shows unpriced fish and allows a blank/null price to be filled as integer cents',async()=>{
