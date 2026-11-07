@@ -7,8 +7,10 @@ import { makeRetailLine, MAX_RETAIL_LINES, prepareRetailSale, type RetailLineInp
 import { retailInvoiceNumber } from './lib/retailInvoice'
 import retailSeed from './data/retailFishSeed.json'
 import { createSettlementPageLoader,type ProjectedDocument } from './services/settlementSearch'
+import { defineQlMasterOperatorEmulatorTests } from './test/qlMasterOperator.emulator'
 
 let environment: RulesTestEnvironment
+defineQlMasterOperatorEmulatorTests(()=>environment)
 
 describe('Firestore Emulator: projected settlement queries', () => {
   it.each([
@@ -100,6 +102,20 @@ async function updateNumberedRetailSale(db: RulesFirestore, id: string, operatio
 }
 
 describe('Firestore Rules: Retail 30-day numbered protocol', () => {
+  it('preserves independent bounded line remarks and rejects invalid remark shapes/unknown line fields',async()=>{
+    const db=environment.authenticatedContext('u1').firestore()
+    const line=makeRetailLine(retailSeed[0],'2','6.15')
+    const lines=[{...line,remark:'次'},{...line,remark:'参'},{...line,remark:'味'},{...line,remark:'其他自定义\n保留换行'}]
+    const group=(values:DocumentData[])=>({lines:values,totalAmountCents:values.reduce((n,item)=>n+item.amountCents,0),createdBy:'u1',createdAt:serverTimestamp()})
+    const ref=doc(db,'retailSales','remark-validation','groups','first')
+    await assertSucceeds(setDoc(ref,group(lines)))
+    expect((await getDoc(ref)).data()!.lines.map((item:DocumentData)=>item.remark)).toEqual(lines.map(item=>item.remark))
+    await assertSucceeds(setDoc(doc(db,'retailSales','remark-validation','groups','second'),group([{...line,remark:'x'.repeat(500)}])))
+    for(const [index,bad] of [null,123,{},[],true,'x'.repeat(501)].entries()){
+      await assertFails(setDoc(doc(db,'retailSales','remark-invalid','groups',`bad_${index}_first`),group([{...line,remark:bad}])))
+    }
+    await assertFails(setDoc(doc(db,'retailSales','remark-invalid','groups','unknown_first'),group([{...line,unapprovedField:'x'}])))
+  })
   it.each([
     {}, { vesselId: 'missing', vesselCodeSnapshot: '833' }, { vesselId: 'retail-833', vesselCodeSnapshot: 'FORGED' },
   ])('rejects a new invoice with absent, missing or forged vessel fields %j', async vesselFields => {
@@ -325,15 +341,22 @@ describe('Firestore Rules: fish-head Master base prices', () => {
     await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:9999995,updatedBy:'u1',updatedAt:serverTimestamp()}))
   })
 
-  it('safely stores a bounded versioned QL source reference without weakening Master identity protection',async()=>{
+  it('reserves source adoption for trusted IAM tooling and prevents clients attaching, replacing or removing refs',async()=>{
     const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','ql_group_safe')
     const source='ql-foods-2026-10-10|large-muli:general'
-    await assertSucceeds(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:315,qlSourceRef:source}))
+    await assertFails(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:315,qlSourceRef:source}))
+    await environment.withSecurityRulesDisabled(async context=>{
+      await setDoc(doc(context.firestore(),'fishSpecies',ref.id),{...species(ref.id),basePriceCentsPerKg:315,qlSourceRef:source})
+    })
     expect((await getDoc(ref)).data()!.qlSourceRef).toBe(source)
     await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:320,updatedBy:'u1',updatedAt:serverTimestamp()}))
-    for(const value of [null,123,{},[],true,'x'.repeat(101)]){
+    for(const value of [null,123,{},[],true,'x'.repeat(101),'another-valid-length-ref']){
       await assertFails(updateDoc(ref,{qlSourceRef:value,updatedBy:'u1',updatedAt:serverTimestamp()}))
     }
+    const current=(await getDoc(ref)).data()!
+    const withoutRef={...current};delete withoutRef.qlSourceRef
+    await assertFails(setDoc(ref,{...withoutRef,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    await assertFails(setDoc(doc(db,'fishSpeciesAdoptions','unapproved'),{state:'applied'}))
     expect((await getDoc(ref)).data()!.qlSourceRef).toBe(source)
   })
 

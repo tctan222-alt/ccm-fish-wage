@@ -12,8 +12,14 @@ export function WeighingSessionsPage({loader=loadWeighingSessions}:{loader?:()=>
   const [items,setItems]=useState<WeighingSession[]|null>(null)
   const [date,setDate]=useState(''),[vessel,setVessel]=useState(''),[status,setStatus]=useState('all')
   const [search,setSearch]=useState('')
-  const [error,setError]=useState('')
-  useEffect(()=>{loader().then(setItems).catch(()=>{setItems([]);setError('无法载入现场称重单。')})},[loader])
+  const [error,setError]=useState(''),[attempt,setAttempt]=useState(0)
+  useEffect(()=>{
+    let current=true
+    setItems(null);setError('')
+    void Promise.resolve().then(loader).then(loaded=>{if(current)setItems(loaded)})
+      .catch(()=>{if(current)setError('无法载入现场称重单。')})
+    return()=>{current=false}
+  },[loader,attempt])
   const vessels=useMemo(()=>Array.from(new Map((items??[]).map(item=>[item.vesselId,item.vesselCodeSnapshot])).entries()),[items])
   const visible=useMemo(()=>(items??[]).filter(item=>
     (!date||businessDateFromLegacy(item.weighingDate)===businessDateFromLegacy(date))&&(!vessel||item.vesselId===vessel)&&(status==='all'||item.status===status)
@@ -34,8 +40,8 @@ export function WeighingSessionsPage({loader=loadWeighingSessions}:{loader?:()=>
     </section>
     <section className="master-summary weighing-list-summary"><div><span>现场单</span><strong>{visible.length}</strong></div>
       <div><span>总重量</span><strong>{formatWeightKg(visible.reduce((sum,item)=>sum+item.totalWeightGrams,0))} kg</strong></div></section>
-    {error&&<p className="error" role="alert">{error}</p>}
-    {items===null?<p className="notice">正在载入现场称重单…</p>:<div className="weighing-session-list">
+    {error?<div><p className="error" role="alert">{error}</p><button type="button" onClick={()=>setAttempt(value=>value+1)}>重试现场称重单</button></div>
+    :items===null?<p className="notice" role="status">正在载入现场称重单…</p>:<div className="weighing-session-list">
       {visible.map(item=><Link className="weighing-session-card" key={item.id} to={`/weighing/${item.id}/review`}>
         <div><small>{formatMalaysiaDate(item.weighingDate)} · {item.productType==='fish_head'?'鱼头纸单号':item.productType==='fish_meal'?'鱼仔纸单号':'纸单号'}：{item.externalSlipNo||'未填'}</small>
           <small>系统现场单号</small><strong>{item.sessionCode}</strong><span>{item.vesselNameSnapshot||item.vesselCodeSnapshot}</span>

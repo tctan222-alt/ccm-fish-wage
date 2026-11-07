@@ -1,4 +1,4 @@
-import { useEffect,useMemo,useState,type FormEvent } from 'react'
+import { useEffect,useMemo,useRef,useState,type FormEvent } from 'react'
 import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import { Link,useNavigate,useParams } from 'react-router-dom'
 import type { BusinessPartner } from '../lib/masterData'
@@ -17,11 +17,7 @@ import { loadVessels } from '../services/purchaseMasterData'
 
 type Processor=typeof processWeighingSessionToReceipt
 
-export function WeighingReviewPage({
-  bundleLoader=loadWeighingBundle,supplierLoader=loadActiveSuppliers,processor=processWeighingSessionToReceipt,
-  reopener=reopenWeighingSession,voider=voidWeighingSession,vesselLoader=loadVessels,sessionUpdater=updateWeighingSessionDetails,
-  now=()=>new Date(),
-}:{
+interface ReviewProps{
   bundleLoader?:(id:string)=>Promise<WeighingBundle>
   supplierLoader?:()=>Promise<BusinessPartner[]>
   processor?:Processor
@@ -30,25 +26,63 @@ export function WeighingReviewPage({
   vesselLoader?:()=>Promise<Vessel[]>
   sessionUpdater?:typeof updateWeighingSessionDetails
   now?:()=>Date
-}){
+}
+
+export function WeighingReviewPage(props:ReviewProps){
   const {sessionId=''}=useParams()
+  return <WeighingReview key={sessionId} sessionId={sessionId} {...props}/>
+}
+
+function WeighingReview({sessionId,
+  bundleLoader=loadWeighingBundle,supplierLoader=loadActiveSuppliers,processor=processWeighingSessionToReceipt,
+  reopener=reopenWeighingSession,voider=voidWeighingSession,vesselLoader=loadVessels,sessionUpdater=updateWeighingSessionDetails,
+  now=()=>new Date(),
+}:ReviewProps&{sessionId:string}){
   const navigate=useNavigate()
   const [bundle,setBundle]=useState<WeighingBundle|null>(null),[suppliers,setSuppliers]=useState<BusinessPartner[]>([])
   const [supplierId,setSupplierId]=useState(''),[prices,setPrices]=useState<Record<string,string>>({})
   const [error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false)
   const [created,setCreated]=useState<{receiptId:string;receiptCode:string}|null>(null)
   const [vessels,setVessels]=useState<Vessel[]>([]),[editingSession,setEditingSession]=useState(false)
-  useEffect(()=>{Promise.all([bundleLoader(sessionId),supplierLoader(),vesselLoader()]).then(([loaded,partners,loadedVessels])=>{
-    setBundle(loaded);setSuppliers(partners);setVessels(loadedVessels.filter(item=>item.active))
-  }).catch(()=>setError('无法载入现场称重单。'))},[sessionId,bundleLoader,supplierLoader,vesselLoader])
+  const [bundleError,setBundleError]=useState(''),[bundleAttempt,setBundleAttempt]=useState(0)
+  const [supplierError,setSupplierError]=useState(''),[supplierReady,setSupplierReady]=useState(false),[supplierAttempt,setSupplierAttempt]=useState(0)
+  const [vesselError,setVesselError]=useState(''),[vesselReady,setVesselReady]=useState(false),[vesselAttempt,setVesselAttempt]=useState(0)
+  const active=useRef(true)
+  useEffect(()=>{active.current=true;return()=>{active.current=false}},[])
+  useEffect(()=>{
+    let current=true
+    setBundle(null);setBundleError('')
+    void Promise.resolve().then(()=>bundleLoader(sessionId)).then(loaded=>{
+      if(current)setBundle(loaded)
+    }).catch(()=>{if(current)setBundleError('无法载入现场称重单。')})
+    return()=>{current=false}
+  },[sessionId,bundleLoader,bundleAttempt])
+  useEffect(()=>{
+    let current=true
+    setSupplierReady(false);setSupplierError('')
+    void Promise.resolve().then(supplierLoader).then(partners=>{
+      if(current){setSuppliers(partners);setSupplierReady(true)}
+    }).catch(()=>{if(current)setSupplierError('无法载入供应商；暂不可生成草稿采购单。')})
+    return()=>{current=false}
+  },[supplierLoader,supplierAttempt])
+  useEffect(()=>{
+    let current=true
+    setVesselReady(false);setVesselError('')
+    void Promise.resolve().then(vesselLoader).then(loaded=>{
+      if(current){setVessels(loaded.filter(item=>item.active));setVesselReady(true)}
+    }).catch(()=>{if(current)setVesselError('无法载入船号；暂不可后台修改本单。')})
+    return()=>{current=false}
+  },[vesselLoader,vesselAttempt])
   const groups=useMemo(()=>groupWeighingEntries(bundle?.entries??[]),[bundle])
   useUnsavedChanges(bundle?.session.status === 'completed' && (!!supplierId || Object.values(prices).some(Boolean)))
-  if(!bundle)return <main><p className={error?'error':'notice'} role={error?'alert':undefined}>{error||'正在载入现场称重单…'}</p></main>
+  if(!bundle)return <main><p className={bundleError?'error':'notice'} role={bundleError?'alert':'status'}>{bundleError||'正在载入现场称重单…'}</p>
+    {bundleError&&<button type="button" onClick={()=>setBundleAttempt(value=>value+1)}>重试现场称重单</button>}</main>
   const {session,entries}=bundle
   const completedEditable=canEditCompletedWeighing(session,now())
   const editable=canModifyWeighing(session,now())
   const completedDeadline=completedWeighingEditDeadline(session)
   async function process(){
+    if(!supplierReady){setError('请先成功载入供应商，再生成草稿采购单。');return}
     const supplier=suppliers.find(item=>item.id===supplierId)
     if(!supplier){setError('请选择供应商。');return}
     try{
@@ -56,11 +90,12 @@ export function WeighingReviewPage({
         .map(group=>[group.key,rmInputToCentsPerKg(prices[group.key]??'')]))
       setBusy(true);setError('')
       const result=await processor({sessionId:session.id,supplier,lines:buildReceiptLinesFromWeighing(session.id,entries,cents)})
+      if(!active.current)return
       setCreated(result);setBundle(current=>current?{...current,session:{...current.session,status:'processed',
         processedReceiptId:result.receiptId,processedReceiptCode:result.receiptCode}}:current)
       setMessage(`已生成草稿采购单 ${result.receiptCode}`)
-    }catch(problem){setError(problem instanceof Error?problem.message:'无法生成草稿采购单。')}
-    finally{setBusy(false)}
+    }catch(problem){if(active.current)setError(problem instanceof Error?problem.message:'无法生成草稿采购单。')}
+    finally{if(active.current)setBusy(false)}
   }
   async function changeStatus(kind:'reopen'|'void'){
     const reason=window.prompt(kind==='reopen'?'请输入重开原因：':'请输入作废原因：')?.trim()
@@ -68,16 +103,19 @@ export function WeighingReviewPage({
     try{
       setBusy(true);setError('')
       const next=kind==='reopen'?await reopener(session.id,reason):await voider(session.id,reason)
+      if(!active.current)return
       setBundle(current=>current?{...current,session:next}:current)
       setMessage(kind==='reopen'?'现场单已重开。':'现场单已作废。')
       if(kind==='reopen')navigate(`/weighing/${session.id}`)
-    }catch(problem){setError(problem instanceof Error?problem.message:'操作失败。')}
-    finally{setBusy(false)}
+    }catch(problem){if(active.current)setError(problem instanceof Error?problem.message:'操作失败。')}
+    finally{if(active.current)setBusy(false)}
   }
   async function saveSession(input:{sessionCode:string;weighingDate:string;vessel:Vessel;externalSlipNo:string;notes:string;reason:string}){
+    if(!vesselReady||!vessels.some(item=>item.id===input.vessel.id)){setError('请先成功载入船号，再保存后台修正。');return}
     try{setBusy(true);setError('');const next=await sessionUpdater({sessionId:session.id,...input})
+      if(!active.current)return
       setBundle(current=>current?{...current,session:next}:current);setEditingSession(false);setMessage('后台修正已保存，并保留审计记录。')
-    }catch(problem){setError(problem instanceof Error?problem.message:'无法保存后台修正。')}finally{setBusy(false)}
+    }catch(problem){if(active.current)setError(problem instanceof Error?problem.message:'无法保存后台修正。')}finally{if(active.current)setBusy(false)}
   }
   return <main className="weighing-review-page"><header><p className="eyebrow">CCM Fishery</p><h1>称重复核</h1>
     <Link className="page-link" to="/weighing">← 现场称重单</Link></header>
@@ -89,6 +127,8 @@ export function WeighingReviewPage({
       {session.processedReceiptId&&<Link to={`/purchases/${session.processedReceiptId}`}>{session.processedReceiptCode}</Link>}</p>}
     {session.status==='completed'&&session.productType&&<p className="notice"><Link className="primary-action" to={session.productType==='fish_head'?`/fish-head-settlement/${session.id}`:`/fish-meal-settlement/${session.id}`}>查看{session.productType==='fish_head'?'鱼头':'鱼仔'}结单</Link></p>}
     {error&&<p className="error" role="alert">{error}</p>}{message&&<p className="notice" role="status">{message}</p>}
+    {supplierError?<div><p className="error" role="alert">{supplierError}</p><button type="button" onClick={()=>setSupplierAttempt(value=>value+1)}>重试供应商</button></div>:!supplierReady&&<p role="status">正在载入供应商…</p>}
+    {vesselError?<div><p className="error" role="alert">{vesselError}</p><button type="button" onClick={()=>setVesselAttempt(value=>value+1)}>重试船号</button></div>:!vesselReady&&<p role="status">正在载入船号…</p>}
     <section className="weighing-review-section" role="region" aria-label="分类汇总与单价"><h2>分类汇总与单价</h2>
       <div className="weighing-group-list">{groups.map(group=><article key={group.key} className="weighing-group-card">
         <div><strong>{group.displayName}</strong><span>{group.basketCount} 篮 · {formatWeightKg(group.weightGrams)} kg</span>
@@ -100,9 +140,9 @@ export function WeighingReviewPage({
             onChange={event=>setPrices(current=>({...current,[group.key]:event.target.value}))}/></label>:<p>已保存单价：RM {(group.unitPriceCentsPerKg/100).toFixed(2)}/kg</p>)}
       </article>)}</div>
       {session.status==='completed'&&<div className="weighing-process-form"><label>供应商
-        <select aria-label="Supplier" value={supplierId} onChange={event=>setSupplierId(event.target.value)}>
+        <select aria-label="Supplier" value={supplierId} disabled={!supplierReady||busy} onChange={event=>setSupplierId(event.target.value)}>
           <option value="">请选择</option>{suppliers.map(item=><option value={item.id} key={item.id}>{item.displayName}</option>)}</select></label>
-        <button className="primary-action" type="button" disabled={busy||Boolean(created)} onClick={()=>void process()}>生成草稿采购单</button></div>}
+        <button className="primary-action" type="button" disabled={busy||Boolean(created)||!supplierReady} onClick={()=>void process()}>生成草稿采购单</button></div>}
       {created&&<Link className="page-link" to={`/purchases/${created.receiptId}`}>打开 {created.receiptCode}</Link>}
     </section>
     <section className="weighing-review-section" role="region" aria-label="原始称重记录"><h2>原始称重记录</h2>
@@ -124,11 +164,11 @@ export function WeighingReviewPage({
     </section>}
     {(session.status==='completed'||session.status==='weighing')&&!editable&&<p className="notice">{completedDeadline?'已超过完成称重后的 7 天修改期，只能查看结单和原始记录。':'无法确认首次完成时间，暂时只能查看。'}</p>}
     {editable&&<section className="weighing-review-actions">
-      <button type="button" disabled={busy} onClick={()=>setEditingSession(true)}>后台修改本单</button>
+      <button type="button" disabled={busy||!vesselReady} onClick={()=>setEditingSession(true)}>后台修改本单</button>
       {session.status==='weighing'&&<Link className="page-link" to={`/weighing/${session.id}`}>修改原始篮记录</Link>}
       {session.status==='completed'&&completedDeadline&&<small>可修改至 {completedDeadline.toLocaleString('en-GB',{timeZone:'Asia/Kuala_Lumpur',hour12:false})}</small>}
     </section>}
-    {editingSession&&<SessionEditDialog session={session} vessels={vessels} busy={busy} close={()=>setEditingSession(false)} save={saveSession}/>}
+    {editingSession&&<SessionEditDialog session={session} vessels={vessels} busy={busy||!vesselReady} close={()=>setEditingSession(false)} save={saveSession}/>}
   </main>
 }
 

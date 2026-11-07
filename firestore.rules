@@ -34,7 +34,8 @@ service cloud.firestore {
       let deciKg = line.weightDeciKg;
       let price = line.unitPriceCents;
       let amount = line.amountCents;
-      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightDeciKg', 'unitPriceCents', 'amountCents'])
+      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightDeciKg', 'unitPriceCents', 'amountCents', 'remark'])
+        && line.get('remark', '').matches('^[\\s\\S]{0,500}$')
         && line.fishId.matches('^[^/]{1,100}$')
         && line.chineseName.matches('^.{1,100}$')
         && line.malayName.matches('^.{0,100}$')
@@ -310,7 +311,7 @@ service cloud.firestore {
     }
 
     function validBusinessDate(value) {
-      return value is string && value.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$');
+      return value.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$');
     }
 
     function validIceWorkRecord(data) {
@@ -769,11 +770,11 @@ service cloud.firestore {
         ])
         // Every required field is directly validated below; missing fields fail closed.
         && (price == null || (price is int && price > 0 && price <= 9999995))
-        && (!('qlSourceRef' in data) || (data.qlSourceRef is string && data.qlSourceRef.size() <= 100))
-        && data.speciesCode is string && data.speciesCode.matches('^[a-z0-9_]{1,40}$')
-        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('qlSourceRef' in data) || data.qlSourceRef.matches('^[\\s\\S]{0,100}$'))
+        && data.speciesCode.matches('^[a-z0-9_]{1,40}$')
+        && data.displayName.matches('^[\\s\\S]{1,80}$')
         && data.active is bool && data.order is int && data.order >= 1
-        && data.notes is string && data.notes.size() <= 500
+        && data.notes.matches('^[\\s\\S]{0,500}$')
         && data.createdBy is string && data.createdAt is timestamp
         && data.updatedBy is string && data.updatedAt is timestamp
         && (data.inactiveBy == null || data.inactiveBy is string)
@@ -1691,6 +1692,7 @@ service cloud.firestore {
     match /fishSpecies/{speciesId} {
       allow read: if signedIn();
       allow create: if signedIn() && validFishSpecies(incomingData())
+        && !('qlSourceRef' in incomingData())
         && speciesId == incomingData().speciesCode
         && incomingData().active == true
         && incomingData().createdBy == uid()
@@ -1699,6 +1701,7 @@ service cloud.firestore {
         && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
       allow update: if signedIn() && validFishSpecies(incomingData())
+        && incomingData().get('qlSourceRef', null) == existingData().get('qlSourceRef', null)
         && incomingData().speciesCode == existingData().speciesCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt

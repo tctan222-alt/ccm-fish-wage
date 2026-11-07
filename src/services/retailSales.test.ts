@@ -64,6 +64,18 @@ it('stores independent same-day vessel snapshots and audits a vessel change with
   expect(state.records.get('retailSales/vessel-first/actions/vessel-edit')).toMatchObject({ beforeSnapshot: { vesselId: 'v833' }, afterSnapshot: { vesselId: 'v978' } })
 })
 
+it('persists per-line remarks in immutable groups, reads them back, audits edits, and does not turn legacy invoice notes into line remarks', async () => {
+  const lines = [makeRetailLine(seed[0], '1.1', '6.15', '次'), makeRetailLine(seed[0], '2', '8', '冰鲜')]
+  const created = await saveRetailSale('line-remarks', { ...input, remark: '整单备注', lines })
+  expect(created.lines.map(line => line.remark)).toEqual(['次', '冰鲜'])
+  expect(state.records.get('retailSales/line-remarks/groups/first')).toMatchObject({ lines: [{ remark: '次' }, { remark: '冰鲜' }] })
+  const edited = await updateRetailSale(created.id, { ...input, remark: '整单备注', lines: [{ ...lines[0], remark: '参' }, lines[1]] }, 1, 'edit-line-remarks')
+  expect(edited.lines.map(line => line.remark)).toEqual(['参', '冰鲜'])
+  expect(state.records.get('retailSales/line-remarks/actions/edit-line-remarks')).toMatchObject({ beforeSnapshot: { lineGroups: { first: [{ remark: '次' }, { remark: '冰鲜' }] } }, afterSnapshot: { lineGroups: { first: [{ remark: '参' }, { remark: '冰鲜' }] } } })
+  const legacy = await saveRetailSale('legacy-notes', { ...input, remark: '旧整单备注' })
+  expect((await loadRetailSale(legacy.id)).lines[0]).not.toHaveProperty('remark')
+})
+
 describe('retail quick-add fish', () => {
   it('rejects saved aliases and Other Chinese names colliding with Malay, but allows two Malay translations to match', async () => {
     state.records.set('retailFish/existing', { chineseName: '金线', malayName: 'Kerisi', suggestedPriceCents: 205, active: true })

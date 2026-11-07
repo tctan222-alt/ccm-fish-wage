@@ -269,7 +269,7 @@ export async function loadRetailSales(businessDate: string): Promise<RetailSale[
     .sort((a, b) => (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0))
 }
 
-export interface RetailHistorySnapshot { sales: RetailSale[]; fromCache: boolean }
+export interface RetailHistorySnapshot { sales: RetailSale[]; fromCache: boolean; hasPendingWrites?: boolean }
 
 export function watchRetailSales(range: RetailHistoryRange, next: (snapshot: RetailHistorySnapshot) => void, error: (problem: unknown) => void) {
   const { fromDate, toDate } = retailHistoryRange('range', '', range.fromDate, range.toDate)
@@ -284,7 +284,7 @@ export function watchRetailSales(range: RetailHistoryRange, next: (snapshot: Ret
         .sort((a, b) => b.dateSortKey - a.dateSortKey
           || (b.createdAt?.toDate().getTime() ?? 0) - (a.createdAt?.toDate().getTime() ?? 0)
           || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-      next({ sales, fromCache: snapshot.metadata.fromCache })
+      next({ sales, fromCache: snapshot.metadata.fromCache, hasPendingWrites: snapshot.metadata.hasPendingWrites })
     } catch (problem) { error(problem) }
   }, error)
 }

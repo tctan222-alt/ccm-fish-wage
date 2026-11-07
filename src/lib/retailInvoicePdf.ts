@@ -42,7 +42,7 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
   pdf.setProperties({ title: `门市现金结算单 ${invoiceNumber} ${displayDate}`, author: '门市现金结算单' })
   // beginPage initializes both before any drawing; subsequent pages replace them together.
   let canvas!: HTMLCanvasElement, context!: CanvasRenderingContext2D
-  let y = MARGIN, page = 0
+  let y = MARGIN, page = 0, tableBodyTop = MARGIN
 
   function font(size = 18, bold = false) {
     context.font = `${bold ? 'bold ' : ''}${size}px ${FONT}`
@@ -92,6 +92,7 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
     paragraph(`单号 Invoice No.：${invoiceNumber}`, 13, 20)
     y += 12
     tableHeader()
+    tableBodyTop = y
   }
 
   function finishPage() {
@@ -111,19 +112,26 @@ export async function createRetailInvoicePdf(sale: RetailSale): Promise<File> {
     const chinese = wrapText(context, line.chineseName, FISH_WIDTH)
     font(15)
     const malay = line.malayName ? wrapText(context, line.malayName, FISH_WIDTH) : []
-    const rowHeight = Math.max(32, chinese.length * 25 + malay.length * 21 + 18)
-    if (y + rowHeight > CONTENT_BOTTOM) { finishPage(); beginPage() }
-    let fishY = y
-    font(18)
-    for (const value of chinese) { text(value, MARGIN, fishY); fishY += 25 }
-    font(15)
-    for (const value of malay) { text(value, MARGIN, fishY); fishY += 21 }
+    const remarks = line.remark ? wrapText(context, `备注 Remark：${line.remark}`, FISH_WIDTH) : []
+    const fragments = [
+      ...chinese.map(value => ({ value, size: 18, height: 25 })),
+      ...malay.map(value => ({ value, size: 15, height: 21 })),
+      ...remarks.map(value => ({ value, size: 15, height: 21 })),
+    ]
+    const rowHeight = Math.max(32, fragments.reduce((sum, fragment) => sum + fragment.height, 0) + 18)
+    if (y + rowHeight > CONTENT_BOTTOM && y > tableBodyTop) { finishPage(); beginPage() }
     font(17)
     text(retailWeightKg(line), 463, y, 'right')
     text((line.unitPriceCents / 100).toFixed(2), 591, y, 'right')
     text((line.amountCents / 100).toFixed(2), RIGHT, y, 'right')
-    y += rowHeight
-    rule(y - 8)
+    // A maximum-length per-fish remark can span a page. Keep every character,
+    // and print the stored numeric cells once, rather than duplicating a sale line.
+    for (const fragment of fragments) {
+      if (y + fragment.height > CONTENT_BOTTOM) { finishPage(); beginPage() }
+      font(fragment.size); text(fragment.value, MARGIN, y); y += fragment.height
+    }
+    y += 18
+    rule(Math.min(y - 8, CONTENT_BOTTOM))
   }
   if (y + 70 > CONTENT_BOTTOM) { finishPage(); beginPage() }
   y += 16

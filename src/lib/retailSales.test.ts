@@ -3,6 +3,15 @@ import { makeRetailLine, MAX_RETAIL_LINES, normalizeRetailFish, prepareRetailSal
 
 const fish: RetailFish = { id: 'fish', chineseName: '甘丰', malayName: 'kembung', suggestedPriceCents: 600, active: true }
 describe('retail cash calculations and snapshots', () => {
+  it('keeps independent optional remarks in decimal and legacy lines without copying the invoice remark', () => {
+    const lines = [makeRetailLine(fish, '1', '6', ' 次 '), makeRetailLine(fish, '2', '7', '冰鲜'), makeRetailLine(fish, '3', '8')]
+    const sale = prepareRetailSale({ businessDate: '06/09/2026', vendorName: '阿明', remark: '整单旧备注', lines })
+    expect(sale.lines.map(line => line.remark)).toEqual(['次', '冰鲜', undefined])
+    expect(sale.remark).toBe('整单旧备注')
+    expect(lines[0].remark).toBe('次')
+    expect(() => prepareRetailSale({ ...sale, lines: [{ ...lines[0], remark: '文'.repeat(501) }] })).toThrow('每条鱼备注')
+    expect(() => prepareRetailSale({ ...sale, lines: [{ ...lines[0], remark: 5 } as unknown as RetailLineInput] })).toThrow('每条鱼备注')
+  })
   it('uses exact integer cents and actual price, independently of future defaults', () => {
     const line = makeRetailLine(fish, '3', '6.15')
     const sale = prepareRetailSale({ businessDate: '06/09/2026', vendorName: ' 阿明 ', lines: [line, makeRetailLine(fish, '2', '8')] })

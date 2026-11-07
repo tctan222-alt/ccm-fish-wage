@@ -33,6 +33,18 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.useRealTimers() })
 
 describe('Retail 30-day editing', () => {
+  it('loads and edits each saved fish remark independently and preserves invoice-level legacy remarks', async () => {
+    service.load.mockResolvedValue({ ...original, lines: [{ ...original.lines[0], remark: '次' }, { ...original.lines[0], remark: '冰鲜' }], totalAmountCents: 2460 })
+    await editReady()
+    expect(screen.getByLabelText('明细备注 Item Remark 1')).toHaveValue('次')
+    expect(screen.getByLabelText('明细备注 Item Remark 2 · 其他备注 Custom Remark')).toHaveValue('冰鲜')
+    fill('明细备注 Item Remark 1', '味')
+    fireEvent.click(screen.getByRole('button', { name: '保存修改 Save Changes' }))
+    await screen.findByText('修改已保存。 Changes saved.')
+    expect(service.update.mock.calls[0][1]).toMatchObject({ remark: '原备注', lines: [{ remark: '味' }, { remark: '冰鲜' }] })
+    expect(screen.getByText('备注 Remark：味')).toBeInTheDocument()
+    expect(screen.getByText('备注 Remark：冰鲜')).toBeInTheDocument()
+  })
   it('protects a genuine edit and clears the guard only after the update succeeds',async()=>{
     const confirm=vi.spyOn(window,'confirm').mockReturnValue(false)
     render(<MemoryRouter initialEntries={['/retail-sales/history/original-sale/edit']}><DirtyStateProvider><BackButton/><Routes><Route path="/retail-sales/history/:saleId/edit" element={<RetailEditPage/>}/></Routes></DirtyStateProvider></MemoryRouter>)
