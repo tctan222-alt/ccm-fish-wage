@@ -68,7 +68,7 @@ export function FishHeadLiveSummary({
       <thead><tr><th scope="col">鱼名</th><th scope="col">篮数</th><th scope="col">总 kg</th><th scope="col">单价 RM/kg</th><th scope="col">金额 RM</th></tr></thead>
       <tbody>{valuation.rows.map(row=>{
         const key=rowKey(row)
-        const effective=row.unitPriceCentsPerKg===undefined?row.defaultUnitPriceCentsPerKg:row.unitPriceCentsPerKg
+        const effective=errors[key]?null:row.unitPriceCentsPerKg===undefined?row.defaultUnitPriceCentsPerKg:row.unitPriceCentsPerKg
         const changed=Object.prototype.hasOwnProperty.call(overrides,key)
         return <tr key={key}>
           <th scope="row">{row.nameSnapshot}</th>
