@@ -629,7 +629,10 @@ export function WeighingEntryPage({
         {productType==='fish_head'?<FishHeadLiveSummary key={`${auth.currentUser?.uid??''}:${session?.id??''}`}
           entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''}
           masterSpecies={species} sessionId={session?.id} ownerId={auth.currentUser?.uid??''} readOnly={locked}/>:<CategorySummary entries={activeContextEntries}/>}
-        {productType==='fish_head'&&session&&<Link className="page-link" to={`/fish-head-settlement/${session.id}`}>打开结单，确认或修改本单实际价格</Link>}
+        {productType==='fish_head'&&session&&pending===0&&!syncing
+          &&(session.status==='weighing'||session.status==='completed')
+          &&<Link className="page-link" to={`/fish-head-settlement/${session.id}`}>打开结单，确认或修改本单实际价格</Link>}
+        {productType==='fish_head'&&session&&pending>0&&<p className="notice">还有重量记录未完成同步，避免总价遗漏，请同步完成后再打开结单。</p>}
       </section>}
     </section>
 
