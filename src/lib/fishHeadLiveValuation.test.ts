@@ -101,6 +101,18 @@ describe('fish-head live valuation', () => {
     })
   })
 
+  it('recalculates per-fish editable preview amounts without replacing Master defaults or original baskets',()=>{
+    const source=[entry({weightGrams:10_000}),otherFish({weightGrams:5_000})]
+    const copy=structuredClone(source)
+    const live=buildFishHeadLiveValuation(source,'833',[],{'head:jin_xian':270,'head:lai_ge':null})
+    expect(live.rows[0]).toMatchObject({nameSnapshot:'金线',defaultUnitPriceCentsPerKg:205,
+      unitPriceCentsPerKg:270,amountCents:2700})
+    expect(live.rows[1]).toMatchObject({nameSnapshot:'来戈',defaultUnitPriceCentsPerKg:245,
+      unitPriceCentsPerKg:null,amountCents:null})
+    expect(live).toMatchObject({totalWeightGrams:15_000,knownAmountCents:2700,missingPriceSpeciesCount:1})
+    expect(source).toEqual(copy)
+  })
+
   it('ignores legacy basket prices and amounts without modifying source entries', () => {
     const source = [Object.freeze(entry({unitPriceCentsPerKg:999,amountCents:1,weightGrams:1_000}))]
     const original = structuredClone(source)
