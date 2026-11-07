@@ -469,7 +469,8 @@ export function WeighingEntryPage({
     setWeight('');if(entryMode==='total')setRemark('')
     refocusAfterSave.current=true
     setMessage('已保存');window.dispatchEvent(new Event('ccm:form-saved'));navigator.vibrate?.(40)
-    await syncNow(base.id)
+    // Offline commit succeeded. Network syncing must not disable the next kg entry.
+    void syncNow(base.id)
   }
 
   async function queueVoid(entry:WeighingEntry,reason:string){
@@ -625,12 +626,15 @@ export function WeighingEntryPage({
         {pending>0&&<button type="button" disabled={syncing} onClick={()=>void syncNow()}>{syncing?'正在同步…':'重新同步'}</button>}
       </div>
       {activeContextEntries.length>0&&<section className="weighing-live-summary" aria-label="现场汇总"><h2>现场汇总</h2>
-        {productType==='fish_head'?<FishHeadLiveSummary entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''} masterSpecies={species}/>:<CategorySummary entries={activeContextEntries}/>}
+        {productType==='fish_head'?<FishHeadLiveSummary key={`${auth.currentUser?.uid??''}:${session?.id??''}`}
+          entries={activeContextEntries} vesselCode={session?.vesselCodeSnapshot??selectedVessel?.vesselCode??''}
+          masterSpecies={species} sessionId={session?.id} ownerId={auth.currentUser?.uid??''} readOnly={locked}/>:<CategorySummary entries={activeContextEntries}/>}
+        {productType==='fish_head'&&session&&<Link className="page-link" to={`/fish-head-settlement/${session.id}`}>打开结单，确认或修改本单实际价格</Link>}
       </section>}
     </section>
 
-    {locked&&<p className="session-lock">{session?.status==='completed'?(pending>0?'完成申请已保存，等待同步。':'已完成称重，手机端已锁定。'):
-      session?.status==='processed'?'已结单，现场录入已锁定。':session?.status==='voided'?'现场单已作废。':'已超过首次完成称重后的 7 天修改期，只能查看。'}</p>}
+    {locked&&<p className="session-lock">{session?.status==='completed'?(pending>0?'完成申请已保存，等待同步。':'已完成称重；如要修改 kg，可在7天修改期内通过复核页重开本单。'):
+      session?.status==='processed'?'已结单，现场录入已锁定。':session?.status==='voided'?'现场单已作废。':'已超过首次完成称重后的 7 天修改期，只能查看。'}{session?.status==='completed'&&<><span> </span><Link to={`/weighing/${session.id}/review`}>前往复核／重开</Link></>}</p>}
 
     <section className="weighing-history"><h2>完整历史记录</h2>
       {productType==='fish_head'&&!locked&&entries.some(item=>!item.voided)&&<p className="entry-history-hint">点击任意一篮可修改重量、鱼种或删除。</p>}
