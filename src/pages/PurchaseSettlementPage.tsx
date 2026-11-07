@@ -5,7 +5,7 @@ import { auth } from '../firebase'
 import { businessDateFromLegacy,formatAuditTimestamp,legacyIsoDateFromBusinessDate,malaysiaBusinessDate,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import { assertFishHeadSettlementPrices,buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,reconcileSettlementLines,settlementLineIdentity,updateSettlementLinePrice,totalSettlementAmountCents,type PurchaseSettlementDraft,type PurchaseSettlementLine,asSettlementSourceEntry } from '../lib/purchaseSettlement'
 import { canModifyWeighing,formatWeightKg,type FishSpeciesRecord,type WeighingEntry,type WeighingProductType,type WeighingSession } from '../lib/weighing'
-import { readFishHeadLivePriceDraft } from '../lib/fishHeadLivePriceDraft'
+import { readFishHeadLivePriceDraft,type FishHeadLivePriceDraft } from '../lib/fishHeadLivePriceDraft'
 import type { Vessel } from '../lib/purchasing'
 import { loadVessels } from '../services/purchaseMasterData'
 import { finalizePurchaseSettlement,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
@@ -41,6 +41,7 @@ export function PurchaseSettlementPage({
   localDraftStore,
   bundleLoader=loadStableWeighingBundle,
   fishSpeciesLoader=loadFishSpecies,
+  livePriceDraftReader=readFishHeadLivePriceDraft,
   today=malaysiaBusinessDate,
   now=systemNow,
 }: {
@@ -54,6 +55,7 @@ export function PurchaseSettlementPage({
   localDraftStore?:SettlementLocalDraftStore
   bundleLoader?:(sessionId:string)=>Promise<WeighingBundle>
   fishSpeciesLoader?:()=>Promise<FishSpeciesRecord[]>
+  livePriceDraftReader?:(ownerId:string,sessionId:string)=>FishHeadLivePriceDraft
   today?:()=>string
   now?:()=>Date
 }){
@@ -162,7 +164,7 @@ export function PurchaseSettlementPage({
       // Carry into an unsaved settlement draft, never overwrite saved history.
       let livePriceCount=0
       if(fishHead&&source&&!draft){
-        const proposed=readFishHeadLivePriceDraft(auth.currentUser?.uid??'',source.session.id)
+        const proposed=livePriceDraftReader(auth.currentUser?.uid??'',source.session.id)
         nextLines=nextLines.map(line=>{
           const key=settlementLineIdentity(line)
           if(!Object.prototype.hasOwnProperty.call(proposed,key))return line
@@ -183,7 +185,7 @@ export function PurchaseSettlementPage({
       setLoadedKey(contextKey)
     })().catch(problem=>{if(!cancelled){setLoadFailed(true);setReadError(problem instanceof Error?problem.message:'无法载入结单资料。')}}).finally(()=>{finished=true;if(!cancelled)setLoading(false)})
     return()=>{cancelled=true;controller.abort();editMasterController.current?.abort();contextGeneration.current+=1}
-  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,fishSpeciesLoader,fishHead,sessionId,contextKey,loadAttempt,store])
+  },[requestedVesselId,requestedDate,productType,sourceLoader,draftLoader,legacyDraftLoader,bundleLoader,fishSpeciesLoader,livePriceDraftReader,fishHead,sessionId,contextKey,loadAttempt,store])
 
   const selectedVessel=vessels.find(item=>item.id===vesselId)
   const waitingForVessel=!sessionId&&!vesselId&&vesselLoading
