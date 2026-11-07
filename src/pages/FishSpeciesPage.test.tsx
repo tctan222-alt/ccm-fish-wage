@@ -1,4 +1,4 @@
-import { cleanup,fireEvent,render,screen,within } from '@testing-library/react'
+import { cleanup,fireEvent,render,screen,waitFor,within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach,describe,expect,it,vi } from 'vitest'
 import type { FishSpeciesRecord } from '../lib/weighing'
@@ -30,6 +30,22 @@ describe('Fish Head Master price editing',()=>{
     expect(saver).not.toHaveBeenCalled()
     expect(initializer).not.toHaveBeenCalled()
     expect(JSON.stringify(items)).toBe(before)
+  })
+  it('does not crash or retain obsolete separate-group choices when a previously inactive fish is reactivated',async()=>{
+    const old=species({id:'jin_xian',speciesCode:'jin_xian',displayName:'金线',
+      active:false,basePriceCentsPerKg:205})
+    const saver=vi.fn(async(next:FishSpeciesRecord)=>next)
+    render(<MemoryRouter><FishSpeciesPage loader={async()=>[old]} saver={saver}/></MemoryRouter>)
+    fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
+    const choice=screen.getByRole('checkbox',{name:'单独建立来源组，保留现有鱼名和旧价格'})
+    fireEvent.click(choice)
+    expect(choice).toBeChecked()
+    fireEvent.click(screen.getByRole('button',{name:'重新启用'}))
+    await waitFor(()=>{
+      expect(screen.getByText(/未解决冲突 0/)).toBeInTheDocument()
+      expect(screen.queryByRole('checkbox',{name:'单独建立来源组，保留现有鱼名和旧价格'})).not.toBeInTheDocument()
+    })
+    expect(saver).toHaveBeenCalledWith(expect.objectContaining({id:'jin_xian',active:true}))
   })
   it('does not present an empty-Master plan when the Master load failed',async()=>{
     render(<MemoryRouter><FishSpeciesPage loader={async()=>{throw new Error('offline')}}/></MemoryRouter>)
