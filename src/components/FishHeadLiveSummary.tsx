@@ -34,7 +34,13 @@ export function FishHeadLiveSummary({
       if(parsed!==null&&(parsed<=0||parsed>MAX_PURCHASE_UNIT_PRICE_CENTS_PER_KG))
         throw new Error('单价必须大于 RM0，最多 RM100,000.00/kg。')
     }catch(problem){
+      // Never carry an earlier valid price into settlement after an invalid
+      // in-progress edit; invalidate the persisted proposal until corrected.
+      const invalidDraft={...overridesRef.current,[key]:null}
+      overridesRef.current=invalidDraft
+      setOverrides(invalidDraft)
       setErrors(current=>({...current,[key]:problem instanceof Error?problem.message:'单价格式不正确'}))
+      if(!saveFishHeadLivePriceDraft(ownerId,sessionId,invalidDraft))setCacheError(true)
       return
     }
     setErrors(current=>{const next={...current};delete next[key];return next})
