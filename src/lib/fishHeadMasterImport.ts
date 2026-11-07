@@ -65,7 +65,14 @@ export function previewFishHeadMasterImport(existing: readonly FishHeadMasterImp
   const rows = QL_SEED_VERSION.rows
   const matchesByRow = rows.map(row => {
     const names = sourceNames(row)
+    const sourceRef = `${QL_SEED_VERSION.version}|${row.groupKey}:${row.method}`
+    // A persisted exact source key takes precedence over unclassified legacy aliases:
+    // after an owner explicitly creates separate trawl/bottom groups, reruns must not
+    // reattach an old generic 丁温/青兰 record to both groups.
+    const linked = existing.flatMap((record,index) => record.qlSourceRef === sourceRef ? [index] : [])
+    if (linked.length) return linked
     return existing.flatMap((record, index) => {
+      if (record.qlSourceRef && record.qlSourceRef !== sourceRef) return []
       if (record.method !== undefined && record.method !== row.method) return []
       if (record.sourceGroupKey !== undefined && record.sourceGroupKey !== row.groupKey) return []
       return recordNames(record).some(name => names.has(name)) ? [index] : []

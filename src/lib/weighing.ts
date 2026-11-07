@@ -23,6 +23,8 @@ export interface FishSpeciesRecord {
   notes:string
   /** Base RM/kg in integer cents. Missing retains the legacy list; null is unset. */
   basePriceCentsPerKg?:number|null
+  /** Immutable QL version/group/method reference, not a live customer price. */
+  qlSourceRef?:string
   createdBy?:string
   createdAt?:unknown
   updatedBy?:string
