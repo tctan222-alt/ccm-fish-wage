@@ -3,3 +3,11 @@
 .fish-species-master .master-form,.fish-species-master .master-form label{min-width:0}
 .fish-species-master .master-form input{min-width:0;font-size:16px}
 .fish-species-master .notice{overflow-wrap:anywhere}
+.ql-master-preview{margin:16px 0;padding:14px;border:1px solid #b8c7d9;border-radius:10px;background:#f8fbff}
+.ql-master-preview summary{cursor:pointer;font-weight:700}
+.ql-master-table-wrap{overflow-x:auto}
+.ql-master-preview table{width:100%;min-width:760px;border-collapse:collapse;background:white}
+.ql-master-preview th,.ql-master-preview td{padding:9px;border:1px solid #d9e2ec;text-align:left;vertical-align:top}
+.ql-master-preview td small{display:block;margin-top:4px;color:#52667a}
+.ql-master-conflict{background:#fff4e5}
+.ql-master-matched{background:#effaf3}
