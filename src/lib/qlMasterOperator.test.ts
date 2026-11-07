@@ -2,7 +2,7 @@ import { webcrypto } from 'node:crypto'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   applyQlMasterManifest, buildQlMasterManifest, buildQlMasterRollbackApproval, qlMasterCanonicalJson,
-  rollbackQlMasterManifest, validateQlMasterManifest,
+  rollbackQlMasterManifest, validateQlMasterManifest, QL_MASTER_MAX_DOCUMENTS,
   type MasterDocument, type QlMasterJournal, type QlMasterManifest, type QlMasterOperatorContext, type QlMasterTransaction,
 } from './qlMasterOperator'
 import { QL_SEED_VERSION } from './qlPrices'
@@ -101,6 +101,36 @@ describe('approved QL operator transactions', () => {
     expect(database.documents.get('ding_wen')).toEqual(generic)
     expect(manifest.entries.find(entry => entry.sourceRef.endsWith(':trawl'))?.after.basePriceCentsPerKg).toBe(200)
     expect(manifest.entries.find(entry => entry.sourceRef.includes('dingwen-mukong-jiaxi'))?.after.basePriceCentsPerKg).toBe(210)
+  })
+
+  it('rejects an otherwise valid 990-record snapshot when 36 creates would exceed the complete-read cap', async () => {
+    const snapshot = Array.from({ length: 990 }, (_, index) => doc(`legacy_${index}`, '旧鱼'))
+    await expect(buildQlMasterManifest({ projectId, actorEmail, snapshot })).rejects.toThrow('Resulting Master exceeds')
+  })
+
+  it('accepts exactly 1000 resulting records and keeps status snapshots and rollback within the same cap', async () => {
+    const database = new Database(Array.from({ length: 964 }, (_, index) => doc(`legacy_${index}`, '旧鱼')))
+    const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot: database.snapshot() })
+    expect(manifest.entries.filter(entry => entry.kind === 'create')).toHaveLength(36)
+    await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))
+    const after = database.snapshot()
+    expect(after).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
+    const approval = await buildQlMasterRollbackApproval(manifest, database.journals.get(manifest.sha256)!, after)
+    await expect(database.transact(tx => rollbackQlMasterManifest(tx, manifest, {
+      ...context(manifest), approvedAction: 'rollback', approvedHash: approval.hash, rollbackApproval: approval,
+    }))).resolves.toMatchObject({ status: 'rolled-back', writes: 36 })
+    expect(database.snapshot()).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
+    expect([...database.documents.values()].filter(item => !item.data.active)).toHaveLength(36)
+  })
+
+  it('allows price updates at the 1000-record cap when all 36 source groups already exist', async () => {
+    const empty = await buildQlMasterManifest({ projectId, actorEmail, snapshot: [] })
+    const sourceRecords = empty.entries.map(entry => doc(entry.id, String(entry.after.displayName), { ...entry.after, basePriceCentsPerKg: 1 }))
+    const snapshot = [...Array.from({ length: 964 }, (_, index) => doc(`legacy_${index}`, '旧鱼')), ...sourceRecords]
+    const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot })
+    expect(manifest.snapshot).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
+    expect(manifest.entries.every(entry => entry.kind === 'price-update')).toBe(true)
+    await expect(validateQlMasterManifest(manifest)).resolves.toBeUndefined()
   })
 
   it('detects a non-target concurrent duplicate and exact field-presence/nanosecond changes', async () => {

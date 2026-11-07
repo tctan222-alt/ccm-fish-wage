@@ -72,6 +72,9 @@ No production save, initialization, import, settlement or test record was made.
    missing indexes, if any; wait until **all** required indexes are READY.
 6. Publish reviewed Rules, then verify the actual `cloud.firestore` release
    pointer and exact source. Stop on failure; do not continue with Hosting.
+   Older Retail tabs can still create/read but their update protocol is rejected
+   to prevent silent removal of per-line remarks. Reload the supported client
+   after Hosting publication before editing; this is an intentional safe boundary.
 7. Publish Hosting from that exact build. Retrieve `/release.json` with fresh
    cache semantics, verify SHA/clean flag and built entry/content hashes against
    the local approved artifact. Capture the actual Hosting release/version.
@@ -91,6 +94,12 @@ Rules only if the old Rules accept all current retained fields and preserve
 authority. Keep compatible restrictive Rules in place when uncertain. Old Rules
 without per-line `remark` support would reject newly saved invoice edits; old
 Master replacement writes could remove configured defaults/source references.
+
+Retain the new compatible Rules during an older Hosting rollback. Retail edits
+from that older client intentionally fail closed; restore a supported Hosting
+build before editing resumes. Never downgrade the source-ownership or edit-protocol
+guards to make an old client writable. The previous Hosting version ID remains
+unverified until account access is restored; do not guess it from an asset name.
 
 Do not delete indexes used by either version. A code/Hosting/Rules rollback never
 reverses business data. QL adoption rollback is a separate, explicitly approved

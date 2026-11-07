@@ -62,7 +62,7 @@ async function retailVesselFixture(sale: DocumentReference, uid = 'u1') {
   await runTransaction(db, async tx => { if (!(await tx.get(ref)).exists()) tx.set(ref, { vesselCode: '833', displayName: '833', defaultSupplierId: '', defaultSupplierNameSnapshot: '', active: true, order: 0, notes: '', createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp(), inactiveBy: null, inactiveAt: null }) })
   return { vesselId: ref.id, vesselCodeSnapshot: '833' }
 }
-async function createNumberedRetailSale(db: RulesFirestore, id: string, businessDate = '03/10/2026', uid = 'u1', vesselFields?: DocumentData) {
+async function createNumberedRetailSale(db: RulesFirestore, id: string, businessDate = '03/10/2026', uid = 'u1', vesselFields?: DocumentData, actionPatch: DocumentData = {}) {
   const ref = doc(db, 'retailSales', id)
   const saved = await getDoc(ref)
   if (saved.exists()) return saved.data()
@@ -78,13 +78,13 @@ async function createNumberedRetailSale(db: RulesFirestore, id: string, business
     const after = { ...vessel, businessDate, dateSortKey: clean.dateSortKey, vendorName: clean.vendorName, totalAmountCents: clean.totalAmountCents, lineGroups, remark: '', invoiceNumber: retailInvoiceNumber(businessDate, sequence), invoiceSequence: sequence, revision: 1, groupSetId: 'initial', lastActionId: id, createdBy: uid, updatedBy: uid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() }
     tx.set(ref, after)
     tx.set(counterRef, { dateSortKey: clean.dateSortKey, lastSequence: sequence, lastSaleId: id, updatedBy: uid, updatedAt: serverTimestamp() })
-    tx.set(doc(ref, 'actions', id), { type: 'create', saleId: id, clientOperationId: id, revision: 1, beforeSnapshot: null, afterSnapshot: after, performedBy: uid, performedAt: serverTimestamp() })
+    tx.set(doc(ref, 'actions', id), { type: 'create', saleId: id, clientOperationId: id, revision: 1, beforeSnapshot: null, afterSnapshot: after, performedBy: uid, performedAt: serverTimestamp(), ...actionPatch })
     return after
   })
 }
 
 async function updateNumberedRetailSale(db: RulesFirestore, id: string, operation: string, options: {
-  before?: DocumentData; patch?: DocumentData; audit?: boolean; auditPatch?: DocumentData; lines?: RetailLineInput[]
+  before?: DocumentData; patch?: DocumentData; audit?: boolean; auditPatch?: DocumentData; lines?: RetailLineInput[]; legacyClient?: boolean
 } = {}) {
   const ref = doc(db, 'retailSales', id), before = options.before ?? (await getDoc(ref)).data()!
   const lines = options.lines ?? [makeRetailLine({ ...retailSeed[1], chineseName: '修正马丰', malayName: 'updated Malay' }, '12.5', '7.05')]
@@ -96,12 +96,37 @@ async function updateNumberedRetailSale(db: RulesFirestore, id: string, operatio
     revision: (before.revision ?? 1) + 1, groupSetId: operation, lastActionId: operation, updatedBy: 'u1', updatedAt: serverTimestamp(), ...options.patch }
   const batch = writeBatch(db)
   batch.set(ref, after)
-  if (options.audit !== false) batch.set(doc(ref, 'actions', operation), { type: 'update', saleId: id, clientOperationId: operation, revision: after.revision,
+  if (options.audit !== false) batch.set(doc(ref, 'actions', operation), { type: 'update', ...(options.legacyClient ? {} : { clientSchemaVersion: 1 }), saleId: id, clientOperationId: operation, revision: after.revision,
     beforeSnapshot: before, afterSnapshot: after, performedBy: 'u1', performedAt: serverTimestamp(), ...options.auditPatch })
   return batch.commit()
 }
 
 describe('Firestore Rules: Retail 30-day numbered protocol', () => {
+  it('rejects an old client edit that strips saved line remarks, accepts the new protocol and retains immutable old actions',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),id='remark-schema-compatibility',ref=doc(db,'retailSales',id)
+    // The pre-release create protocol remains valid, including its historical action shape.
+    await assertSucceeds(createNumberedRetailSale(db,id))
+    expect((await getDoc(doc(ref,'actions',id))).data()).not.toHaveProperty('clientSchemaVersion')
+    for (const [index, value] of [1, { arbitrary: 'payload' }].entries()) {
+      const rejectedId = `create-schema-rejected-${index}`
+      await assertFails(createNumberedRetailSale(db,rejectedId,'03/10/2026','u1',undefined,{clientSchemaVersion:value}))
+      expect((await getDoc(doc(db,'retailSales',rejectedId))).exists()).toBe(false)
+    }
+    const lines=[makeRetailLine(retailSeed[0],'2','6.15','次'),makeRetailLine(retailSeed[1],'1','8','自定义')]
+    await assertSucceeds(updateNumberedRetailSale(db,id,'add-remarks',{lines}))
+    const before=(await getDoc(ref)).data()!
+    const stripped=lines.map(line=>{const copy={...line};delete copy.remark;return copy})
+    await assertFails(updateNumberedRetailSale(db,id,'old-client',{before,lines:stripped,legacyClient:true}))
+    expect((await getDoc(ref)).data()).toEqual(before)
+    expect((await getDoc(doc(ref,'actions','old-client'))).exists()).toBe(false)
+    for(const [index,value] of [0,2,'1',null,true].entries()){
+      await assertFails(updateNumberedRetailSale(db,id,`invalid-schema-${index}`,{before,lines,auditPatch:{clientSchemaVersion:value}}))
+    }
+    await assertSucceeds(updateNumberedRetailSale(db,id,'new-client',{before,lines:[{...lines[0],remark:'参'},lines[1]]}))
+    expect((await getDoc(ref)).data()!.lineGroups.first.map((line:DocumentData)=>line.remark)).toEqual(['参','自定义'])
+    expect((await getDoc(doc(ref,'actions','new-client'))).data()).toMatchObject({clientSchemaVersion:1,beforeSnapshot:before})
+    expect((await getDoc(doc(ref,'actions',id))).data()).not.toHaveProperty('clientSchemaVersion')
+  })
   it('preserves independent bounded line remarks and rejects invalid remark shapes/unknown line fields',async()=>{
     const db=environment.authenticatedContext('u1').firestore()
     const line=makeRetailLine(retailSeed[0],'2','6.15')
@@ -253,6 +278,7 @@ describe('Firestore Rules: Retail 30-day numbered protocol', () => {
     await assertSucceeds(updateNumberedRetailSale(db, id, 'edit-legacy', { lines }))
     const result = (await getDoc(doc(db, 'retailSales', id))).data()!
     expect(result).toMatchObject({ revision: 2, createdBy: 'original-owner', createdAt: legacy.createdAt, totalAmountCents: 20 })
+    expect((await getDoc(doc(db,'retailSales',id,'actions','edit-legacy'))).data()).toMatchObject({type:'update',clientSchemaVersion:1})
     expect(result.invoiceNumber).toBeUndefined()
     expect((await getDoc(doc(db, 'retailInvoiceCounters', '20261003'))).exists()).toBe(false)
   })

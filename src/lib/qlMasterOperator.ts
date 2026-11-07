@@ -137,6 +137,10 @@ export async function buildQlMasterManifest(input: {
       : before.data.basePriceCentsPerKg === after.basePriceCentsPerKg ? 'metadata-update' : 'price-update'
     return { id: entry.proposed.id, sourceRef: entry.sourceRef, sourceLabel: sourceFromQlMasterRef(entry.sourceRef)!.label, kind, before, after }
   })
+  // Status and rollback use the same complete-read cap; adoption must stay readable.
+  if (snapshot.length + entries.filter(entry => entry.kind === 'create').length > QL_MASTER_MAX_DOCUMENTS) {
+    throw new Error('Resulting Master exceeds the approved 1000-document read limit; no manifest can be approved.')
+  }
   const body: Omit<QlMasterManifest, 'sha256'> = {
     schemaVersion: 1 as const, projectId: input.projectId, actorEmail: input.actorEmail,
     sourceVersion: QL_SEED_VERSION.version, collection: QL_MASTER_COLLECTION, journalCollection: QL_MASTER_JOURNAL_COLLECTION,

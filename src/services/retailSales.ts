@@ -7,6 +7,9 @@ import { retailHistoryRange, type RetailHistoryRange } from '../lib/retailHistor
 import { assertRetailFishUnique, nextRetailFishOrder, sortRetailFish } from '../lib/retailFish'
 import { retailInvoiceNumber } from '../lib/retailInvoice'
 
+// Rules reject update protocols that predate preservation of per-line remarks.
+const RETAIL_CLIENT_SCHEMA_VERSION = 1
+
 function userId() {
   if (!auth.currentUser) throw new Error('请先登录。 Please sign in.')
   return auth.currentUser.uid
@@ -251,7 +254,7 @@ export async function updateRetailSale(id: string, input: RetailSaleInput, expec
       await assertActiveReplacements(transaction, saleFromDocument(id, data), clean, originalLineIndices)
       const after = { ...data, ...saleHeader(clean), lineGroups, revision, groupSetId: operationId, lastActionId: operationId, updatedBy: uid, updatedAt: serverTimestamp() }
       transaction.set(ref, after)
-      transaction.set(actionRef, { type: 'update', saleId: id, clientOperationId: operationId, revision, performedBy: uid, performedAt: serverTimestamp(), beforeSnapshot: data, afterSnapshot: after })
+      transaction.set(actionRef, { type: 'update', clientSchemaVersion: RETAIL_CLIENT_SCHEMA_VERSION, saleId: id, clientOperationId: operationId, revision, performedBy: uid, performedAt: serverTimestamp(), beforeSnapshot: data, afterSnapshot: after })
     })
     return await loadRetailSale(id)
   } catch (problem) { throw persistenceError(problem) }
