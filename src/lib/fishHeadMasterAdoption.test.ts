@@ -1,5 +1,6 @@
 import { describe,expect,it } from 'vitest'
 import { prepareQlMasterAdoption,qlMasterFingerprint,qlMasterSourceRef,sourceFromQlMasterRef } from './fishHeadMasterAdoption'
+import { QL_FISH_HEAD_MASTER_ROWS,isQlMarketPriceRow } from './fishHeadMasterImport'
 import { QL_SEED_VERSION } from './qlPrices'
 import type { FishHeadMasterImportRecord } from './fishHeadMasterImport'
 
@@ -7,91 +8,92 @@ const fish=(displayName:string,mod:Partial<FishHeadMasterImportRecord>={}):FishH
   id:'old',speciesCode:'old',displayName,active:true,order:1,notes:'',...mod,
 })
 
-describe('QL Fish Head Master approval-gated write planning',()=>{
-  it('maps all 36 immutable source references to source groups, methods, aliases and effective date',()=>{
+describe('QL non-bottom Fish Head Master adoption planning',()=>{
+  it('maps 34 eligible source groups with null defaults for conflicting market-price aliases',()=>{
     const plan=prepareQlMasterAdoption([])
+    expect(QL_SEED_VERSION.rows).toHaveLength(36)
     expect(plan.blocked).toHaveLength(0)
-    expect(plan.entries).toHaveLength(36)
-    expect(plan.creates).toBe(36)
-    expect(new Set(plan.entries.map(item=>item.sourceRef)).size).toBe(36)
-    for(let index=0;index<36;index++){
-      const source=QL_SEED_VERSION.rows[index]
-      expect(plan.entries[index]).toMatchObject({action:'create',sourceRef:qlMasterSourceRef(source),
-        proposed:{basePriceCentsPerKg:source.priceCentsPerKg,method:source.method}})
-      expect(sourceFromQlMasterRef(plan.entries[index].sourceRef)).toBe(source)
-    }
+    expect(plan.entries).toHaveLength(34)
+    expect(plan.creates).toBe(34)
+    expect(new Set(plan.entries.map(item=>item.sourceRef)).size).toBe(34)
+    plan.entries.forEach((item,index)=>{
+      const source=QL_FISH_HEAD_MASTER_ROWS[index]
+      expect(item).toMatchObject({action:'create',sourceRef:qlMasterSourceRef(source),
+        proposed:{basePriceCentsPerKg:isQlMarketPriceRow(source)?null:source.priceCentsPerKg,method:source.method}})
+      expect(sourceFromQlMasterRef(item.sourceRef)).toBe(source)
+      expect(item.proposed.method).not.toBe('bottom')
+    })
     expect(sourceFromQlMasterRef('some-other-price-source')).toBeNull()
   })
-  it('blocks generic fish with competing trawl/bottom or general/bottom prices',()=>{
+
+  it('automatically creates separate empty-price grouped identities without overwriting old generic 丁温/青兰',()=>{
     const entries=[fish('丁温',{id:'ding_wen',speciesCode:'ding_wen',basePriceCentsPerKg:190}),
       fish('青兰',{id:'qing_lan',speciesCode:'qing_lan',basePriceCentsPerKg:90})]
+    const baseline=structuredClone(entries)
     const plan=prepareQlMasterAdoption(entries)
-    expect(plan.blocked).toHaveLength(4)
-    expect(plan.entries).toHaveLength(32)
-    const explicit=prepareQlMasterAdoption(entries,plan.blocked.map(item=>item.sourceKey))
-    expect(explicit.blocked).toHaveLength(0)
-    expect(explicit.entries).toHaveLength(36)
-    expect(explicit.entries.filter(item=>item.action==='create').length).toBeGreaterThan(0)
-    expect(entries).toEqual([fish('丁温',{id:'ding_wen',speciesCode:'ding_wen',basePriceCentsPerKg:190}),
-      fish('青兰',{id:'qing_lan',speciesCode:'qing_lan',basePriceCentsPerKg:90})])
-    const trawl=explicit.entries.find(item=>item.proposed.method==='trawl')
-    const bottom=explicit.entries.find(item=>item.proposed.sourceRow===38)
-    expect(trawl?.proposed.basePriceCentsPerKg).toBe(200)
-    expect(bottom?.proposed.basePriceCentsPerKg).toBe(210)
+    expect(plan.blocked).toHaveLength(0)
+    expect(plan.entries).toHaveLength(34)
+    const trawl=plan.entries.find(item=>item.proposed.method==='trawl')!
+    const general=plan.entries.find(item=>item.proposed.sourceGroupKey==='zhuli-qinglan')!
+    expect(trawl.action).toBe('create')
+    expect(trawl.proposed.basePriceCentsPerKg).toBeNull()
+    expect(general.action).toBe('create')
+    expect(general.proposed.basePriceCentsPerKg).toBeNull()
+    expect(plan.entries.some(item=>item.proposed.method==='bottom')).toBe(false)
+    expect(entries).toEqual(baseline)
   })
-  it('preserves an exact existing Master species ID and source name while changing only future default',()=>{
+
+  it('preserves exact existing ID and name for an unambiguous row',()=>{
     const current=fish('金线',{id:'jin_xian',speciesCode:'jin_xian',basePriceCentsPerKg:205,notes:'keep'})
     const plan=prepareQlMasterAdoption([current])
     const item=plan.entries.find(entry=>entry.proposed.id==='jin_xian')
     expect(item).toMatchObject({action:'update',before:current,proposed:{displayName:'金线',basePriceCentsPerKg:210}})
     expect(plan.updates).toBe(1)
   })
-  it('rejects duplicate, unrecognized and mismatched owner-approved conflict selectors',()=>{
-    const current=[fish('丁温')]
+
+  it('still rejects invalid, repeated or unapproved manual selectors',()=>{
+    const current=[fish('大目力',{active:false})]
     const blocked=prepareQlMasterAdoption(current).blocked[0].sourceKey
     expect(()=>prepareQlMasterAdoption(current,[blocked,blocked])).toThrow()
     expect(()=>prepareQlMasterAdoption(current,['unapproved:general'])).toThrow()
     expect(()=>prepareQlMasterAdoption([],['fake'])).toThrow()
   })
-  it('rejects generated ID collisions even when owner requests separate records',()=>{
-    const baseline=prepareQlMasterAdoption([fish('丁温')])
-    const sourceKey=baseline.blocked[0].sourceKey
-    const id=prepareQlMasterAdoption([]).entries.find(item=>item.sourceKey===sourceKey)!.proposed.id
-    const colliding=fish('unrelated',{id,speciesCode:id})
-    const plan=prepareQlMasterAdoption([fish('丁温'),colliding],[sourceKey])
-    expect(plan.blocked.some(item=>item.sourceKey===sourceKey)).toBe(true)
+
+  it('rejects a generated ID collision instead of overwriting an unrelated existing fish',()=>{
+    const market=prepareQlMasterAdoption([fish('丁温')]).entries.find(item=>item.proposed.method==='trawl')!
+    const colliding=fish('unrelated',{id:market.proposed.id,speciesCode:market.proposed.speciesCode})
+    const plan=prepareQlMasterAdoption([fish('丁温'),colliding])
+    expect(plan.blocked.some(item=>item.sourceKey===market.sourceKey)).toBe(true)
   })
-  it('fingerprints original price, snapshot timestamp and source mapping to detect a stale review',()=>{
-    const before=fish('金线',{id:'a',speciesCode:'a',basePriceCentsPerKg:205,qlSourceRef:'foo',updatedAt:{seconds:100}})
+
+  it('fingerprints field absence, source links and full nanosecond timestamps',()=>{
+    const before=fish('金线',{id:'a',speciesCode:'a',basePriceCentsPerKg:205,qlSourceRef:'foo',updatedAt:{seconds:100,nanoseconds:1}})
     const start=qlMasterFingerprint([before])
     expect(qlMasterFingerprint([fish('金线',{...before})])).toBe(start)
     expect(qlMasterFingerprint([fish('金线',{...before,basePriceCentsPerKg:210})])).not.toBe(start)
     expect(qlMasterFingerprint([fish('金线',{...before,qlSourceRef:'bar'})])).not.toBe(start)
-    expect(qlMasterFingerprint([fish('金线',{...before,updatedAt:{seconds:101}})])).not.toBe(start)
-  })
-  it('distinguishes an absent default from explicit null and detects same-second nanosecond changes',()=>{
+    expect(qlMasterFingerprint([fish('金线',{...before,updatedAt:{seconds:100,nanoseconds:2}})])).not.toBe(start)
     const missing=fish('金线',{updatedAt:{seconds:100,nanoseconds:1}})
     const unset=fish('金线',{basePriceCentsPerKg:null,updatedAt:{seconds:100,nanoseconds:1}})
     expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([unset]))
-    expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([{...missing,updatedAt:{seconds:100,nanoseconds:2}}]))
-    expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([{...missing,updatedBy:'another-user'}]))
   })
-  it('uses explicit persisted links to prevent an old generic 丁温 from creating fresh cross-method conflicts',()=>{
+
+  it('does not create re-adoption conflicts when original generic fish remain and null-price rows have exact source links',()=>{
     const legacy=fish('丁温',{id:'ding_wen',speciesCode:'ding_wen',basePriceCentsPerKg:190})
     const initial=prepareQlMasterAdoption([legacy])
-    const approved=prepareQlMasterAdoption([legacy],initial.blocked.map(item=>item.sourceKey))
-    expect(approved.blocked).toHaveLength(0)
-    const adopted=approved.entries.map((entry,index)=>fish(entry.proposed.displayName,{
+    expect(initial.blocked).toHaveLength(0)
+    const adopted=initial.entries.map((entry,index)=>fish(entry.proposed.displayName,{
       ...entry.proposed,active:true,order:index+2,notes:'',qlSourceRef:entry.sourceRef,
     }))
     const recheck=prepareQlMasterAdoption([legacy,...adopted])
     expect(recheck.blocked).toHaveLength(0)
-    expect(recheck.entries).toHaveLength(36)
+    expect(recheck.entries).toHaveLength(34)
     expect(recheck.creates).toBe(0)
     expect(recheck.updates).toBe(0)
-    expect(recheck.unchanged).toBe(36)
+    expect(recheck.unchanged).toBe(34)
   })
-  it('re-adoption after stable source-link persistence is zero-price-change and has no new creates',()=>{
+
+  it('is idempotent for the 34 eligible rows without creating bottom identities',()=>{
     const initial=prepareQlMasterAdoption([])
     const adopted=initial.entries.map((entry,index)=>fish(entry.proposed.displayName,{...entry.proposed,
       active:true,order:index+1,notes:'',qlSourceRef:entry.sourceRef}))
@@ -99,6 +101,6 @@ describe('QL Fish Head Master approval-gated write planning',()=>{
     expect(plan.blocked).toHaveLength(0)
     expect(plan.creates).toBe(0)
     expect(plan.updates).toBe(0)
-    expect(plan.unchanged).toBe(36)
+    expect(plan.unchanged).toBe(34)
   })
 })
