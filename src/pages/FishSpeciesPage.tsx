@@ -52,13 +52,18 @@ function QlMasterPreview({items,onApplied}:{items:FishSpeciesRecord[];onApplied:
   const [saving,setSaving]=useState(false)
   const [saveError,setSaveError]=useState('')
   const preview=previewFishHeadMasterImport(items)
-  const plan=prepareQlMasterAdoption(items,createSeparate)
+  const eligibleSeparateKeys=new Set(preview.proposals.filter(item=>item.status==='conflict').map(item=>item.proposalKey))
+  // Master edits may change a conflicted row into a safe match. Never let a stale
+  // checkbox selection throw during render; reset it after the new Master loads.
+  const activeSeparate=createSeparate.filter(key=>eligibleSeparateKeys.has(key))
+  const plan=prepareQlMasterAdoption(items,activeSeparate)
+  useEffect(()=>{setCreateSeparate([]);setApproval('');setSaveError('')},[items])
   const canApply=import.meta.env.VITE_APPROVED_QL_MASTER_WRITES==='true'
   async function apply(){
     if(!canApply||plan.blocked.length||saving)return
     setSaving(true);setSaveError('')
     try{
-      const updated=await applyApprovedQlFishHeadMaster(items,createSeparate,approval)
+      const updated=await applyApprovedQlFishHeadMaster(items,activeSeparate,approval)
       onApplied(updated)
       setApproval('');setCreateSeparate([])
     }catch(problem){
@@ -73,7 +78,7 @@ function QlMasterPreview({items,onApplied}:{items:FishSpeciesRecord[];onApplied:
         <td><strong>{item.source.sourceRow-3}. {item.source.label}</strong><small>{QL_METHOD_LABELS[item.source.method]} · 别名：{item.source.aliases.join('、')||'保留整组，不自动拆分'}</small></td>
         <td>{item.status==='matched'?'匹配':item.status==='new'?'新增':'冲突，阻止自动采用'}
           {item.status==='conflict'&&<label className="ql-master-resolution">
-            <input type="checkbox" checked={createSeparate.includes(item.proposalKey)}
+            <input type="checkbox" checked={activeSeparate.includes(item.proposalKey)}
               disabled={saving} onChange={event=>setCreateSeparate(current=>event.target.checked?[...current,item.proposalKey]:current.filter(key=>key!==item.proposalKey))}/>
             单独建立来源组，保留现有鱼名和旧价格
           </label>}</td>
