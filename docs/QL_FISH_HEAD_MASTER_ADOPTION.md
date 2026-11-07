@@ -22,7 +22,7 @@ A generic alias shared by multiple fishing contexts requires an explicit separat
 
 Use Node 20.19+ and the pinned dependencies via `npm ci`. `npm run ql-master -- help` is offline. No command was executed against production during development.
 
-Every production read requires separate OWNER authorization for `fishSpecies` (complete collection, at most 1000 documents) and, for operation status/rollback, the exact `fishSpeciesAdoptions/<manifestHash>` journal. Snapshot files contain business data and must use a restricted, reviewed output location. No other production collection is read by this tool.
+Every production read requires separate OWNER authorization for `fishSpecies` (complete collection, a 1000-document processing cap plus one possible oversize sentinel: at most 1001 documents read). An oversize result stops without writes. For operation status/rollback, also authorize the exact `fishSpeciesAdoptions/<manifestHash>` journal. Snapshot files contain business data and must use a restricted, reviewed output location. No other production collection is read by this tool.
 
 1. After read authorization: `npm run ql-master -- snapshot --project ccm-fishery-os-4490d --actor OPERATOR_EMAIL --read-approved --output SNAPSHOT.json`.
 2. Offline: `npm run ql-master -- plan --project ccm-fishery-os-4490d --actor OPERATOR_EMAIL --snapshot SNAPSHOT.json --output MANIFEST.json`. Optional `--separate FILE.json` supplies reviewed source-key selections.
