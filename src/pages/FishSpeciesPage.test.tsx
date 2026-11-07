@@ -39,7 +39,7 @@ describe('Fish Head Master price editing',()=>{
     expect(within(table).getByText('25. 加晒/丁温/目孔(拖网)')).toBeInTheDocument()
     expect(within(table).queryByText('35. 丁温/目孔/加西（底船）')).not.toBeInTheDocument()
     expect(within(table).queryByText('36. 青兰（底船）')).not.toBeInTheDocument()
-    expect(within(table).getByText('留空（按当天行情）')).toBeInTheDocument()
+    expect(within(table).getAllByText('留空（按当天行情）')).toHaveLength(2)
     expect(saver).not.toHaveBeenCalled()
     expect(initializer).not.toHaveBeenCalled()
     expect(JSON.stringify(items)).toBe(before)
