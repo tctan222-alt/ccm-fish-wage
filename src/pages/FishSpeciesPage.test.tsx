@@ -34,7 +34,7 @@ describe('Fish Head Master price editing',()=>{
     fireEvent.click(await screen.findByText('审阅 QL 34组非底船 Master 候选（只读）'))
     const table=screen.getByRole('table',{name:'未来基础默认价对照（不含船号加价）'})
     expect(within(table).getAllByRole('row')).toHaveLength(35)
-    expect(within(table).getAllByText('冲突，阻止自动采用')).toHaveLength(1)
+    expect(within(table).getAllByText('独立空价组（保留旧鱼）')).toHaveLength(1)
     expect(within(table).getAllByText(/丁温.*RM1.90/)).toHaveLength(1)
     expect(within(table).getByText('25. 加晒/丁温/目孔(拖网)')).toBeInTheDocument()
     expect(within(table).queryByText('35. 丁温/目孔/加西（底船）')).not.toBeInTheDocument()
@@ -63,6 +63,9 @@ describe('Fish Head Master price editing',()=>{
     const choice=screen.getByRole('checkbox',{name:'单独建立空默认价来源组，保留现有鱼名和旧价格'})
     fireEvent.click(choice)
     expect(choice).toBeChecked()
+    expect(screen.getByText('独立空价组（保留旧鱼）')).toBeInTheDocument()
+    expect(screen.getAllByText('留空（按当天行情）')).toHaveLength(3)
+    expect(screen.getByText('QL 来源参考价 RM2.10，不作为 Master 默认价')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button',{name:'重新启用'}))
     await waitFor(()=>{
       expect(screen.getByText(/未解决冲突 0/)).toBeInTheDocument()
