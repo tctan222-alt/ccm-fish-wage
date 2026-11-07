@@ -5,7 +5,7 @@ import {
   rollbackQlMasterManifest, validateQlMasterManifest, QL_MASTER_MAX_DOCUMENTS,
   type MasterDocument, type QlMasterJournal, type QlMasterManifest, type QlMasterOperatorContext, type QlMasterTransaction,
 } from './qlMasterOperator'
-import { QL_SEED_VERSION } from './qlPrices'
+import { isQlMarketPriceRow, QL_FISH_HEAD_MASTER_ROWS } from './fishHeadMasterImport'
 
 beforeAll(() => { vi.stubGlobal('crypto', webcrypto) })
 const clone = <T>(value: T): T => JSON.parse(qlMasterCanonicalJson(value)) as T
@@ -60,12 +60,12 @@ class Database {
 }
 
 describe('approved QL operator transactions', () => {
-  it('builds a complete auditable manifest directly from all 36 validated source groups', async () => {
+  it('builds a complete auditable manifest directly from 34 eligible non-bottom groups of the original 36 reference groups', async () => {
     const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot: [] })
-    expect(manifest.entries).toHaveLength(36)
-    expect(manifest.entries.map(entry => entry.after.basePriceCentsPerKg)).toEqual(QL_SEED_VERSION.rows.map(row => row.priceCentsPerKg))
-    expect(manifest.entries.map(entry => entry.sourceRef)).toHaveLength(36)
-    expect(new Set(manifest.entries.map(entry => entry.id)).size).toBe(36)
+    expect(manifest.entries).toHaveLength(34)
+    expect(manifest.entries.map(entry => entry.after.basePriceCentsPerKg)).toEqual(QL_FISH_HEAD_MASTER_ROWS.map(row => isQlMarketPriceRow(row) ? null : row.priceCentsPerKg))
+    expect(manifest.entries.map(entry => entry.sourceRef)).toHaveLength(34)
+    expect(new Set(manifest.entries.map(entry => entry.id)).size).toBe(34)
     expect(manifest.sha256).toMatch(/^[a-f0-9]{64}$/)
     await expect(validateQlMasterManifest(manifest)).resolves.toBeUndefined()
   })
@@ -92,41 +92,41 @@ describe('approved QL operator transactions', () => {
     await expect(buildQlMasterManifest({ projectId, actorEmail, snapshot: Array.from({ length: 1001 }, (_, i) => doc(`id_${i}`, '旧鱼')) })).rejects.toThrow('limit')
   })
 
-  it('retains context-specific identities and never chooses a price for a generic alias', async () => {
+  it('keeps generic 丁温 intact, creates an empty-price trawl group and never creates bottom fish', async () => {
     const generic = doc('ding_wen', '丁温', { basePriceCentsPerKg: 190 })
-    await expect(buildQlMasterManifest({ projectId, actorEmail, snapshot: [generic] })).rejects.toThrow('Resolve every')
-    const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot: [generic], createSeparateFor: ['jiasai-dingwen-mukong:trawl', 'dingwen-mukong-jiaxi:bottom'] })
+    const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot: [generic] })
     const database = new Database([generic])
     await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))
     expect(database.documents.get('ding_wen')).toEqual(generic)
-    expect(manifest.entries.find(entry => entry.sourceRef.endsWith(':trawl'))?.after.basePriceCentsPerKg).toBe(200)
-    expect(manifest.entries.find(entry => entry.sourceRef.includes('dingwen-mukong-jiaxi'))?.after.basePriceCentsPerKg).toBe(210)
+    expect(manifest.entries).toHaveLength(34)
+    expect(manifest.entries.find(entry => entry.sourceRef.endsWith(':trawl'))?.after.basePriceCentsPerKg).toBeNull()
+    expect(manifest.entries.every(entry => !entry.sourceRef.endsWith(':bottom'))).toBe(true)
   })
 
-  it('rejects an otherwise valid 990-record snapshot when 36 creates would exceed the complete-read cap', async () => {
+  it('rejects an otherwise valid 990-record snapshot when 34 creates would exceed the complete-read cap', async () => {
     const snapshot = Array.from({ length: 990 }, (_, index) => doc(`legacy_${index}`, '旧鱼'))
     await expect(buildQlMasterManifest({ projectId, actorEmail, snapshot })).rejects.toThrow('Resulting Master exceeds')
   })
 
   it('accepts exactly 1000 resulting records and keeps status snapshots and rollback within the same cap', async () => {
-    const database = new Database(Array.from({ length: 964 }, (_, index) => doc(`legacy_${index}`, '旧鱼')))
+    const database = new Database(Array.from({ length: 966 }, (_, index) => doc(`legacy_${index}`, '旧鱼')))
     const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot: database.snapshot() })
-    expect(manifest.entries.filter(entry => entry.kind === 'create')).toHaveLength(36)
+    expect(manifest.entries.filter(entry => entry.kind === 'create')).toHaveLength(34)
     await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))
     const after = database.snapshot()
     expect(after).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
     const approval = await buildQlMasterRollbackApproval(manifest, database.journals.get(manifest.sha256)!, after)
     await expect(database.transact(tx => rollbackQlMasterManifest(tx, manifest, {
       ...context(manifest), approvedAction: 'rollback', approvedHash: approval.hash, rollbackApproval: approval,
-    }))).resolves.toMatchObject({ status: 'rolled-back', writes: 36 })
+    }))).resolves.toMatchObject({ status: 'rolled-back', writes: 34 })
     expect(database.snapshot()).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
-    expect([...database.documents.values()].filter(item => !item.data.active)).toHaveLength(36)
+    expect([...database.documents.values()].filter(item => !item.data.active)).toHaveLength(34)
   })
 
-  it('allows price updates at the 1000-record cap when all 36 source groups already exist', async () => {
+  it('allows price updates at the 1000-record cap when all 34 eligible source groups already exist', async () => {
     const empty = await buildQlMasterManifest({ projectId, actorEmail, snapshot: [] })
     const sourceRecords = empty.entries.map(entry => doc(entry.id, String(entry.after.displayName), { ...entry.after, basePriceCentsPerKg: 1 }))
-    const snapshot = [...Array.from({ length: 964 }, (_, index) => doc(`legacy_${index}`, '旧鱼')), ...sourceRecords]
+    const snapshot = [...Array.from({ length: 966 }, (_, index) => doc(`legacy_${index}`, '旧鱼')), ...sourceRecords]
     const manifest = await buildQlMasterManifest({ projectId, actorEmail, snapshot })
     expect(manifest.snapshot).toHaveLength(QL_MASTER_MAX_DOCUMENTS)
     expect(manifest.entries.every(entry => entry.kind === 'price-update')).toBe(true)
@@ -166,9 +166,9 @@ describe('approved QL operator transactions', () => {
     expect(failed.documents.size).toBe(0)
     expect(failed.journals.size).toBe(0)
     const database = new Database()
-    expect(await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)), { retry: true })).toMatchObject({ status: 'applied', writes: 36 })
-    expect(database.documents.size).toBe(36)
-    expect(database.writes).toBe(36)
+    expect(await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)), { retry: true })).toMatchObject({ status: 'applied', writes: 34 })
+    expect(database.documents.size).toBe(34)
+    expect(database.writes).toBe(34)
     expect(database.journals.size).toBe(1)
     const after = database.snapshot()
     expect(await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))).toMatchObject({ status: 'already-applied', writes: 0 })
@@ -181,7 +181,7 @@ describe('approved QL operator transactions', () => {
     await expect(database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)), { lostResponse: true })).rejects.toThrow('response lost')
     const after = database.snapshot()
     expect(await database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))).toMatchObject({ status: 'already-applied', writes: 0 })
-    expect(database.writes).toBe(36)
+    expect(database.writes).toBe(34)
     expect(database.snapshot()).toEqual(after)
   })
 
@@ -209,7 +209,7 @@ describe('approved QL operator transactions', () => {
     await expect(database.transact(tx => rollbackQlMasterManifest(tx, manifest, { ...context(manifest), approvedAction: 'rollback' }))).rejects.toThrow('separate rollback')
     const rollbackContext: QlMasterOperatorContext = { ...context(manifest), approvedAction: 'rollback', approvedHash: approval.hash, rollbackApproval: approval,
       now: () => ({ seconds: 101, nanoseconds: 2 }) }
-    expect(await database.transact(tx => rollbackQlMasterManifest(tx, manifest, rollbackContext))).toMatchObject({ status: 'rolled-back', writes: 36 })
+    expect(await database.transact(tx => rollbackQlMasterManifest(tx, manifest, rollbackContext))).toMatchObject({ status: 'rolled-back', writes: 34 })
     const restored = database.documents.get('jin_xian')!.data
     expect(restored).not.toHaveProperty('basePriceCentsPerKg')
     expect(restored).not.toHaveProperty('qlSourceRef')
@@ -217,7 +217,7 @@ describe('approved QL operator transactions', () => {
     expect(restored.createdAt).toEqual(original.data.createdAt)
     const newlyCreated = manifest.entries.find(entry => entry.kind === 'create')!
     expect(database.documents.get(newlyCreated.id)!.data).toMatchObject({ active: false, qlSourceRef: newlyCreated.sourceRef })
-    expect(database.documents.size).toBe(36)
+    expect(database.documents.size).toBe(34)
     expect(await database.transact(tx => rollbackQlMasterManifest(tx, manifest, rollbackContext))).toMatchObject({ status: 'already-rolled-back', writes: 0 })
     await expect(database.transact(tx => applyQlMasterManifest(tx, manifest, context(manifest)))).rejects.toThrow('rolled back')
   })
