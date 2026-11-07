@@ -174,6 +174,74 @@ export async function saveFishSpecies(value:FishSpeciesRecord){
     ...(original?.qlSourceRef?{qlSourceRef:original.qlSourceRef}:value.qlSourceRef?{qlSourceRef:value.qlSourceRef}:{})}
 }
 
+/**
+ * An explicitly approved, server-checked one-shot future-default adoption.
+ * The production bundle has this disabled unless a separate reviewed release
+ * explicitly sets VITE_APPROVED_QL_MASTER_WRITES=true. No automatic sync.
+ */
+export async function applyApprovedQlFishHeadMaster(
+  expected: readonly FishSpeciesRecord[],
+  createSeparateFor: readonly string[],
+  typedApproval: string,
+): Promise<FishSpeciesRecord[]> {
+  if (import.meta.env.VITE_APPROVED_QL_MASTER_WRITES !== 'true') {
+    throw new Error('本版本未授权批量采用QL基础价。必须先获得独立生产发布和改价批准。')
+  }
+  if (typedApproval !== '确认导入36组QL默认价') throw new Error('请准确输入导入确认文字。')
+  const user=requireUser()
+  const collectionRef=collection(db,'fishSpecies')
+  const freshSnapshot=await getDocsFromServer(collectionRef)
+  if (freshSnapshot.metadata.fromCache || freshSnapshot.metadata.hasPendingWrites) {
+    throw new Error('无法确认服务器端 Master 最新版本，禁止导入。')
+  }
+  const fresh=freshSnapshot.docs.map(item=>fishSpeciesFrom(item.id,item.data()))
+  if (qlMasterFingerprint(fresh)!==qlMasterFingerprint(expected)) {
+    throw new Error('Master 已由其他人修改，请刷新差异预览后重新确认。')
+  }
+  const plan=prepareQlMasterAdoption(fresh,createSeparateFor)
+  if (plan.blocked.length || plan.entries.length!==36) {
+    throw new Error('QL 映射仍有未处理冲突，不能执行部分或自动导入。')
+  }
+  const timestamp=serverTimestamp()
+  const nextOrder=Math.max(0,...fresh.map(row=>row.order))
+  await runTransaction(db,async transaction=>{
+    const refs=plan.entries.map(entry=>doc(db,'fishSpecies',entry.proposed.id))
+    // Firestore requires every transaction read to precede its first write.
+    const snapshots=await Promise.all(refs.map(ref=>transaction.get(ref)))
+    plan.entries.forEach((entry,index)=>{
+      const snap=snapshots[index]
+      if(entry.before){
+        if(!snap.exists() || qlMasterFingerprint([fishSpeciesFrom(snap.id,snap.data())])!==qlMasterFingerprint([entry.before])) {
+          throw new Error('导入过程中原有 Master 被更改，已取消整批操作。')
+        }
+      }else if(snap.exists()){
+        throw new Error('新的 QL 分组代码已存在，不能覆盖现有鱼种。')
+      }
+    })
+    plan.entries.forEach((entry,index)=>{
+      const snap=snapshots[index]
+      const source=entry.proposed
+      const original=snap.exists()?snap.data():null
+      transaction.set(refs[index],{
+        speciesCode:source.speciesCode,
+        displayName:original?.displayName??source.displayName,
+        active:original?.active??true,
+        order:original?.order??nextOrder+source.sourceRow-3,
+        notes:original?.notes??'',
+        basePriceCentsPerKg:source.basePriceCentsPerKg,
+        qlSourceRef:entry.sourceRef,
+        createdBy:original?.createdBy??user.uid,
+        createdAt:original?.createdAt??timestamp,
+        updatedBy:user.uid,
+        updatedAt:timestamp,
+        inactiveBy:original?.inactiveBy??null,
+        inactiveAt:original?.inactiveAt??null,
+      })
+    })
+  })
+  return loadFishSpecies()
+}
+
 export async function loadWeighingSessions(){
   const snapshot=await getDocs(collection(db,'weighingSessions'))
   return snapshot.docs.map(item=>sessionFrom(item.id,item.data())).sort((a,b)=>sortKeyFromBusinessDate(businessDateFromLegacy(b.weighingDate))-sortKeyFromBusinessDate(businessDateFromLegacy(a.weighingDate))||b.sessionCode.localeCompare(a.sessionCode))
