@@ -325,6 +325,18 @@ describe('Firestore Rules: fish-head Master base prices', () => {
     await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:9999995,updatedBy:'u1',updatedAt:serverTimestamp()}))
   })
 
+  it('safely stores a bounded versioned QL source reference without weakening Master identity protection',async()=>{
+    const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','ql_group_safe')
+    const source='ql-foods-2026-10-10|large-muli:general'
+    await assertSucceeds(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:315,qlSourceRef:source}))
+    expect((await getDoc(ref)).data()!.qlSourceRef).toBe(source)
+    await assertSucceeds(updateDoc(ref,{basePriceCentsPerKg:320,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    for(const value of [null,123,{},[],true,'x'.repeat(101)]){
+      await assertFails(updateDoc(ref,{qlSourceRef:value,updatedBy:'u1',updatedAt:serverTimestamp()}))
+    }
+    expect((await getDoc(ref)).data()!.qlSourceRef).toBe(source)
+  })
+
   it('rejects invalid prices and reserves the five-cent premium within the existing calculation limit',async()=>{
     const db=environment.authenticatedContext('u1').firestore(),ref=doc(db,'fishSpecies','price_invalid')
     await assertSucceeds(setDoc(ref,{...species(ref.id),basePriceCentsPerKg:null}))
