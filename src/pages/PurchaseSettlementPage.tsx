@@ -5,6 +5,7 @@ import { auth } from '../firebase'
 import { businessDateFromLegacy,formatAuditTimestamp,legacyIsoDateFromBusinessDate,malaysiaBusinessDate,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import { assertFishHeadSettlementPrices,buildPurchaseSettlementLines,formatSettlementMoney,makeSettlementDraft,reconcileSettlementLines,settlementLineIdentity,updateSettlementLinePrice,totalSettlementAmountCents,type PurchaseSettlementDraft,type PurchaseSettlementLine,asSettlementSourceEntry } from '../lib/purchaseSettlement'
 import { canModifyWeighing,formatWeightKg,type FishSpeciesRecord,type WeighingEntry,type WeighingProductType,type WeighingSession } from '../lib/weighing'
+import { readFishHeadLivePriceDraft } from '../lib/fishHeadLivePriceDraft'
 import type { Vessel } from '../lib/purchasing'
 import { loadVessels } from '../services/purchaseMasterData'
 import { finalizePurchaseSettlement,loadPurchaseSettlementDraft,loadPurchaseSettlementDraftForSource,loadPurchaseSettlementSource,savePurchaseSettlementDraft,type PurchaseSettlementSource } from '../services/purchaseSettlements'
@@ -80,6 +81,7 @@ export function PurchaseSettlementPage({
   const [copyError,setCopyError]=useState(''),[manualCopy,setManualCopy]=useState<string|null>(null)
   const [savedFields,setSavedFields]=useState('')
   const [savedDraft,setSavedDraft]=useState<PurchaseSettlementDraft|null>(null),[editing,setEditing]=useState(false)
+  const [importedLivePrices,setImportedLivePrices]=useState(false)
   const [recovery,setRecovery]=useState<SettlementLocalDraft|null>(null)
   const [localDraftBlocked,setLocalDraftBlocked]=useState(false)
   const localDraftTracked=useRef(false)
@@ -156,6 +158,20 @@ export function PurchaseSettlementPage({
         const built=buildPurchaseSettlementLines(sourceEntries.map(asSettlementSourceEntry),productType,source?.session.vesselCodeSnapshot??'',species)
         nextLines=source?(draft?reconcileSettlementLines(built,draft.lines):built):(draft?.lines??[])
       }
+      // Editable live valuation prices are same-device proposals only.
+      // Carry into an unsaved settlement draft, never overwrite saved history.
+      let livePriceCount=0
+      if(fishHead&&source&&!draft){
+        const proposed=readFishHeadLivePriceDraft(auth.currentUser?.uid??'',source.session.id)
+        nextLines=nextLines.map(line=>{
+          const key=settlementLineIdentity(line)
+          if(!Object.prototype.hasOwnProperty.call(proposed,key))return line
+          const value=proposed[key]
+          livePriceCount+=1
+          return updateSettlementLinePrice(line,value===null?'':(value/100).toFixed(2))
+        })
+      }
+      setImportedLivePrices(livePriceCount>0)
       setSavedDraft(draft)
       setSourceSession(source?.session??null);setEntries(sourceEntries);setReceiptNo(draft?.receiptNo??source?.session.externalSlipNo??'');setDraftRevision(draft?.revision??0)
       setDraftId(draft?.draftId)
@@ -290,6 +306,7 @@ export function PurchaseSettlementPage({
     </section>}
     {loading||waitingForVessel?<p className="notice" role="status">正在载入结单资料…<br/>{settlementReadLabels[waitingForVessel?'vessels':readStage]}…</p>:loadFailed?null:<section className="settlement-table-section"><p className="settlement-meta">船号：{savedDraft?.status==='settlement_finalized'?savedDraft.vesselCodeSnapshot:sourceSession?.vesselCodeSnapshot??selectedVessel?.vesselCode??'—'} / 日期：{businessDate} / 当前记录：{sourceEntryCount} 条</p>
       {sourceSession&&<p>系统现场单号：{sourceSession.sessionCode}</p>}
+      {importedLivePrices&&<p className="notice">已从本机鱼头称重现场带入调整后的单价；请在本页确认并保存结单。正式金额仍可按原有期限修改。</p>}
       {lines.some(line=>line.unitPriceCentsPerKg===null)&&<p className="notice">尚有未定价项目：{lines.filter(line=>line.unitPriceCentsPerKg===null).map(line=>line.nameSnapshot).join('、')}。{fishHead?'请填写本单实际价；未定价金额不计入暂计总额，填完后才能完成结单。':'未定价行不猜价，金额按既有规则显示为 0；完成前请核对。'}</p>}
       {ready&&sourceSession&&<p className="notice">{sourceSession.status==='processed'?'来源已转旧版采购单 Legacy processed，本页只读。':sourceSession.status==='voided'?'来源已作废，本页只读。':lifecycle.status==='settlement_draft'?'结单草稿 Draft；完成结单后 90 天内可修改。':editable?'已完成结单 Finalized；修改不会延长期限。':'已锁定 Locked；超过 90 天或来源不兼容，只能查看。'}</p>}
       {finalizedTime&&deadline&&<p>首次完成：{formatAuditTimestamp(finalizedTime)} / 修改截止：{formatAuditTimestamp(deadline)}（到达截止时刻即只读）</p>}
