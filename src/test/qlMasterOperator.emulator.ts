@@ -23,8 +23,9 @@ export function defineQlMasterOperatorEmulatorTests(environment:()=>RulesTestEnv
       const initial=await captureQlMasterSnapshot(db)
       const manifest=await buildQlMasterManifest({projectId,actorEmail,snapshot:initial.snapshot})
       const context={projectId,actorEmail,approvedHash:manifest.sha256,approvedAction:'apply' as const}
-      const first=await runQlMasterOperation(db,manifest,context)
-      expect(first.status).toBe('applied')
+      const initialAttempts=await Promise.all([runQlMasterOperation(db,manifest,context),runQlMasterOperation(db,manifest,context)])
+      expect(initialAttempts.map(result=>result.status).sort()).toEqual(['already-applied','applied'])
+      expect(initialAttempts.map(result=>result.writes).sort((left,right)=>left-right)).toEqual([0,36])
       const post=await captureQlMasterSnapshot(db,manifest.sha256)
       expect(post.snapshot).toHaveLength(36)
       const repeats=await Promise.all([runQlMasterOperation(db,manifest,context),runQlMasterOperation(db,manifest,context)])
@@ -37,7 +38,9 @@ export function defineQlMasterOperatorEmulatorTests(environment:()=>RulesTestEnv
       expect(old).not.toHaveProperty('basePriceCentsPerKg')
       expect(old).not.toHaveProperty('qlSourceRef')
       expect(old).toMatchObject({displayName:'金线',notes:'keep',active:true,createdBy:'old'})
-      expect(old.createdAt).toEqual(new Timestamp(1,1))
+      // Compare the authoritative server before-image, including its stored precision.
+      expect({seconds:old.createdAt.seconds,nanoseconds:old.createdAt.nanoseconds})
+        .toEqual(initial.snapshot.find(item=>item.id==='jin_xian')!.data.createdAt)
       const rest=(await captureQlMasterSnapshot(db)).snapshot.filter(item=>item.id!=='jin_xian')
       expect(rest).toHaveLength(35)
       expect(rest.every(item=>item.data.active===false&&typeof item.data.qlSourceRef==='string')).toBe(true)
@@ -60,14 +63,17 @@ export function defineQlMasterOperatorEmulatorTests(environment:()=>RulesTestEnv
       expect((await db.collection('fishSpecies').get()).size).toBe(0)
       expect((await db.collection('fishSpeciesAdoptions').get()).size).toBe(0)
     })
-    it('rejects rollback after an identical-data Admin rewrite advances only server updateTime',async()=>{
+    it('rejects rollback after an Admin edit-and-restore advances the version while preserving the after-image',async()=>{
       const manifest=await buildQlMasterManifest({projectId,actorEmail,snapshot:[]})
       await runQlMasterOperation(db,manifest,{projectId,actorEmail,approvedHash:manifest.sha256,approvedAction:'apply'})
       const post=await captureQlMasterSnapshot(db,manifest.sha256)
       const rollbackApproval=await buildQlMasterRollbackApproval(manifest,post.journal!,post.snapshot)
       const ref=db.doc(`fishSpecies/${post.snapshot[0].id}`),old=await ref.get()
+      // Identical set() may be a server no-op. An actual edit then restore exercises ABA.
+      await ref.update({notes:'intervening Admin edit'})
       await ref.set(old.data()!)
       const rewritten=await ref.get()
+      expect(rewritten.data()).toEqual(old.data())
       expect(rewritten.updateTime!.isEqual(old.updateTime!)).toBe(false)
       await expect(runQlMasterOperation(db,manifest,{projectId,actorEmail,approvedAction:'rollback',approvedHash:rollbackApproval.hash,rollbackApproval})).rejects.toThrow('changed after adoption')
       expect((await db.doc(`fishSpeciesAdoptions/${manifest.sha256}`).get()).data()!.state).toBe('applied')
