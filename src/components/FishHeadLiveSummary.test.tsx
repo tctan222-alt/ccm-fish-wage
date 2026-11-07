@@ -30,7 +30,7 @@ it('refreshes the preview when loaded Master defaults change or become explicitl
   expect(screen.getByRole('table',{name:'鱼头实时金额'})).toHaveTextContent('RM 2.55/kg')
   expect(screen.getByRole('group',{name:'现场金额总计'})).toHaveTextContent('当前总金额：RM 25.50')
   rerender(<FishHeadLiveSummary entries={entries} vesselCode="978" masterSpecies={unpriced}/>)
-  expect(screen.getAllByRole('cell',{name:'—'})).toHaveLength(2)
+  expect(screen.getAllByText('未定价')).toHaveLength(2)
   expect(screen.getByRole('table',{name:'鱼头实时金额'})).not.toHaveTextContent('RM 0.00')
   expect(screen.getByRole('group',{name:'现场金额总计'})).toHaveTextContent('尚有 1 个鱼种未定价')
   expect(screen.getByRole('group',{name:'现场金额总计'})).not.toHaveTextContent('当前总金额')
