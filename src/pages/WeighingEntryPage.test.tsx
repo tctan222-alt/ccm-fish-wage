@@ -638,7 +638,7 @@ describe('iPhone 现场称重单页',()=>{
 
   it.each([
     [250,'RM 2.55/kg','RM 25.50'],
-    [null,'—','尚有 1 个鱼种未定价'],
+    [null,'未定价','尚有 1 个鱼种未定价'],
   ])('现场汇总使用已载入的 Master 默认价 %s，保留明确未定价',async(basePrice,priceText,totalText)=>{
     const species=DEFAULT_FISH_SPECIES.map(item=>item.speciesCode==='jin_xian'?{...item,basePriceCentsPerKg:basePrice}:item)
     const {store,unmount}=setup(remoteSync(),createMemoryWeighingStore(),false,species)

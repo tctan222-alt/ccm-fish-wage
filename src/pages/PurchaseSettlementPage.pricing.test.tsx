@@ -10,11 +10,11 @@ const session={...newWeighingSession({id:'source-978',productType:'fish_head',we
 const entry=buildWeighingEntry({id:'entry-jin',sessionId:session.id,productType:'fish_head',fishSpeciesId:'jin',fishSpecies:{id:'jin',speciesCode:'jin_xian',displayName:'金线'},fishMealQuality:null,entryMode:'individual',sequenceNo:1,weightGrams:80000,remark:'',recordedAt:new Date('2026-10-05T01:00:00Z'),recordedAtClient:'2026-10-05T09:00:00+08:00',recordedBy:'u1'})
 const master:FishSpeciesRecord={id:'jin',speciesCode:'jin_xian',displayName:'金线',active:true,order:0,notes:'',basePriceCentsPerKg:250}
 const bundle={session,entries:[entry],actions:[]}
-function page({species=master,saved=null,finalizer=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,status:'settlement_finalized' as const,finalizedAt:now(),finalizedBy:'u1',revision:draft.revision+1})),clock=now,speciesReader,sourceEntries=bundle.entries}:{species?:FishSpeciesRecord;saved?:PurchaseSettlementDraft|null;finalizer?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>;clock?:()=>Date;speciesReader?:()=>Promise<FishSpeciesRecord[]>;sourceEntries?:WeighingEntry[]}={}){
+function page({species=master,saved=null,finalizer=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,status:'settlement_finalized' as const,finalizedAt:now(),finalizedBy:'u1',revision:draft.revision+1})),clock=now,speciesReader,sourceEntries=bundle.entries,livePriceDraftReader=()=>({})}:{species?:FishSpeciesRecord;saved?:PurchaseSettlementDraft|null;finalizer?:(draft:PurchaseSettlementDraft)=>Promise<PurchaseSettlementDraft>;clock?:()=>Date;speciesReader?:()=>Promise<FishSpeciesRecord[]>;sourceEntries?:WeighingEntry[];livePriceDraftReader?:(ownerId:string,sessionId:string)=>Record<string,number|null>}={}){
   const saver=vi.fn(async(draft:PurchaseSettlementDraft)=>({...draft,revision:draft.revision+1}))
   const loader=vi.fn(speciesReader??(async()=>[species]))
   const source={...bundle,entries:sourceEntries,session:{...session,fishHeadBasketCount:sourceEntries.length,fishHeadWeightGrams:sourceEntries.reduce((sum,line)=>sum+line.weightGrams,0),totalWeightGrams:sourceEntries.reduce((sum,line)=>sum+line.weightGrams,0)}}
-  return {saver,loader,finalizer,...render(<MemoryRouter initialEntries={['/fish-head-settlement/source-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[]} bundleLoader={async()=>source} fishSpeciesLoader={loader} draftLoader={async()=>saved} draftSaver={saver} finalizer={finalizer} now={clock}/>}/></Routes></MemoryRouter>)}
+  return {saver,loader,finalizer,...render(<MemoryRouter initialEntries={['/fish-head-settlement/source-978']}><Routes><Route path="/fish-head-settlement/:sessionId" element={<PurchaseSettlementPage productType="fish_head" vesselLoader={async()=>[]} bundleLoader={async()=>source} fishSpeciesLoader={loader} livePriceDraftReader={livePriceDraftReader} draftLoader={async()=>saved} draftSaver={saver} finalizer={finalizer} now={clock}/>}/></Routes></MemoryRouter>)}
 }
 function finalizedInvoice():PurchaseSettlementDraft {
   const lines=buildPurchaseSettlementLines([asSettlementSourceEntry(entry)],'fish_head','978',[master]).map(line=>updateSettlementLinePrice(line,'2.70'))
@@ -90,6 +90,28 @@ describe('Fish Head Master suggestions and invoice-only actual prices',()=>{
     expect(screen.getByRole('table')).toBeInTheDocument();expect(screen.getByRole('button',{name:'重新读取默认价并修改'})).toBeEnabled()
     expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
   })
+  it('carries valid fish-head onsite prices into a fresh settlement only, preserving Master and finalized history',async()=>{
+    const onsite=vi.fn(()=>({'head:jin_xian':325}))
+    const result=page({livePriceDraftReader:onsite})
+    await screen.findByRole('table')
+    expect(onsite).toHaveBeenCalledWith(expect.any(String),'source-978')
+    expect(screen.getByLabelText('金线单价')).toHaveValue('3.25')
+    expect(screen.getByText('已从本机鱼头称重现场带入调整后的单价；请在本页确认并保存结单。正式金额仍可按原有期限修改。')).toBeInTheDocument()
+    expect(screen.getAllByText('RM 260.00')).toHaveLength(2)
+    fireEvent.click(screen.getByRole('button',{name:'保存结单草稿'}))
+    await screen.findByText('结单草稿已保存（第 1 版）。')
+    expect(result.saver.mock.calls[0][0]).toMatchObject({totalAmountCents:26000,lines:[{defaultUnitPriceCentsPerKg:255,
+      unitPriceCentsPerKg:325,priceWasEdited:true}]})
+    result.unmount()
+
+    const finalizedReader=vi.fn(()=>({'head:jin_xian':999}))
+    page({saved:finalizedInvoice(),livePriceDraftReader:finalizedReader})
+    await screen.findByRole('table')
+    expect(finalizedReader).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('金线单价')).toHaveValue('2.70')
+    expect(screen.queryByText(/已从本机鱼头称重现场带入调整后的单价/)).not.toBeInTheDocument()
+  })
+
   it('auto-populates Master base plus premium, then recomputes and saves a local override without changing Master',async()=>{
     const original={...master}
     const {saver,loader}=page()
