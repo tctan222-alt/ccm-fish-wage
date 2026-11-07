@@ -69,6 +69,21 @@ describe('QL Fish Head Master approval-gated write planning',()=>{
     expect(qlMasterFingerprint([fish('金线',{...before,qlSourceRef:'bar'})])).not.toBe(start)
     expect(qlMasterFingerprint([fish('金线',{...before,updatedAt:{seconds:101}})])).not.toBe(start)
   })
+  it('uses explicit persisted links to prevent an old generic 丁温 from creating fresh cross-method conflicts',()=>{
+    const legacy=fish('丁温',{id:'ding_wen',speciesCode:'ding_wen',basePriceCentsPerKg:190})
+    const initial=prepareQlMasterAdoption([legacy])
+    const approved=prepareQlMasterAdoption([legacy],initial.blocked.map(item=>item.sourceKey))
+    expect(approved.blocked).toHaveLength(0)
+    const adopted=approved.entries.map((entry,index)=>fish(entry.proposed.displayName,{
+      ...entry.proposed,active:true,order:index+2,notes:'',qlSourceRef:entry.sourceRef,
+    }))
+    const recheck=prepareQlMasterAdoption([legacy,...adopted])
+    expect(recheck.blocked).toHaveLength(0)
+    expect(recheck.entries).toHaveLength(36)
+    expect(recheck.creates).toBe(0)
+    expect(recheck.updates).toBe(0)
+    expect(recheck.unchanged).toBe(36)
+  })
   it('re-adoption after stable source-link persistence is zero-price-change and has no new creates',()=>{
     const initial=prepareQlMasterAdoption([])
     const adopted=initial.entries.map((entry,index)=>fish(entry.proposed.displayName,{...entry.proposed,
