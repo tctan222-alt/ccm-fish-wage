@@ -36,6 +36,15 @@
 .retail-receipt-name{width:36%}.retail-receipt-weight{width:12%}.retail-receipt-price{width:24%}.retail-receipt-amount{width:28%}
 .retail-receipt th,.retail-receipt td{vertical-align:top;overflow-wrap:anywhere}
 .retail-output-actions{margin:16px 0}.retail-output-actions p{overflow-wrap:anywhere}
+.retail-line-remark-field{display:grid;gap:4px;margin:8px 0;min-width:0}
+.retail-line-remark-field select,.retail-daily-filters select{min-height:44px;width:100%;font:inherit;border:1px solid #627d98;border-radius:7px;padding:6px;background:white}
+.retail-daily-filters{display:grid;gap:12px}.retail-daily-filters fieldset{display:grid;gap:8px;border:1px solid #bcccdc}
+.retail-daily-filters input[type=radio]{min-height:24px;min-width:24px;vertical-align:middle}
+.retail-daily-report header{margin:16px 0;padding:12px;border-bottom:2px solid #102a43}
+.retail-daily-summary{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+.retail-daily-summary th,.retail-daily-summary td{padding:8px 4px;border:1px solid #bcccdc;text-align:right}
+.retail-daily-summary th:first-child{text-align:left}.retail-daily-summary tfoot{font-weight:800}
+.retail-batch-invoice{margin:20px 0;padding:16px 0;border-bottom:2px dashed #829ab1}
 .retail-pdf-fallback{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .retail-pdf-fallback a{display:grid;place-items:center;border:1px solid #627d98;border-radius:8px;min-height:48px;padding:10px;color:#075985;font-weight:750;text-align:center}
 /* Compact entry/history screens only. Invoice and print layout stay unchanged. */
@@ -132,4 +141,8 @@
   .retail-receipt{margin:0;padding:0;box-shadow:none;border:0;overflow:visible}
   .retail-receipt table{font-size:10pt}.retail-receipt-total{break-inside:avoid}
   .retail-receipt small{color:black}.retail-receipt tr{break-inside:avoid}.retail-receipt thead{display:table-header-group}
+  .retail-daily-print{max-width:none!important}.retail-daily-report{padding:0;margin:0;border:0;box-shadow:none}
+  .retail-daily-report>header{break-after:avoid;margin:0 0 12px;padding:0 0 8px}
+  .retail-batch-invoice{break-after:page;margin:0;padding:0;border:0}.retail-batch-invoice:last-child{break-after:auto}
+  .retail-daily-summary tr,.retail-daily-summary tfoot{break-inside:avoid}.retail-daily-summary thead{display:table-header-group}
 }

@@ -44,6 +44,7 @@ const RetailFishPage = lazy(() => import('./pages/RetailSalesPage').then(module 
 const RetailHistoryPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailHistoryPage })))
 const RetailReceiptPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailReceiptPage })))
 const RetailEditPage = lazy(() => import('./pages/RetailSalesPage').then(module => ({ default: module.RetailEditPage })))
+const RetailDailyPrintPage = lazy(() => import('./pages/RetailDailyPrintPage').then(module => ({ default: module.RetailDailyPrintPage })))
 
 function LoadingScreen() {
   const retail = /^\/retail-sales(?:\/|$)/.test(window.location.pathname)
@@ -72,6 +73,7 @@ function AuthenticatedApp() {
         <Route path="/retail-sales" element={<RetailSalesPage />} />
         <Route path="/retail-sales/fish" element={<RetailFishPage />} />
         <Route path="/retail-sales/history" element={<RetailHistoryPage />} />
+        <Route path="/retail-sales/daily-print" element={<RetailDailyPrintPage />} />
         <Route path="/retail-sales/history/:saleId" element={<RetailReceiptPage />} />
         <Route path="/retail-sales/history/:saleId/edit" element={<RetailEditPage />} />
         <Route path="/fish-department" element={<FishDepartmentPage />} />

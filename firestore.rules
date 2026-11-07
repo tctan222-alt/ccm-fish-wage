@@ -34,7 +34,8 @@ service cloud.firestore {
       let deciKg = line.weightDeciKg;
       let price = line.unitPriceCents;
       let amount = line.amountCents;
-      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightDeciKg', 'unitPriceCents', 'amountCents'])
+      return line.keys().hasOnly(['fishId', 'chineseName', 'malayName', 'weightDeciKg', 'unitPriceCents', 'amountCents', 'remark'])
+        && line.get('remark', '').matches('^[\\s\\S]{0,500}$')
         && line.fishId.matches('^[^/]{1,100}$')
         && line.chineseName.matches('^.{1,100}$')
         && line.malayName.matches('^.{0,100}$')
@@ -75,7 +76,7 @@ service cloud.firestore {
         && date is string && validBusinessDate(date)
         && validWageDateKey(date[6:10] + '-' + date[3:5] + '-' + date[0:2])
         && data.dateSortKey is int && data.dateSortKey == int(date[6:10] + date[3:5] + date[0:2])
-        && vendor is string && vendor.size() > 0 && vendor.size() <= 100
+        && vendor.matches('^[\\s\\S]{1,100}$')
         && groups.keys().hasOnly(['first', 'second', 'third', 'fourth'])
         && groups.first == first.lines && groups.second == second.lines
         && groups.third == third.lines && groups.fourth == fourth.lines
@@ -83,7 +84,7 @@ service cloud.firestore {
         && first.createdBy == uid() && second.createdBy == uid()
         && third.createdBy == uid() && fourth.createdBy == uid()
         && data.totalAmountCents is int && data.totalAmountCents == first.totalAmountCents + second.totalAmountCents + third.totalAmountCents + fourth.totalAmountCents
-        && data.remark is string && data.remark.size() <= 500
+        && data.remark.matches('^[\\s\\S]{0,500}$')
         && data.revision is int && data.revision >= 1
         && data.lastActionId.matches('^[A-Za-z0-9_-]{1,100}$')
         && data.updatedBy == uid() && data.updatedAt == now();
@@ -121,13 +122,14 @@ service cloud.firestore {
     function validRetailAction(data, id, action) {
       let path = retailSalePath(id);
       let after = afterData(path);
-      return data.keys().hasOnly(['type', 'saleId', 'clientOperationId', 'revision', 'beforeSnapshot', 'afterSnapshot', 'performedBy', 'performedAt'])
+      return data.keys().hasOnly(['type', 'saleId', 'clientOperationId', 'revision', 'beforeSnapshot', 'afterSnapshot', 'performedBy', 'performedAt', 'clientSchemaVersion'])
         && data.saleId == id && data.clientOperationId == action && after.lastActionId == action
         && data.revision == after.revision && data.afterSnapshot == after
         && data.performedBy == uid() && data.performedAt == now() && after.updatedAt == now()
-        && (exists(path) ? data.type == 'update' && data.beforeSnapshot == beforeData(path)
+        // Older clients drop per-line remarks while normalizing an edit. Fail closed.
+        && (exists(path) ? data.type == 'update' && data.clientSchemaVersion == 1 && data.beforeSnapshot == beforeData(path)
           && after.revision == beforeData(path).get('revision', 1) + 1
-          : data.type == 'create' && data.beforeSnapshot == null && after.revision == 1);
+          : data.type == 'create' && !('clientSchemaVersion' in data) && data.beforeSnapshot == null && after.revision == 1);
     }
     function validRetailCounter(data, key) {
       let path = retailSalePath(data.lastSaleId);
@@ -310,7 +312,7 @@ service cloud.firestore {
     }
 
     function validBusinessDate(value) {
-      return value is string && value.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$');
+      return value.matches('^[0-9]{2}/[0-9]{2}/[0-9]{4}$');
     }
 
     function validIceWorkRecord(data) {
@@ -769,11 +771,11 @@ service cloud.firestore {
         ])
         // Every required field is directly validated below; missing fields fail closed.
         && (price == null || (price is int && price > 0 && price <= 9999995))
-        && (!('qlSourceRef' in data) || (data.qlSourceRef is string && data.qlSourceRef.size() <= 100))
-        && data.speciesCode is string && data.speciesCode.matches('^[a-z0-9_]{1,40}$')
-        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+        && (!('qlSourceRef' in data) || data.qlSourceRef.matches('^[\\s\\S]{0,100}$'))
+        && data.speciesCode.matches('^[a-z0-9_]{1,40}$')
+        && data.displayName.matches('^[\\s\\S]{1,80}$')
         && data.active is bool && data.order is int && data.order >= 1
-        && data.notes is string && data.notes.size() <= 500
+        && data.notes.matches('^[\\s\\S]{0,500}$')
         && data.createdBy is string && data.createdAt is timestamp
         && data.updatedBy is string && data.updatedAt is timestamp
         && (data.inactiveBy == null || data.inactiveBy is string)
@@ -1691,6 +1693,7 @@ service cloud.firestore {
     match /fishSpecies/{speciesId} {
       allow read: if signedIn();
       allow create: if signedIn() && validFishSpecies(incomingData())
+        && !('qlSourceRef' in incomingData())
         && speciesId == incomingData().speciesCode
         && incomingData().active == true
         && incomingData().createdBy == uid()
@@ -1699,6 +1702,7 @@ service cloud.firestore {
         && incomingData().updatedAt == now()
         && incomingData().inactiveBy == null && incomingData().inactiveAt == null;
       allow update: if signedIn() && validFishSpecies(incomingData())
+        && incomingData().get('qlSourceRef', null) == existingData().get('qlSourceRef', null)
         && incomingData().speciesCode == existingData().speciesCode
         && incomingData().createdBy == existingData().createdBy
         && incomingData().createdAt == existingData().createdAt

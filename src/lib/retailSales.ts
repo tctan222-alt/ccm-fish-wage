@@ -19,6 +19,8 @@ export interface RetailLine {
   weightDeciKg: number
   unitPriceCents: number
   amountCents: number
+  /** This fish's saved remark; distinct from the invoice-level legacy remark. */
+  remark?: string
 }
 // Legacy snapshots are read and normalized in memory; persisted history is immutable.
 export type RetailLineInput = RetailLine | (Omit<RetailLine, 'weightDeciKg'> & { weightKg: number; weightDeciKg?: never })
@@ -78,7 +80,13 @@ export function normalizeRetailFish(input: RetailFishInput): RetailFishInput {
   return { chineseName, malayName, suggestedPriceCents: input.suggestedPriceCents, active: input.active, aliases, sortOrder }
 }
 
-export function makeRetailLine(fish: RetailFish, weight: string, price: string): RetailLine {
+export function normalizeRetailLineRemark(value: unknown): string {
+  if (value === undefined) return ''
+  if (typeof value !== 'string' || value.length > 500) throw new Error('每条鱼备注须为最多 500 字的文字。 Item remark must be text of up to 500 characters.')
+  return value.trim()
+}
+
+export function makeRetailLine(fish: RetailFish, weight: string, price: string, remark = ''): RetailLine {
   if (!fish.active) throw new Error('此鱼种已停用，请选择其他鱼种。 This fish is inactive. Please select another fish.')
   const cleanWeight = weight.trim()
   if (!/^\d+(\.\d)?$/.test(cleanWeight)) throw new Error('重量须为 0.1–300 kg，最多一位小数。 Weight must be 0.1–300 kg with up to one decimal place.')
@@ -86,7 +94,8 @@ export function makeRetailLine(fish: RetailFish, weight: string, price: string):
   const weightDeciKg = Number(whole) * 10 + Number(fraction)
   if (!Number.isSafeInteger(weightDeciKg) || weightDeciKg < 1 || weightDeciKg > 3000) throw new Error('重量须为 0.1–300 kg，最多一位小数。 Weight must be 0.1–300 kg with up to one decimal place.')
   const unitPriceCents = retailPriceCents(price)
-  return { fishId: fish.id, chineseName: fish.chineseName, malayName: fish.malayName, weightDeciKg, unitPriceCents, amountCents: Math.floor((weightDeciKg * unitPriceCents + 5) / 10) }
+  const lineRemark = normalizeRetailLineRemark(remark)
+  return { fishId: fish.id, chineseName: fish.chineseName, malayName: fish.malayName, weightDeciKg, unitPriceCents, amountCents: Math.floor((weightDeciKg * unitPriceCents + 5) / 10), ...(lineRemark ? { remark: lineRemark } : {}) }
 }
 
 export function retailWeightKg(line: RetailLine): string {
@@ -102,7 +111,8 @@ export function normalizeRetailLine(line: RetailLineInput): RetailLine {
     || !Number.isSafeInteger(weightDeciKg) || weightDeciKg < 1 || weightDeciKg > 3000
     || !Number.isSafeInteger(line.unitPriceCents) || line.unitPriceCents < 1 || line.unitPriceCents > MAX_RETAIL_PRICE_CENTS
     || line.amountCents !== Math.floor((weightDeciKg * line.unitPriceCents + 5) / 10)) throw new Error('销售明细或金额无效，请重新录入。 Invalid sale details or amount. Please enter them again.')
-  return { fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightDeciKg, unitPriceCents: line.unitPriceCents, amountCents: line.amountCents }
+  const remark = normalizeRetailLineRemark(line.remark)
+  return { fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weightDeciKg, unitPriceCents: line.unitPriceCents, amountCents: line.amountCents, ...(remark ? { remark } : {}) }
 }
 
 export function prepareRetailSale(input: RetailSaleInput): Omit<RetailSale, 'id' | 'createdAt'> {

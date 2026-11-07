@@ -44,6 +44,38 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks())
 
 describe('retail invoice PDF', () => {
+  it('renders each saved fish remark with its own line without assigning the invoice remark to fish', async () => {
+    await createRetailInvoicePdf({ ...sample, remark: '整单备注', lines: [
+      { ...sample.lines[0], chineseName: '第一条鱼', remark: '次' },
+      { ...sample.lines[0], chineseName: '第二条鱼', remark: '参' },
+      { ...sample.lines[0], chineseName: '第三条鱼', remark: '味' },
+      { ...sample.lines[0], chineseName: '第四条鱼', remark: '其他：分开包装' },
+    ] })
+    const texts = drawn.map(item => item.text)
+    for (const [fish, remark] of [['第一条鱼', '次'], ['第二条鱼', '参'], ['第三条鱼', '味'], ['第四条鱼', '其他：分开包装']]) {
+      const fishIndex = texts.indexOf(fish), remarkIndex = texts.indexOf(`备注 Remark：${remark}`)
+      expect(fishIndex).toBeGreaterThan(-1)
+      expect(remarkIndex).toBeGreaterThan(fishIndex)
+      const nextFish = texts.findIndex((text, index) => index > fishIndex && /第.条鱼/.test(text))
+      if (nextFish >= 0) expect(remarkIndex).toBeLessThan(nextFish)
+    }
+    expect(texts.filter(text => text === '备注 Remark：整单备注')).toHaveLength(1)
+  })
+  it('paginates maximum-length per-fish remarks without losing characters or duplicating numeric cells', async () => {
+    const invoice: RetailSale = { ...sample, vendorName: '贩'.repeat(100), id: 'x'.repeat(100),
+      lines: Array.from({ length: 20 }, (_, index) => ({ ...sample.lines[0],
+        fishId: `fish-${index}`, chineseName: '鱼'.repeat(100), malayName: 'Ikan panjang '.repeat(7),
+        remark: `${index}:` + '验'.repeat(497),
+      })) }
+    const before = JSON.stringify(invoice)
+    await createRetailInvoicePdf(invoice)
+    expect(drawn.map(item => item.text).join('').match(/验/g)).toHaveLength(20 * 497)
+    expect(drawn.filter(item => item.text === '80.5')).toHaveLength(20)
+    expect(drawn.filter(item => item.text === '483.00')).toHaveLength(20)
+    expect(drawn.every(item => item.y >= 0 && item.y < 1100)).toBe(true)
+    expect(drawn.find(item => item.text === 'RM483.00')?.page).toBe(pageSizes.length - 1)
+    expect(JSON.stringify(invoice)).toBe(before)
+  })
   it.each(['833', undefined])('includes the saved vessel snapshot %s or the legacy blank in PDF content', async vesselCodeSnapshot => {
     await createRetailInvoicePdf({ ...sample, vesselId: vesselCodeSnapshot ? 'v833' : undefined, vesselCodeSnapshot })
     expect(drawn.map(item => item.text)).toContain(`船号 Vessel：${vesselCodeSnapshot || '—'}`)

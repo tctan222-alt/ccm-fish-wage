@@ -51,6 +51,18 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('mobile retail checkout', () => {
+  it('saves different fish remarks and custom text while keeping the manually selected date through vessel and fish changes', async () => {
+    mount(); fill('日期 Date', '2026-09-05'); fill('小贩 Vendor', '阿明'); await chooseVessel()
+    fill('船号 Vessel', 'v978'); fill('本行备注 Item Remark', '次'); add('甘丰')
+    fill('本行备注 Item Remark', 'other'); fill('本行备注 Item Remark · 其他备注 Custom Remark', '冰鲜'); add('马丰')
+    expect(screen.getByLabelText('日期 Date')).toHaveValue('2026-09-05')
+    fill('明细备注 Item Remark 1', '参')
+    fireEvent.click(screen.getByRole('button', { name: '结算 Checkout' }))
+    await screen.findByText('现金结算已保存。 Cash sale saved.')
+    expect(services.save.mock.calls[0][1]).toMatchObject({ businessDate: '05/09/2026', vesselId: 'v978', lines: [{ remark: '参' }, { remark: '冰鲜' }] })
+    expect(screen.getByText('备注 Remark：参')).toBeInTheDocument()
+    expect(screen.getByText('备注 Remark：冰鲜')).toBeInTheDocument()
+  })
   it('warns for a genuine invoice draft, clears after saving and retains backdated context for the next vendor',async()=>{
     const confirm=vi.spyOn(window,'confirm').mockReturnValue(false)
     render(<MemoryRouter initialEntries={['/retail-sales']}><DirtyStateProvider><BackButton/><RetailSalesPage/></DirtyStateProvider></MemoryRouter>)

@@ -69,6 +69,13 @@ describe('QL Fish Head Master approval-gated write planning',()=>{
     expect(qlMasterFingerprint([fish('金线',{...before,qlSourceRef:'bar'})])).not.toBe(start)
     expect(qlMasterFingerprint([fish('金线',{...before,updatedAt:{seconds:101}})])).not.toBe(start)
   })
+  it('distinguishes an absent default from explicit null and detects same-second nanosecond changes',()=>{
+    const missing=fish('金线',{updatedAt:{seconds:100,nanoseconds:1}})
+    const unset=fish('金线',{basePriceCentsPerKg:null,updatedAt:{seconds:100,nanoseconds:1}})
+    expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([unset]))
+    expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([{...missing,updatedAt:{seconds:100,nanoseconds:2}}]))
+    expect(qlMasterFingerprint([missing])).not.toBe(qlMasterFingerprint([{...missing,updatedBy:'another-user'}]))
+  })
   it('uses explicit persisted links to prevent an old generic 丁温 from creating fresh cross-method conflicts',()=>{
     const legacy=fish('丁温',{id:'ding_wen',speciesCode:'ding_wen',basePriceCentsPerKg:190})
     const initial=prepareQlMasterAdoption([legacy])

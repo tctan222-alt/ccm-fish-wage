@@ -15,6 +15,17 @@ async function edit(item:FishSpeciesRecord){
 }
 
 describe('Fish Head Master price editing',()=>{
+  it('cannot enable browser bulk writes through a build-time flag',async()=>{
+    vi.stubEnv('VITE_APPROVED_QL_MASTER_WRITES','true')
+    try{
+      const saver=vi.fn(),initializer=vi.fn()
+      render(<MemoryRouter><FishSpeciesPage loader={async()=>[]} saver={saver} initializer={initializer}/></MemoryRouter>)
+      fireEvent.click(await screen.findByText('审阅 QL 36组新默认价 Preview（只读）'))
+      expect(screen.queryByRole('button',{name:'确认采用36组新基础默认价'})).not.toBeInTheDocument()
+      expect(screen.getByRole('button',{name:'下载36组审核对照（不执行）'})).toBeEnabled()
+      expect(saver).not.toHaveBeenCalled();expect(initializer).not.toHaveBeenCalled()
+    }finally{vi.unstubAllEnvs()}
+  })
   it('previews all 36 groups and conflicting old prices without writing Master',async()=>{
     const saver=vi.fn(),initializer=vi.fn()
     const items=[species({id:'ding_wen',speciesCode:'ding_wen',displayName:'丁温',basePriceCentsPerKg:190})]

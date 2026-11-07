@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RetailReceipt, RetailReceiptActions } from './RetailReceipt'
 import { createRetailInvoicePdf } from '../lib/retailInvoicePdf'
@@ -27,6 +27,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 describe('Retail invoice output', () => {
+  it('keeps different per-fish remarks in their stored rows and the legacy invoice remark separate', () => {
+    const invoice: RetailSale = { ...sale, remark: '整张单的旧备注', lines: [
+      { ...sale.lines[0], chineseName: '第一条鱼', remark: '次' },
+      { ...sale.lines[0], chineseName: '第二条鱼', remark: '参' },
+      { ...sale.lines[0], chineseName: '第三条鱼', remark: '其他：冰鲜分开装' },
+      { ...sale.lines[0], chineseName: '无备注鱼' },
+    ] }
+    const before = JSON.stringify(invoice)
+    render(<RetailReceipt sale={invoice} />)
+    for (const [fish, remark] of [['第一条鱼', '次'], ['第二条鱼', '参'], ['第三条鱼', '其他：冰鲜分开装']]) {
+      const row = screen.getByText(fish).closest('tr')!
+      expect(within(row).getByText(`备注 Remark：${remark}`)).toBeInTheDocument()
+      expect(row).not.toHaveTextContent('整张单的旧备注')
+    }
+    expect(screen.getByText('无备注鱼').closest('tr')).not.toHaveTextContent('备注 Remark')
+    expect(screen.getByText('备注 Remark：整张单的旧备注')).toBeInTheDocument()
+    expect(screen.getAllByRole('columnheader')).toHaveLength(4)
+    expect(JSON.stringify(invoice)).toBe(before)
+  })
   it('shares the prepared PDF File synchronously in the click and restores controls after completion', async () => {
     let complete!: () => void
     share.mockReturnValue(new Promise<void>(resolve => { complete = resolve }))

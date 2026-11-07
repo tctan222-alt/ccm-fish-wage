@@ -9,6 +9,7 @@ import { clearPendingRetailSale, initializeRetailFish, loadPendingRetailSale, lo
 import { RetailFishPicker } from '../components/RetailFishPicker'
 import { RetailReceipt, RetailReceiptActions } from '../components/RetailReceipt'
 import { RetailVesselPicker, useRetailVessels } from '../components/RetailVesselPicker'
+import { RetailLineRemarkField } from '../components/RetailLineRemarkField'
 import { useUnsavedChanges, useUnsavedForm } from '../components/dirtyState'
 import './retailSales.css'
 
@@ -26,7 +27,7 @@ function useFish() {
 
 function RetailHeader({ title }: { title: string }) {
   return <header className="retail-no-print"><p className="eyebrow">门市 Retail</p><h1>{title}</h1>
-    <nav className="retail-nav" aria-label="门市销售导航 Retail Navigation"><Link to="/retail-sales">现金销售 Cash Sales</Link><Link to="/retail-sales/history">销售历史 Sales History</Link><Link to="/retail-sales/fish">鱼名与建议价 Fish and Suggested Prices</Link></nav>
+    <nav className="retail-nav" aria-label="门市销售导航 Retail Navigation"><Link to="/retail-sales">现金销售 Cash Sales</Link><Link to="/retail-sales/history">销售历史 Sales History</Link><Link to="/retail-sales/daily-print">当天批量打印 Daily Print</Link><Link to="/retail-sales/fish">鱼名与建议价 Fish and Suggested Prices</Link></nav>
   </header>
 }
 
@@ -70,11 +71,12 @@ export function RetailSalesPage() {
   const [createdFish, setCreatedFish] = useState<RetailFish[]>([]), [quickBusy, setQuickBusy] = useState(false)
   const [pickerVersion, setPickerVersion] = useState(0)
   const [weight, setWeight] = useState(''), [price, setPrice] = useState(''), [lines, setLines] = useState<RetailLine[]>([])
+  const [lineRemark, setLineRemark] = useState('')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [sale, setSale] = useState<RetailSale | null>(null)
   const [pending, setPending] = useState<PendingRetailSale | null>(null), [canRepairVessel, setCanRepairVessel] = useState(false)
   const saving = useRef(false), weightInput = useRef<HTMLInputElement>(null), searchInput = useRef<HTMLInputElement>(null)
   const [recoveryError, setRecoveryError] = useState('')
-  useUnsavedChanges(!sale && (!!pending || !!vendorName || !!remark || !!weight || !!price || !!selected || lines.length > 0))
+  useUnsavedChanges(!sale && (!!pending || !!vendorName || !!remark || !!lineRemark || !!weight || !!price || !!selected || lines.length > 0))
   const availableFish = fish === null ? null : [...fish, ...createdFish.filter(created => !fish.some(item => item.id === created.id))]
   useEffect(() => { if (selected && !quickBusy) weightInput.current?.focus() }, [selected, quickBusy])
   useEffect(() => {
@@ -96,8 +98,8 @@ export function RetailSalesPage() {
     try {
       if (!selected || !availableFish?.some(item => item.id === selected.id && item.active)) throw new Error('请选择已有鱼种，或先补齐新鱼资料并保存。 Select an existing fish or complete and save the new fish details.')
       if (lines.length >= MAX_RETAIL_LINES) throw new Error(`本单已达 ${MAX_RETAIL_LINES} 条，请先结算。 This sale has reached ${MAX_RETAIL_LINES} items. Please check out first.`)
-      const line = makeRetailLine(selected, weight, price)
-      setLines(current => [...current, line]); setSelected(null); setWeight(''); setPrice(''); setSearch(''); searchInput.current?.focus()
+      const line = makeRetailLine(selected, weight, price, lineRemark)
+      setLines(current => [...current, line]); setSelected(null); setWeight(''); setPrice(''); setSearch(''); setLineRemark(''); searchInput.current?.focus()
     } catch (problem) { setError(message(problem)) }
   }
   async function checkout() {
@@ -106,7 +108,7 @@ export function RetailSalesPage() {
     let attempt = pending
     try {
       if (!attempt) {
-        if (selected || search.trim() || weight || price) throw new Error('请先加入或清除当前品名，再结算。 Add or clear the current fish before checkout.')
+        if (selected || search.trim() || weight || price || lineRemark) throw new Error('请先加入或清除当前品名，再结算。 Add or clear the current fish before checkout.')
         const vessel = vesselOptions.vessels?.find(item => item.id === vesselId)
         if (!vessel) throw new Error('请先选择船号。 Please select a vessel.')
         const input = prepareRetailSale({ businessDate, vendorName, remark, lines, vesselId: vessel.id, vesselCodeSnapshot: vessel.vesselCode })
@@ -135,7 +137,7 @@ export function RetailSalesPage() {
     finally { saving.current = false; setBusy(false) }
   }
   function nextVendor() {
-    setSale(null); setLines([]); setVendor(''); setRemark(''); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
+    setSale(null); setLines([]); setVendor(''); setRemark(''); setLineRemark(''); setSelected(null); setPrice(''); setWeight(''); setSearch(''); setError(''); setCanRepairVessel(false); saved()
   }
   if (sale) return <main className="retail-page"><RetailHeader title="结算完成 Checkout Complete" /><p className="success retail-no-print" role="status">现金结算已保存。 Cash sale saved.</p>
     <RetailReceipt sale={sale} /><RetailReceiptActions sale={sale} /><div className="retail-no-print retail-actions"><button onClick={nextVendor}>下一位小贩 Next Vendor</button></div></main>
@@ -157,9 +159,10 @@ export function RetailSalesPage() {
         <div className="retail-numbers"><label>重量 Weight (kg)<input ref={weightInput} inputMode="decimal" value={weight} onChange={event => setWeight(event.target.value)} placeholder="0.1–300，最多一位小数 Max. 1 decimal place" /></label>
           <label>单价 Unit Price (RM/kg)<input inputMode="decimal" value={price} onChange={event => setPrice(event.target.value)} placeholder="手动输入售价 Enter unit price" /></label></div>
         <p className="retail-line-total">本行金额 Line Amount <strong>{preview ? retailMoney(preview.amountCents) : '—'}</strong></p>
-        <div className="retail-actions"><button className="primary-action" disabled={!availableFish || !selected}>加入明细 Add Item</button><button type="button" onClick={() => { setSelected(null); setSearch(''); setWeight(''); setPrice(''); setError(''); setPickerVersion(current => current + 1) }}>清除当前品名 Clear Fish</button></div>
+        <RetailLineRemarkField label="本行备注 Item Remark" value={lineRemark} onChange={setLineRemark} />
+        <div className="retail-actions"><button className="primary-action" disabled={!availableFish || !selected}>加入明细 Add Item</button><button type="button" onClick={() => { setSelected(null); setSearch(''); setWeight(''); setPrice(''); setLineRemark(''); setError(''); setPickerVersion(current => current + 1) }}>清除当前品名 Clear Fish</button></div>
         </form></section>
-      <section><h2>本单明细 Items ({lines.length})</h2><ol className="retail-lines">{lines.map((line, index) => <li key={index}><div><strong>{line.chineseName}</strong><small>{line.malayName}</small><span>{retailWeightKg(line)} kg × {retailMoney(line.unitPriceCents)}/kg</span></div><strong>{retailMoney(line.amountCents)}</strong><button aria-label={`移除第 ${index + 1} 条明细 Remove Item ${index + 1}`} onClick={() => setLines(current => current.filter((_, position) => position !== index))}>移除 Remove</button></li>)}</ol></section>
+      <section><h2>本单明细 Items ({lines.length})</h2><ol className="retail-lines">{lines.map((line, index) => <li key={index}><div><strong>{line.chineseName}</strong><small>{line.malayName}</small><span>{retailWeightKg(line)} kg × {retailMoney(line.unitPriceCents)}/kg</span><RetailLineRemarkField label={`明细备注 Item Remark ${index + 1}`} value={line.remark ?? ''} onChange={value => setLines(current => current.map((item, position) => position === index ? { ...item, remark: value } : item))} /></div><strong>{retailMoney(line.amountCents)}</strong><button aria-label={`移除第 ${index + 1} 条明细 Remove Item ${index + 1}`} onClick={() => setLines(current => current.filter((_, position) => position !== index))}>移除 Remove</button></li>)}</ol></section>
       <section><label>备注 Remark<textarea maxLength={500} value={remark} onChange={event => setRemark(event.target.value)} /></label></section>
     </fieldset>
     <section className="retail-checkout"><div>本次现金合计 Cash Total <strong>{retailMoney(total)}</strong></div><button className="primary-action" disabled={busy || quickBusy || !lines.length || !!recoveryError} onClick={() => void checkout()}>{busy ? '正在保存… Saving…' : pending ? '重试结算 Retry Checkout' : '结算 Checkout'}</button></section>
@@ -291,12 +294,12 @@ export function RetailReceiptPage() {
   return <main className="retail-page"><RetailHeader title="门市现金结算单" />{error ? <><p className="error" role="alert">{error}</p><button type="button" onClick={() => setAttempt(value => value + 1)}>重新载入 Reload</button></> : notFound ? <p className="notice" role="status">找不到此现金结算单。 Cash invoice not found.</p> : !sale ? <p role="status">正在载入结算单… Loading invoice…</p> : <><RetailReceipt sale={sale} /><RetailEditEntry sale={sale} now={now} /><RetailReceiptActions sale={sale} /></>}</main>
 }
 
-type EditableRetailLine = { key: number; sourceIndex: number; fishId: string; chineseName: string; malayName: string; weight: string; price: string }
+type EditableRetailLine = { key: number; sourceIndex: number; fishId: string; chineseName: string; malayName: string; weight: string; price: string; remark: string }
 function editableLine(line: RetailLine, key: number): EditableRetailLine {
-  return { key, sourceIndex: key, fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weight: retailWeightKg(line), price: (line.unitPriceCents / 100).toFixed(2) }
+  return { key, sourceIndex: key, fishId: line.fishId, chineseName: line.chineseName, malayName: line.malayName, weight: retailWeightKg(line), price: (line.unitPriceCents / 100).toFixed(2), remark: line.remark ?? '' }
 }
 function editedLine(line: EditableRetailLine): RetailLine {
-  return makeRetailLine({ id: line.fishId, chineseName: line.chineseName, malayName: line.malayName, suggestedPriceCents: null, active: true }, line.weight, line.price)
+  return makeRetailLine({ id: line.fishId, chineseName: line.chineseName, malayName: line.malayName, suggestedPriceCents: null, active: true }, line.weight, line.price, line.remark)
 }
 
 export function RetailEditPage() {
@@ -337,7 +340,7 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
     const snapshot = { sourceIndex: -1, fishId: selected.id, chineseName: selected.chineseName, malayName: selected.malayName, price: selected.suggestedPriceCents === null ? '' : (selected.suggestedPriceCents / 100).toFixed(2) }
     if (changingKey === -1) {
       if (lines.length >= MAX_RETAIL_LINES) return
-      setLines(current => [...current, { key: nextLineKey.current++, ...snapshot, weight: '' }])
+      setLines(current => [...current, { key: nextLineKey.current++, ...snapshot, weight: '', remark: '' }])
     } else if (lines.find(line => line.key === changingKey)?.fishId !== selected.id) changeLine(changingKey, snapshot)
     setChangingKey(null); setFishQuery('')
   }
@@ -383,6 +386,7 @@ function RetailInvoiceEditor({ original, reload }: { original: RetailSale; reloa
             <label>马来文名 Malay Name<input aria-label={`马来文名 Malay Name ${index + 1}`} maxLength={100} value={line.malayName} onChange={event => changeLine(line.key, { malayName: event.target.value })} /></label></div>
           <div className="retail-numbers"><label>重量 Weight (kg)<input aria-label={`重量 Weight (kg) ${index + 1}`} required inputMode="decimal" value={line.weight} onChange={event => changeLine(line.key, { weight: event.target.value })} /></label>
             <label>单价 Unit Price (RM/kg)<input aria-label={`单价 Unit Price (RM/kg) ${index + 1}`} required inputMode="decimal" value={line.price} onChange={event => changeLine(line.key, { price: event.target.value })} /></label></div>
+          <RetailLineRemarkField label={`明细备注 Item Remark ${index + 1}`} value={line.remark} onChange={value => changeLine(line.key, { remark: value })} />
           <p>金额 Amount (RM)：<strong>{amount === null ? '—' : retailMoney(amount)}</strong></p><button type="button" aria-label={`移除第 ${index + 1} 条明细 Remove Item ${index + 1}`} onClick={() => setLines(current => current.filter(item => item.key !== line.key))}>移除 Remove</button></li>
       })}</ol>
       {fishError && <p className="error" role="alert">{fishError}</p>}

@@ -1,8 +1,6 @@
 import { previewFishHeadMasterImport, type FishHeadMasterImportRecord, type FishHeadMasterProposedRecord } from './fishHeadMasterImport'
 import { QL_SEED_VERSION, type QlPriceRow } from './qlPrices'
 
-export const QL_MASTER_WRITE_FLAG = 'VITE_APPROVED_QL_MASTER_WRITES'
-
 /** Stable versioned foreign key: aliases, fishing method and original row remain in the immutable QL source. */
 export function qlMasterSourceRef(row: QlPriceRow): string {
   return `${QL_SEED_VERSION.version}|${row.groupKey}:${row.method}`
@@ -99,12 +97,22 @@ export function prepareQlMasterAdoption(
     unchanged: entries.filter(row => row.action === 'unchanged').length }
 }
 
-/** Only used for stale-source protection; never contains Firestore credentials. */
+function timestampIdentity(value:unknown):unknown {
+  if(value instanceof Date)return ['date',value.toISOString()]
+  if(value&&typeof value==='object'&&'seconds' in value){
+    const stamp=value as {seconds:unknown;nanoseconds?:unknown}
+    return ['timestamp',stamp.seconds,stamp.nanoseconds??0]
+  }
+  return value??null
+}
+
+/** Preserve absence/null and full timestamp precision: both change approval meaning. */
 export function qlMasterFingerprint(items: readonly FishHeadMasterImportRecord[]): string {
   return JSON.stringify([...items].sort((a,b) => a.id.localeCompare(b.id)).map(item => [
     item.id,item.speciesCode,item.displayName,item.active,item.order,item.notes,
-    item.basePriceCentsPerKg ?? null,item.qlSourceRef ?? null,
-    item.updatedAt && typeof item.updatedAt === 'object' && 'seconds' in item.updatedAt
-      ? (item.updatedAt as {seconds:number}).seconds : null,
+    [Object.prototype.hasOwnProperty.call(item,'basePriceCentsPerKg'),item.basePriceCentsPerKg??null],
+    [Object.prototype.hasOwnProperty.call(item,'qlSourceRef'),item.qlSourceRef??null],
+    item.createdBy??null,timestampIdentity(item.createdAt),item.updatedBy??null,timestampIdentity(item.updatedAt),
+    item.inactiveBy??null,timestampIdentity(item.inactiveAt),
   ]))
 }
