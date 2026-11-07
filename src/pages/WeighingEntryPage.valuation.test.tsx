@@ -88,7 +88,7 @@ describe('鱼头采购现场估值',()=>{
     expect(entry).not.toHaveProperty('amountCents')
     expect(sync.mock.calls.map(([operation])=>operation.type)).toEqual(['entry_create'])
     expect(savePurchaseSettlementDraft).not.toHaveBeenCalled()
-    expect(screen.queryByRole('link',{name:/结单/})).not.toBeInTheDocument()
+    expect(screen.getByRole('link',{name:'打开结单，确认或修改本单实际价格'})).toHaveAttribute('href','/fish-head-settlement/live-session')
   })
 
   it('多篮同鱼合并，新增另一鱼种后即时更新整单篮数、kg 和金额',async()=>{
@@ -111,12 +111,12 @@ describe('鱼头采购现场估值',()=>{
     expect(total).not.toHaveTextContent('未定价')
   })
 
-  it('无默认价鱼种可继续保存，行内显示破折号，总计明确只包含已知金额',async()=>{
+  it('无默认价鱼种可继续保存，行内显示未定价，总计明确只包含已知金额',async()=>{
     const {store}=setup({speciesLoader:async()=>[...DEFAULT_FISH_SPECIES,unknownFish]})
     await saveBasket('2')
     await saveBasket('4',unknownFish.displayName)
     const unknown=summaryRow(unknownFish.displayName)
-    expect(within(unknown).getAllByRole('cell',{name:'—'})).toHaveLength(2)
+    expect(within(unknown).getAllByText('未定价')).toHaveLength(2)
     expect(unknown).not.toHaveTextContent('RM 0.00')
     expect(summaryRow('金线')).toHaveTextContent('RM 4.20')
     const total=screen.getByRole('group',{name:'现场金额总计'})
