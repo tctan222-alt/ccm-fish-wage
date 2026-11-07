@@ -54,12 +54,14 @@ function QlMasterPreview({items}:{items:FishSpeciesRecord[]}){
   // checkbox selection throw during render; reset it after the new Master loads.
   const activeSeparate=createSeparate.filter(key=>eligibleSeparateKeys.has(key))
   const plan=prepareQlMasterAdoption(items,activeSeparate)
+  const planned=new Map(plan.entries.map(entry=>[entry.sourceKey,entry]))
   useEffect(()=>{setCreateSeparate([])},[items])
   function downloadReview(){
     const review={sourceVersion:preview.sourceVersion,readOnly:true,policy:'bottom-excluded; cross-method-conflicting-price-unset',createSeparateFor:activeSeparate,
       rows:preview.proposals.map(item=>({sourceRef:`${preview.sourceVersion}|${item.proposalKey}`,label:item.source.label,
         method:item.source.method,aliases:item.source.aliases,sourcePriceCentsPerKg:item.source.priceCentsPerKg,
-        proposedBasePriceCentsPerKg:isQlMarketPriceRow(item.source)?null:item.proposed?.basePriceCentsPerKg??null,status:item.status,
+        proposedBasePriceCentsPerKg:planned.get(item.proposalKey)?.proposed.basePriceCentsPerKg??null,
+        plannedAction:planned.get(item.proposalKey)?.action??'blocked',status:item.status,
         existing:item.matches.map(match=>({id:match.id,speciesCode:match.speciesCode,displayName:match.displayName,
           basePriceCentsPerKg:fishHeadMasterBasePriceCents(match),qlSourceRef:match.qlSourceRef??null}))}))}
     const url=URL.createObjectURL(new Blob([JSON.stringify(review,null,2)],{type:'application/json'}))
@@ -73,16 +75,16 @@ function QlMasterPreview({items}:{items:FishSpeciesRecord[]}){
     <div className="ql-master-table-wrap"><table><caption>未来基础默认价对照（不含船号加价）</caption><thead><tr><th scope="col"># / 来源组</th><th scope="col">状态</th><th scope="col">现有 Master / 旧 RM/kg</th><th scope="col">拟议新 RM/kg</th></tr></thead><tbody>
       {preview.proposals.map(item=><tr key={fishHeadMasterProposalKey(item)} className={`ql-master-${item.status}`}>
         <td><strong>{item.source.sourceRow-3}. {item.source.label}</strong><small>{QL_METHOD_LABELS[item.source.method]} · 别名：{item.source.aliases.join('、')||'保留整组，不自动拆分'}</small></td>
-        <td>{item.status==='matched'?'匹配':item.status==='new'?'新增':'冲突，阻止自动采用'}
+        <td>{item.status==='matched'?'匹配':item.status==='new'?'新增':planned.has(item.proposalKey)?'独立空价组（保留旧鱼）':'冲突，阻止自动采用'}
           {item.status==='conflict'&&!isQlMarketPriceRow(item.source)&&<label className="ql-master-resolution">
             <input type="checkbox" checked={activeSeparate.includes(item.proposalKey)}
               onChange={event=>setCreateSeparate(current=>event.target.checked?[...current,item.proposalKey]:current.filter(key=>key!==item.proposalKey))}/>
             单独建立空默认价来源组，保留现有鱼名和旧价格
           </label>}</td>
         <td>{item.matches.length?item.matches.map((match,index)=><small key={`${match.id}:${index}`}>{match.displayName} ({match.speciesCode} / ID: {match.id}) · {money(fishHeadMasterBasePriceCents(match))}{!match.active?' · 已停用':''}</small>):'无匹配记录'}{item.reason&&<small>{item.reason}</small>}</td>
-        <td><strong>{isQlMarketPriceRow(item.source)?'留空（按当天行情）':money(item.source.priceCentsPerKg)}</strong>
-          {isQlMarketPriceRow(item.source)&&<small>QL 参考价 {money(item.source.priceCentsPerKg)}，不作为 Master 默认价</small>}
-          {item.status==='conflict'&&!isQlMarketPriceRow(item.source)&&<small>映射未定，不能采用</small>}</td>
+        <td><strong>{!planned.has(item.proposalKey)?'未列入本次采用':planned.get(item.proposalKey)!.proposed.basePriceCentsPerKg===null?'留空（按当天行情）':money(planned.get(item.proposalKey)!.proposed.basePriceCentsPerKg)}</strong>
+          {(planned.get(item.proposalKey)?.proposed.basePriceCentsPerKg!==item.source.priceCentsPerKg)&&<small>QL 来源参考价 {money(item.source.priceCentsPerKg)}，不作为 Master 默认价</small>}
+          {item.status==='conflict'&&!planned.has(item.proposalKey)&&<small>映射未定，不能采用</small>}</td>
       </tr>)}</tbody></table></div>
     <p className="notice">底船鱼名不纳入 Master。青兰、丁温／目孔等跨作业方式价差的来源组留空基础价；实际单价在当天业务单据中填写。原有旧鱼名、加晒与加西及历史价不覆盖。</p>
     <p className="notice">未来获准采用时，只影响新默认建议价；已保存结单、实际成交价与 978／5202 船号加价保持原样。Retail、Fish Meal 与 QL 客户价独立。</p>
