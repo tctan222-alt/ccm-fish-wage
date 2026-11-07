@@ -53,6 +53,22 @@ function summaryRow(fishName:string){
 afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();vi.clearAllMocks()})
 
 describe('鱼头采购现场估值',()=>{
+  it('本机保存后立即恢复 kg 输入，慢网络同步不能阻止继续录入下一篮',async()=>{
+    let releaseSync:()=>void=()=>{}
+    const pendingRemote=new Promise<void>(resolve=>{releaseSync=resolve})
+    const {store,commit}=setup({remoteSync:async()=>{await pendingRemote;return {}}})
+    await saveBasket('10.25')
+    expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled()
+    await saveBasket('12.75')
+    expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled()
+    expect((await store.getEntries('live-session')).map(item=>item.weightGrams).sort((a,b)=>a-b)).toEqual([10250,12750])
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('group',{name:'现场金额总计'})).toHaveTextContent('23 kg')
+    await act(async()=>{releaseSync()})
+    await waitFor(()=>expect(screen.getByText('全部已同步')).toBeInTheDocument())
+    expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled()
+  })
+
   it('保存一篮就显示默认价格和 half-up 金额，仍然称重且不写入价格快照',async()=>{
     const {store,commit,sync}=setup()
     await saveBasket('80.125')
