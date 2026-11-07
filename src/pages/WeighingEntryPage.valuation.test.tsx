@@ -63,6 +63,7 @@ describe('鱼头采购现场估值',()=>{
     expect(screen.getByLabelText('重量（kg）')).not.toBeDisabled()
     expect((await store.getEntries('live-session')).map(item=>item.weightGrams).sort((a,b)=>a-b)).toEqual([10250,12750])
     expect(commit).toHaveBeenCalledTimes(2)
+    expect(screen.queryByRole('link',{name:'打开结单，确认或修改本单实际价格'})).not.toBeInTheDocument()
     expect(screen.getByRole('group',{name:'现场金额总计'})).toHaveTextContent('23 kg')
     await act(async()=>{releaseSync()})
     await waitFor(()=>expect(screen.getByText('全部已同步')).toBeInTheDocument())
@@ -88,7 +89,8 @@ describe('鱼头采购现场估值',()=>{
     expect(entry).not.toHaveProperty('amountCents')
     expect(sync.mock.calls.map(([operation])=>operation.type)).toEqual(['entry_create'])
     expect(savePurchaseSettlementDraft).not.toHaveBeenCalled()
-    expect(screen.getByRole('link',{name:'打开结单，确认或修改本单实际价格'})).toHaveAttribute('href','/fish-head-settlement/live-session')
+    await waitFor(()=>expect(screen.getByRole('link',{name:'打开结单，确认或修改本单实际价格'}))
+      .toHaveAttribute('href','/fish-head-settlement/live-session'))
   })
 
   it('多篮同鱼合并，新增另一鱼种后即时更新整单篮数、kg 和金额',async()=>{
