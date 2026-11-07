@@ -23,7 +23,7 @@ No production save, initialization, import, settlement or test record was made.
 |---|---|---|
 | Fish Head / Fish Meal | Entry and settlement screens exist and load. Later main changes improve default-price consistency, snapshot recovery and mobile feedback. | Exact deployed version; historical query coverage; approved read-only settlement acceptance. A restored completed session legitimately disables entry controls. |
 | Retail | Cash entry, history, receipt/PDF and vessel support exist. This release adds independent line remarks and daily/vessel batch printing, while retaining the Malaysia date and 30-day audited edits. | Local fixture/browser and CI verification are separate from live acceptance after release. |
-| Fish Head Master | CRUD/default prices exist. QL source/aliases/context were implemented in #75/#81/#82; this release hardens review and removes the browser bulk writer. | Publish read-only 36-group preview. Actual price adoption remains a separately approved data transaction. |
+| Fish Head Master | CRUD/default prices exist. QL source/aliases/context were implemented in #75/#81/#82; this release hardens review and removes the browser bulk writer. | Publish read-only **34-group non-bottom Master** preview (original QL reference remains 36 groups). Explicitly unset default prices for conflicting cross-method aliases; the operator enters actual daily market price. Actual production adoption remains a separately approved data transaction. |
 | Master Data / vessels | Partner, worker, vessel, category and wage-template screens exist. Vessel-trip and settlement workflows are already implemented. | Read-only live routing/data-loading acceptance. Initializers and deactivation are writes, never release checks. |
 | Weighing / Purchase | Entry/review, receipt creation, supplier statements and payments exist. This release adds independent loading, retry and stale-callback protection to review/list pages. | Preserve seven-day correction limits and historical audit records; do not create production test receipts. |
 | Reports / print | Wage daily/monthly, supplier statement and Retail receipt outputs exist. | Verify published controls; physical device/AirPrint acceptance remains distinct from desktop preview. |
@@ -32,13 +32,12 @@ No production save, initialization, import, settlement or test record was made.
 
 ## Data and compatibility gates
 
-- QL reference sheet old prices are **not** production Master before-images.
+- QL reference sheet old prices are **not** production Master before-images. Bottom-vessel source groups are excluded from Master adoption; only 34 non-bottom candidate groups remain. Aliases with conflicting prices have explicitly null Master defaults so a valid actual price must be entered on the day's document.
   A UI preview/export is not an executable exact snapshot. Use the separately
   approved server snapshot/operator procedure for full field presence,
   nanoseconds and server updateTime.
 - Keep all aliases and source groups. 丁温 and 目孔 are RM2.00/kg trawl and
-  RM2.10/kg bottom; 青兰 is RM0.90/kg general and RM1.10/kg bottom. These contexts
-  cannot be collapsed into a single default. Retain unadopted legacy records.
+  RM2.10/kg bottom; 青兰 is RM0.90/kg general and RM1.10/kg bottom. These contexts cannot be collapsed into a single default: bottom entries are reference-only, the eligible conflict groups are null-priced. Retain unadopted legacy records.
 - No historical settlement, actual transaction price, Retail/Fish Meal Master,
   QL customer price or vessel premium is rewritten by default-price adoption.
 - Settlement vessel-only search orders by `dateSortKey`; Firestore omits
@@ -80,7 +79,7 @@ No production save, initialization, import, settlement or test record was made.
    the local approved artifact. Capture the actual Hosting release/version.
 8. In the authenticated production site, verify route access, visible per-line
    remark controls, preserved manually selected date, saved historical display,
-   date/vessel batch preview, both print modes and QL 36-group preview. Production
+   date/vessel batch preview, both print modes and QL 34-group non-bottom Master preview (36 original reference rows). Production
    writes/test invoices are excluded; use existing authorized records and
    read-only previews. Any real write acceptance needs separate scope approval.
 
