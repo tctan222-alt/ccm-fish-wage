@@ -22,6 +22,8 @@ import type { BusinessPartner } from '../lib/masterData'
 import { businessDateFromLegacy,monthKeyFromBusinessDate,monthSortKeyFromMonthKey,sortKeyFromBusinessDate } from '../lib/businessDate'
 import type { PendingWeighingOperation } from './weighingOffline'
 import { MAX_FISH_HEAD_BASE_PRICE_CENTS } from '../lib/fishHeadMasterPrice'
+import { QL_SEED_VERSION } from '../lib/qlPrices'
+import { sourceFromQlMasterRef, prepareQlMasterAdoption, qlMasterFingerprint } from '../lib/fishHeadMasterAdoption'
 
 export interface WeighingBundle {
   session:WeighingSession
@@ -47,8 +49,11 @@ function requireUser(){
 }
 
 function fishSpeciesFrom(id:string,data:DocumentData):FishSpeciesRecord {
-  return {id,speciesCode:String(data.speciesCode),displayName:String(data.displayName),active:Boolean(data.active),
+  const record={id,speciesCode:String(data.speciesCode),displayName:String(data.displayName),active:Boolean(data.active),
     order:Number(data.order),notes:String(data.notes??''),...data} as FishSpeciesRecord
+  const source=sourceFromQlMasterRef(record.qlSourceRef)
+  return source?Object.assign(record,{aliases:source.aliases,method:source.method,sourceGroupKey:source.groupKey,
+    sourceVersion:QL_SEED_VERSION.version,sourceEffectiveDate:QL_SEED_VERSION.effectiveDate,sourceRow:source.sourceRow}):record
 }
 
 function sessionFrom(id:string,data:DocumentData):WeighingSession {
@@ -162,9 +167,11 @@ export async function saveFishSpecies(value:FishSpeciesRecord){
     createdBy:original?.createdBy??user.uid,createdAt:original?.createdAt??timestamp,updatedBy:user.uid,updatedAt:timestamp,
     inactiveBy:value.active?null:(original?.inactiveBy??user.uid),inactiveAt:value.active?null:(original?.inactiveAt??timestamp),
     ...(basePrice===undefined?{}:{basePriceCentsPerKg:basePrice}),
+    ...(original?.qlSourceRef?{qlSourceRef:original.qlSourceRef}:value.qlSourceRef?{qlSourceRef:value.qlSourceRef}:{}),
   }).commit()
   return {...value,displayName:value.displayName.trim(),notes:value.notes.trim(),updatedBy:user.uid,updatedAt:timestamp,
-    ...(basePrice===undefined?{}:{basePriceCentsPerKg:basePrice})}
+    ...(basePrice===undefined?{}:{basePriceCentsPerKg:basePrice}),
+    ...(original?.qlSourceRef?{qlSourceRef:original.qlSourceRef}:value.qlSourceRef?{qlSourceRef:value.qlSourceRef}:{})}
 }
 
 export async function loadWeighingSessions(){
